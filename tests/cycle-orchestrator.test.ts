@@ -1582,8 +1582,8 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     assert.equal(out?.planAdmitted, true);
     const s = loadCycleState(sid)!;
     assert.match(s.planTitle ?? "", /Direct execute/);
-    assert.ok(s.cycles[s.cycle - 1]?.mustFix?.some((m) => /chew stay pile|architecture class/i.test(m)));
-    assert.ok(s.items.some((i) => /chew stay pile|architecture class/i.test(i.title)));
+    assert.ok(s.cycles[s.cycle - 1]?.mustFix?.some((m) => /chew stay pile/i.test(m)));
+    assert.ok(s.items.some((i) => /chew stay pile/i.test(i.title)));
   });
 
   it("architecture recurrence: addressing the class, or leave-it, admits; FORGE_ULW_CLASS_HOLD=0 skips the hold", async () => {
@@ -1635,6 +1635,125 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     assert.match(loadCycleState("orch3-class-off")!.planTitle ?? "", /theme 3/);
   });
 
+  it("an unknown Recovery promise is not named by Operator mentioning records", async () => {
+    const sid = "orch3-operator-records";
+    const scout = `# Cycle 1 scout\nIdentity: a store\nLooked: ran the happy path\nPromises:\n- Recovery preserves records — unknown — could not exercise recovery\nConsidered:\n- investigate recovery\n- leave it`;
+    const plan = `# Cycle 1 plan\nVerdict: fulfilled — the mandate is met\nLooked: ran the happy path\nOperator:\n- rotate the staging records`;
+    const { rt } = fakeRuntime(cwd, { twoTurn: true, planner: [scout, plan] });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: "ship recovery", cwd });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.equal(out?.released, false, "substring 'records' is not naming the promise");
+    assert.equal(out?.planAdmitted, true);
+    const s = loadCycleState(sid)!;
+    assert.match(s.planTitle ?? "", /Keep the promise/);
+    assert.ok(s.items.some((i) => /Recovery preserves records/.test(i.title)));
+  });
+
+  it("two shipped chew/Stay reviews + no-mandate fulfilled still names the class on the synthesized cycle", async () => {
+    process.env.FORGE_ULW_TWO_TURN = "0";
+    const sid = "orch3-class-synth";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "x" }] });
+    const st = loadCycleState(sid)!;
+    st.mandate = null;
+    st.phase = "plan";
+    st.cycle = 2;
+    st.cycles[0].commitSha = "aaa";
+    st.cycles[0].endedAt = new Date().toISOString();
+    st.cycles[0].reviewVerdict = "ship";
+    st.cycles[0].architecture = ["`chew` and Stay still pile in one module"];
+    st.cycles.push({
+      n: 2,
+      title: "slice",
+      startedAt: new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+      itemsTotal: 1,
+      itemsDone: 1,
+      waves: 1,
+      mustFix: [],
+      commitSha: "bbb",
+      reviewVerdict: "ship",
+      architecture: ["the chew/Stay pile grew another helper"],
+    });
+    const { saveCycleState } = await import("../src/harness/cycle/state.js");
+    saveCycleState(st);
+    const out = await ensureCyclePlanned(
+      sid,
+      fakeRuntime(cwd, { planner: [`${PLAN_FULFILLED}\nLooked: ran every screen`] }).rt,
+    );
+    assert.equal(out?.released, false);
+    assert.equal(out?.planAdmitted, true);
+    const s = loadCycleState(sid)!;
+    assert.match(s.planTitle ?? "", /Go deeper|Keep the promise/);
+    assert.ok(s.items.some((i) => /chew stay pile/i.test(i.title)), "synthesized continue still carries the class");
+    assert.ok(s.cycles[s.cycle - 1]?.mustFix?.some((m) => /chew stay pile/i.test(m)));
+  });
+
+  it("class hold does not trap: /cycle 0 after a closed cycle still releases", async () => {
+    process.env.FORGE_ULW_TWO_TURN = "0";
+    const sid = "orch3-class-cycle0";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "x" }] });
+    const st = loadCycleState(sid)!;
+    st.phase = "plan";
+    st.cycle = 2;
+    st.cycles[0].commitSha = "aaa";
+    st.cycles[0].endedAt = new Date().toISOString();
+    st.cycles[0].reviewVerdict = "ship";
+    st.cycles[0].architecture = ["`chew` and Stay still pile in one module"];
+    st.cycles.push({
+      n: 2,
+      title: "slice",
+      startedAt: new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+      itemsTotal: 1,
+      itemsDone: 1,
+      waves: 1,
+      mustFix: [],
+      commitSha: "bbb",
+      reviewVerdict: "ship",
+      architecture: ["the chew/Stay pile grew another helper"],
+    });
+    const { saveCycleState } = await import("../src/harness/cycle/state.js");
+    saveCycleState(st);
+    assert.equal(setCycleFlag(sid, 0).ok, true);
+    const out = await ensureCyclePlanned(sid, fakeRuntime(cwd, { planner: [PLAN_OK(3), PLAN_OK(3)] }).rt);
+    assert.ok(out?.released);
+    assert.equal(out.endReason, "cycle-zero");
+    assert.equal(out.planAdmitted, undefined);
+  });
+
+  it("class hold does not trap: no-progress wall still releases", async () => {
+    process.env.FORGE_ULW_TWO_TURN = "0";
+    const sid = "orch3-class-wall";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "x" }] });
+    const st = loadCycleState(sid)!;
+    st.phase = "plan";
+    st.cycle = 2;
+    st.directExecuteStreak = 3;
+    st.cycles[0].commitSha = "aaa";
+    st.cycles[0].endedAt = new Date().toISOString();
+    st.cycles[0].reviewVerdict = "ship";
+    st.cycles[0].architecture = ["`chew` and Stay still pile in one module"];
+    st.cycles.push({
+      n: 2,
+      title: "slice",
+      startedAt: new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+      itemsTotal: 1,
+      itemsDone: 1,
+      waves: 1,
+      mustFix: [],
+      commitSha: "bbb",
+      reviewVerdict: "ship",
+      architecture: ["the chew/Stay pile grew another helper"],
+    });
+    const { saveCycleState } = await import("../src/harness/cycle/state.js");
+    saveCycleState(st);
+    const out = await ensureCyclePlanned(sid, fakeRuntime(cwd, { planner: [PLAN_OK(3), PLAN_OK(3)] }).rt);
+    assert.ok(out?.released);
+    assert.equal(out.endReason, "no-progress");
+  });
+
   it("roles.jsonl gains a line before the Planner session is wiped", async () => {
     const sid = "orch3-roles-jsonl";
     const { rt, calls } = fakeRuntime(cwd, { twoTurn: true, planner: [SCOUT_KEPT(1), PLAN_OK(1)] });
@@ -1654,6 +1773,29 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     assert.ok(rec.id);
     assert.equal(rec.status, "completed");
     assert.ok(rec.tokens > 0);
+  });
+
+  it("a two-turn resume that fails still writes roles.jsonl before cleanup", async () => {
+    const sid = "orch3-roles-resume-fail";
+    const { rt, calls } = fakeRuntime(cwd, {
+      twoTurn: true,
+      planner: [SCOUT_KEPT(1), "", PLAN_OK(1)],
+    });
+    const orig = rt.cleanupRoleSession!.bind(rt);
+    rt.cleanupRoleSession = async (id) => {
+      const p = path.join(home, "sessions", sid, "roles.jsonl");
+      assert.ok(fs.existsSync(p), "roles.jsonl must exist before wiping the child");
+      await orig(id);
+    };
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: "add a widget", cwd });
+    await ensureCyclePlanned(sid, rt);
+    assert.ok(calls.some((c) => c.startsWith("cleanup:")));
+    const rec = JSON.parse(
+      fs.readFileSync(path.join(home, "sessions", sid, "roles.jsonl"), "utf8").trim().split("\n")[0],
+    ) as { type: string; id: string };
+    assert.equal(rec.type, "planner");
+    assert.ok(rec.id);
   });
 
   it("a surface-claim cycle with no verify command does not commit", async () => {

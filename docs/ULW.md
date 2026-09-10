@@ -90,7 +90,8 @@ CLI: `forge --ulw [--max-cycles N] "…"` · `forge run "…" --ulw --max-cycles
 
 Under `~/.forge/sessions/<id>/`:
 
-- `ulw.json` (schema 2) — `cycle`, `phase`, `items[]` (each with `serves` and `redNow`), `verifyCommand`, `promises[]` (the product's own claims as last inspected: `text`, `kept | broken | absent | unknown`, `seen`), `cycles[]` (title, items done/total, waves, review verdict, verify result, commit sha, tokens per role, `considered[]`, `worthClaim`, `worth`, `reviewerLooked`, `scoutPath` / `lookPath`), `ledger[]` (one row per Stop: edit delta, tree movement, proof ran), `identity`, `direction`, `lastReview`. A schema-1 sidecar from the retired wave engine loads as `legacy` and disabled; `/ulw` re-arms.
+- `ulw.json` (schema 2) — `cycle`, `phase`, `items[]` (each with `serves` and `redNow`), `verifyCommand`, `promises[]` (the product's own claims as last inspected: `text`, `kept | broken | absent | unknown`, `seen`), `cycles[]` (title, items done/total, waves, review verdict, verify result, commit sha, tokens per role, `considered[]`, `worthClaim`, `worth`, `reviewerLooked`, `scoutPath` / `lookPath`), `ledger[]` (one row per Stop: edit delta, tree movement, proof ran), `identity`, `direction`, `lastReview`, `reportEpoch` (increments on `/ulw` after an `endReason` so `/report` is not the previous era). A schema-1 sidecar from the retired wave engine loads as `legacy` and disabled; `/ulw` re-arms.
+- `report.md` (era 1) or `report-N.md` (later epochs; `/report` points at the latest). `roles.jsonl` — one line per Planner/Reviewer (and evicted `subagentUsage`) child: id, type, status, turns, tokens, error. Child transcripts are not kept.
 - `cycles/<n>/scout.md` (the Planner's turn 1, written before it saw the record), `plan.md`, `look.md` (the Reviewer's turn 1, before the diff), `review.md`, `verify.baseline.log` (cycle 1: the untouched tree; a later cycle whose gate command changed: the tree as the last commit left it), `verify.pre-review.log` / `verify.post-review.log` (`.<round>` after a red round), `plan.failed.md` when the Planner never produced a parseable plan. The cycle record also keeps the Reviewer's `revisions`, the items it `disputed` (partial / missing against the executor's board), and the executor's `serendipity` and `disputes` lines.
 - `decisions.json` gains a `Plan N: <title>` row per cycle; the product identity and its promises go to project memory (`Identity: …`, `Promise: … — kept|broken|absent`).
 
@@ -195,7 +196,7 @@ fix_rounds = 3
 stuck_threshold = 4
 ```
 
-Env: `FORGE_ULW=0` (driver off), `FORGE_ULW_AUTO_COMMIT=0`, `FORGE_ULW_VERIFY_TIMEOUT_MS` (20 min), `FORGE_ULW_FIX_ROUNDS`, `FORGE_ULW_STUCK_THRESHOLD`, `FORGE_ULW_NO_PROGRESS_CAP` (3 — the synthesized-cycle wall), `FORGE_ULW_PLANNER_MAX_TURNS`, `FORGE_ULW_PLANNER_PLAN_TURNS` (12), `FORGE_ULW_REVIEWER_LOOK_TURNS` (15), `FORGE_ULW_REVIEWER_MAX_TURNS`, `FORGE_ULW_TWO_TURN=0` (one brief per role), `FORGE_ULW_MAX_CONTINUES`.
+Env: `FORGE_ULW=0` (driver off), `FORGE_ULW_AUTO_COMMIT=0`, `FORGE_ULW_VERIFY_TIMEOUT_MS` (20 min), `FORGE_ULW_FIX_ROUNDS`, `FORGE_ULW_STUCK_THRESHOLD`, `FORGE_ULW_NO_PROGRESS_CAP` (3 — the synthesized-cycle wall), `FORGE_ULW_PLANNER_MAX_TURNS`, `FORGE_ULW_PLANNER_PLAN_TURNS` (12), `FORGE_ULW_REVIEWER_LOOK_TURNS` (15), `FORGE_ULW_REVIEWER_MAX_TURNS`, `FORGE_ULW_TWO_TURN=0` (one brief per role), `FORGE_ULW_PROMISE_FULFILL=0` (mandate `fulfilled` ignores unnamed broken/unknown promises), `FORGE_ULW_CLASS_HOLD=0` (architecture recurrence off), `FORGE_ULW_MAX_CONTINUES`.
 
 ## Why this shape
 

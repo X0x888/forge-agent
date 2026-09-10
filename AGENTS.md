@@ -31,7 +31,7 @@ The script clears `.tmp/forge-*` first: `TMPDIR` is pinned inside the repo and f
   - `context-admit.ts` — live counters as mid-conversation messages (never rewrite message[0]); `live-notices.ts`, `interjection.ts`.
   - `decision-memory.ts` (session `decisions.json`) and `project-memory.ts` (`~/.forge/project-memory/*.json` + tracked `.forge/MEMORY.md` mirror).
   - `guideline-audit.ts` — first action of a work turn: survey the `AGENTS.md`-class files the prompt actually loads; **fact defects** (dead paths, missing scripts, PM mismatch, clipped, empty) are fixed in place by the model, **doctrine** (long / conflict / no-commands) goes to a proposal outside the repo for `/guidelines diff|apply|discard` (or `guidelineAutoApply`); evidence-triggered, no Stop block (registry `~/.forge/guidelines/`); a look is an argument that resolves to the file, never a mention of its name.
-  - `run-report.ts` — standalone end-of-run report (`/report`, `/status` head, `forge run --json`.report, `~/.forge/sessions/<id>/report.md`).
+  - `run-report.ts` — standalone end-of-run report (`/report`, `/status` head, `forge run --json`.report, `~/.forge/sessions/<id>/report.md` or `report-N.md` after a re-arm).
 - `src/session/` — sessions under `~/.forge/sessions/<id>/` (`session.json`, `meta.json`, `ulw.json`, `goal.json`, `decisions.json`, `mutations.jsonl`), compaction, request prune, prompt cache, metrics (`~/.forge/metrics.jsonl` = run-level; `rounds.jsonl` = per provider round — never mix them back, the round volume evicted run history).
 - `src/providers/` — xAI / OpenAI-compat / Anthropic / Cursor / Copilot / DeepSeek clients; `errors.ts` recovery tips.
 - `src/auth/` — multi-account credentials (`auth.json` v2, mode 0600, never logged).

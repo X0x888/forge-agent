@@ -122,7 +122,8 @@ describe("two-turn role runner", () => {
     assert.equal(r.mode, "single");
     assert.equal(calls.length, 3);
     assert.equal(calls[2].brief, "SINGLE BRIEF <<# Cycle 3 scout\nLooked: y>>");
-    assert.deepEqual(cleaned, ["sess-1"], "the dead session is released");
+    assert.equal(r.sessionId, "sess-1", "caller persists roles.jsonl then wipes");
+    assert.deepEqual(cleaned, [], "the runner never cleans up — the caller persists then wipes");
     assert.equal(r.second.text, "# Cycle 3 plan\nVerdict: fulfilled");
   });
 

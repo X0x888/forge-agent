@@ -11,7 +11,7 @@
  * short bold-labelled sections with one-or-two-sentence bullets, numbers
  * beside the thing they count. Rendered at ULW release / sit-down and
  * `/done`, by `/report`, at the head of `/status`, in `forge run --json`
- * (`report`), and written to `~/.forge/sessions/<id>/report.md`.
+ * (`report`), and written to `~/.forge/sessions/<id>/report.md` (era 1) or `report-N.md`.
  */
 import fs from "node:fs";
 import path from "node:path";

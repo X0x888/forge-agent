@@ -419,5 +419,7 @@ export function resetCycleOnClear(sessionId: string): void {
     enabled: false,
     phase: "released",
     endReason: "disarmed",
+    // Keep the epoch so the next /ulw does not reuse report-2.md.
+    reportEpoch: s.reportEpoch,
   });
 }

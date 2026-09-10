@@ -432,24 +432,34 @@ function normalizeArchHay(text: string): string {
 
 /** Tokens a Reviewer's Architecture notes contribute to the class hold. */
 export function architectureClassTokens(notes: readonly string[]): string[] {
-  const out = new Set<string>();
+  const distinctive = new Set<string>();
+  const grams = new Set<string>();
   for (const note of notes) {
     const n = String(note || "");
     for (const m of n.matchAll(/`([^`]+)`/g)) {
       const t = m[1].trim().toLowerCase();
-      if (t.length >= 2) out.add(t);
+      if (t.length >= 2) distinctive.add(t);
+    }
+    for (const m of n.matchAll(/[a-z0-9]+(?:-[a-z0-9]+)+/gi)) {
+      distinctive.add(m[0].toLowerCase());
     }
     const words = archWords(n);
     for (let i = 0; i <= words.length - 3; i++) {
-      out.add(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
+      grams.add(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
     }
   }
-  return [...out];
+  return [...distinctive, ...grams];
+}
+
+function archTokenRank(t: string): number {
+  if (t.includes(" ")) return 2;
+  if (t.includes("-")) return 1;
+  return 0;
 }
 
 /**
  * The class the last two shipped reviews both named, if any. Prefers a
- * backticked identifier over a 3-word key; longer when tied.
+ * backticked identifier, then a hyphenated one, then a 3-word key; longer when tied.
  */
 export function recurringArchitectureClass(
   cycles: ReadonlyArray<Pick<CycleRecord, "commitSha" | "architecture">>,
@@ -460,22 +470,20 @@ export function recurringArchitectureClass(
   const b = new Set(architectureClassTokens(shipped[shipped.length - 1].architecture ?? []));
   const shared = a.filter((t) => b.has(t));
   if (!shared.length) return undefined;
-  shared.sort((x, y) => {
-    const xs = x.includes(" ") ? 1 : 0;
-    const ys = y.includes(" ") ? 1 : 0;
-    return xs - ys || y.length - x.length;
-  });
+  shared.sort((x, y) => archTokenRank(x) - archTokenRank(y) || y.length - x.length);
   return shared[0];
+}
+
+function hayMentionsClass(hay: string, cls: string): boolean {
+  const n = normalizeArchHay(cls);
+  if (!n) return false;
+  return ` ${normalizeArchHay(hay)} `.includes(` ${n} `);
 }
 
 /** True when an item title/serves names the class, or Considered: leave-it does. */
 export function planAddressesArchitectureClass(plan: ParsedPlan, cls: string): boolean {
-  const needle = normalizeArchHay(cls);
-  if (!needle) return false;
-  const hit = (s: string) => normalizeArchHay(s).includes(needle);
-  if (plan.items.some((i) => hit(`${i.title} ${i.serves ?? ""}`))) return true;
-  if (hit(plan.title)) return true;
-  return plan.considered.some((c) => LEAVE_IT_RE.test(c) && hit(c));
+  if (plan.items.some((i) => hayMentionsClass(`${i.title} ${i.serves ?? ""}`, cls))) return true;
+  return plan.considered.some((c) => LEAVE_IT_RE.test(c) && hayMentionsClass(c, cls));
 }
 
 export function architectureHoldMessage(cls: string): string {

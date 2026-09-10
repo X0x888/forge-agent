@@ -404,7 +404,16 @@ async function runPlanner(
     }
   }
   await persistAndCleanupRole(s.sessionId, "planner", rt, tt);
-  if (!plan) return { error: "planner produced no parseable plan after a retry", raw, tokens, scout };
+  if (!plan) {
+    const clsHold = classHoldMessage(s);
+    return {
+      error: "planner produced no parseable plan after a retry",
+      raw,
+      tokens,
+      scout,
+      ...(clsHold ? { mustFix: [clsHold] } : {}),
+    };
+  }
   return { plan, raw, tokens, scout };
 }
 
@@ -425,7 +434,7 @@ function synthesizeWorkPlan(
   scout: ScoutResult | undefined,
   kind: "no-plan" | "keep-promise" | "go-deeper",
   opts?: { targets?: CyclePromise[]; mustFix?: string[] },
-): { plan: ParsedPlan; raw: string } {
+): { plan: ParsedPlan; raw: string; mustFix: string[] } {
   const promises = s.promises ?? scout?.parsed?.promises ?? [];
   const unkept = (opts?.targets?.length ? opts.targets : promises.filter((p) => p.state !== "kept"));
   const considered = scout?.parsed?.considered ?? [];
@@ -479,16 +488,24 @@ function synthesizeWorkPlan(
         status: "open",
       },
     ];
-    if (opts?.mustFix?.[0]) {
-      items.unshift({
-        id: "i0",
-        title: opts.mustFix[0],
-        files: [],
-        serves: "the architecture class the last two shipped reviews named",
-        redNow: "the class recurred and the plan did not address or leave it",
-        proof: "the class is collapsed, bounded, or explicitly left",
-        status: "open",
-      });
+  }
+
+  const mustFix = [...(opts?.mustFix ?? [])];
+  const hold = classHoldMessage(s);
+  const cls = hold ? recurringArchitectureClass(s.cycles) : undefined;
+  if (hold && cls) {
+    const preview: ParsedPlan = {
+      title,
+      verdict: "continue",
+      considered,
+      promises,
+      items,
+      outOfScope: [],
+      operator: [],
+    };
+    if (!planAddressesArchitectureClass(preview, cls)) {
+      items = [architectureClassItem(cls), ...items];
+      if (!mustFix.includes(hold)) mustFix.push(hold);
     }
   }
 
@@ -523,7 +540,7 @@ function synthesizeWorkPlan(
     outOfScope: [],
     operator: [],
   };
-  return { plan, raw };
+  return { plan, raw, mustFix };
 }
 
 /**
@@ -580,13 +597,7 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
     const synth = synthesizeWorkPlan(s, scout, "no-plan", { mustFix: out.mustFix });
     s.directExecuteStreak += 1;
     const admitted = await admitPlan(s, rt, synth.plan, synth.raw, out.tokens, scout, reviewForExecutor);
-    if (out.mustFix?.length) {
-      const rec = currentCycleRecord(s);
-      if (rec) {
-        rec.mustFix = [...new Set([...(rec.mustFix ?? []), ...out.mustFix])];
-        saveCycleState(s);
-      }
-    }
+    stampSynthMustFix(s, synth.mustFix);
     return admitted;
   }
 
@@ -674,7 +685,9 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
     rt.log?.(`ULW Planner declared ${s.mandate != null ? "mandate" : "no-mandate"} fulfilled; ${whySynth} — synthesizing a ${kind} cycle (streak ${s.directExecuteStreak + 1}/${noProgressCap()})`);
     const synth = synthesizeWorkPlan(s, scout, kind, outstanding.length ? { targets: outstanding } : undefined);
     s.directExecuteStreak += 1;
-    return admitPlan(s, rt, synth.plan, synth.raw, tokens, scout, reviewForExecutor);
+    const admitted = await admitPlan(s, rt, synth.plan, synth.raw, tokens, scout, reviewForExecutor);
+    stampSynthMustFix(s, synth.mustFix);
+    return admitted;
   }
 
   return admitPlan(s, rt, plan, raw, tokens, scout, reviewForExecutor);
@@ -1390,13 +1403,27 @@ function safe<T>(fn: () => T, fallback: T): T {
   }
 }
 
+function wordBounded(hay: string, needle: string): boolean {
+  const n = needle.trim();
+  if (!n) return false;
+  const esc = n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  return new RegExp(`(?:^|[^a-z0-9])${esc}(?:$|[^a-z0-9])`, "i").test(hay);
+}
+
 function promiseNamedInOperator(p: CyclePromise, operator: string[]): boolean {
-  const blob = operator.join("\n").toLowerCase();
+  const blob = operator.join("\n");
   if (!blob.trim()) return false;
-  const text = p.text.toLowerCase();
-  if (blob.includes(text)) return true;
-  const ids = text.match(/[a-z0-9][a-z0-9-]{4,}/g) ?? [];
-  return ids.some((id) => blob.includes(id));
+  const text = p.text.trim();
+  if (!text) return false;
+  if (wordBounded(blob, text)) return true;
+  const ids = new Set<string>();
+  for (const m of text.matchAll(/`([^`]+)`/g)) {
+    const t = m[1].trim();
+    if (t.length >= 2) ids.add(t);
+  }
+  for (const m of text.matchAll(/[a-z0-9]+(?:-[a-z0-9]+)+/gi)) ids.add(m[0]);
+  for (const m of p.text.matchAll(/[A-Z][a-z0-9]*[A-Z][A-Za-z0-9]*/g)) ids.add(m[0]);
+  return [...ids].some((id) => wordBounded(blob, id));
 }
 
 /** Broken/unknown promises not named on Operator:. Kill-switch restores mandate release. */
@@ -1408,13 +1435,39 @@ function unnamedBrokenOrUnknownPromises(s: CycleState, plan: ParsedPlan): CycleP
   });
 }
 
-function continueArchitectureHold(s: CycleState, plan: ParsedPlan | null): string {
+function classHoldMessage(s: CycleState): string {
   if (isFalsy(process.env.FORGE_ULW_CLASS_HOLD)) return "";
+  const cls = recurringArchitectureClass(s.cycles);
+  return cls ? architectureHoldMessage(cls) : "";
+}
+
+function architectureClassItem(cls: string): CyclePlanItem {
+  return {
+    id: "i0",
+    title: architectureHoldMessage(cls),
+    files: [],
+    serves: "the architecture class the last two shipped reviews named",
+    redNow: "the class recurred and the plan did not address or leave it",
+    proof: "the class is collapsed, bounded, or explicitly left",
+    status: "open",
+  };
+}
+
+function continueArchitectureHold(s: CycleState, plan: ParsedPlan | null): string {
+  const hold = classHoldMessage(s);
+  if (!hold) return "";
   if (!plan || plan.verdict !== "continue") return "";
   const cls = recurringArchitectureClass(s.cycles);
-  if (!cls) return "";
-  if (planAddressesArchitectureClass(plan, cls)) return "";
-  return architectureHoldMessage(cls);
+  if (!cls || planAddressesArchitectureClass(plan, cls)) return "";
+  return hold;
+}
+
+function stampSynthMustFix(s: CycleState, mustFix: string[]): void {
+  if (!mustFix.length) return;
+  const rec = currentCycleRecord(s);
+  if (!rec) return;
+  rec.mustFix = [...new Set([...(rec.mustFix ?? []), ...mustFix])];
+  saveCycleState(s);
 }
 
 function surfaceSitBlocksCommit(

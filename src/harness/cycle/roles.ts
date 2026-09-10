@@ -110,10 +110,10 @@ export async function runRoleTwoTurn(
   });
   if (!second.ok && !second.text.trim()) {
     // The resume itself failed (session gone, provider error before a word):
-    // a fresh single run with the scout inlined, never a release.
-    await safeCleanup(rt, first.sessionId);
+    // a fresh single run with the scout inlined, never a release. Keep the
+    // child id so the caller can append roles.jsonl before wiping.
     const single = await rt.runRole(role, opts.singleBrief(firstText), { cycle: opts.cycle });
-    return { first, second: single, mode: "single" };
+    return { first, second: single, mode: "single", sessionId: first.sessionId };
   }
   return { first, second, mode: "two-turn", sessionId: first.sessionId };
 }

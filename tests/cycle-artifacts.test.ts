@@ -328,23 +328,33 @@ describe("surface sit classifier", () => {
 });
 
 describe("architecture class tokens", () => {
+  const continuePlan = (opts: { title?: string; item?: string; serves?: string; leave?: string }) =>
+    parsePlanArtifact(
+      `# Cycle 3 plan — ${opts.title ?? "theme"}\nVerdict: continue\nLooked: ran it\nConsidered:\n- rough edge: theme\n- leave it — ${opts.leave ?? "the tree runs; the theme is what a user meets first"}\nDirection: theme\nWorth the cycle: x\nItems:\n1. ${opts.item ?? "item"} — files: a.ts — serves: ${opts.serves ?? "first minute"} — red now: not there — proof: npm test\n`,
+    );
+
   it("two shipped reviews sharing chew/Stay pile yield that class; a leave-it or item addresses it", () => {
     const a = ["`chew` and Stay still pile in one module"];
     const b = ["the chew/Stay pile grew another helper"];
-    assert.ok(architectureClassTokens(a).includes("chew stay pile") || architectureClassTokens(a).includes("chew"));
+    assert.ok(architectureClassTokens(a).includes("chew stay pile"));
     const cls = recurringArchitectureClass([
       { commitSha: "aaa", architecture: a },
       { commitSha: "bbb", architecture: b },
     ]);
-    assert.ok(cls);
-    const plan = parsePlanArtifact(
-      `# Cycle 3 plan — theme\nVerdict: continue\nLooked: ran it\nConsidered:\n- rough edge: theme\n- leave it — the chew/Stay pile is next year's work\nDirection: theme\nWorth the cycle: x\nItems:\n1. item — files: a.ts — serves: first minute — red now: not there — proof: npm test\n`,
-    );
-    assert.ok(plan);
-    assert.equal(planAddressesArchitectureClass(plan, cls!), true);
-    const slice = parsePlanArtifact(
-      `# Cycle 3 plan — theme\nVerdict: continue\nLooked: ran it\nConsidered:\n- rough edge: theme\n- leave it — the tree runs; the theme is what a user meets first\nDirection: theme\nWorth the cycle: x\nItems:\n1. item — files: a.ts — serves: first minute — red now: not there — proof: npm test\n`,
-    );
+    assert.equal(cls, "chew stay pile");
+    const left = continuePlan({ leave: "the chew/Stay pile is next year's work" });
+    assert.ok(left);
+    assert.equal(planAddressesArchitectureClass(left, cls!), true);
+    const item = continuePlan({ item: "collapse the chew/Stay pile" });
+    assert.ok(item);
+    assert.equal(planAddressesArchitectureClass(item, cls!), true);
+    const serves = continuePlan({ serves: "the chew stay pile as one module" });
+    assert.ok(serves);
+    assert.equal(planAddressesArchitectureClass(serves, cls!), true);
+    const titled = continuePlan({ title: "collapse the chew/Stay pile" });
+    assert.ok(titled);
+    assert.equal(planAddressesArchitectureClass(titled, cls!), false, "plan title is not addressing");
+    const slice = continuePlan({});
     assert.ok(slice);
     assert.equal(planAddressesArchitectureClass(slice, cls!), false);
   });

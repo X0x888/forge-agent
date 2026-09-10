@@ -9,6 +9,7 @@ import {
   currentCycleAlreadyClosed,
   disarmCycle,
   loadCycleState,
+  resetCycleOnClear,
   saveCycleState,
   setCycleFlag,
   setMaxCycles,
@@ -107,6 +108,10 @@ describe("cycle live-control overlay", () => {
     assert.equal(second.reportEpoch, 2, "HashPet stale era-A report: re-arm is era B");
     assert.equal(second.enabled, true);
     assert.equal(second.endReason, undefined);
+    resetCycleOnClear(sid);
+    assert.equal(loadCycleState(sid)!.reportEpoch, 2, "/clear keeps the epoch");
+    const third = armCycle({ sessionId: sid, mandate: "again", cwd });
+    assert.equal(third.reportEpoch, 3, "next /ulw does not reuse report-2.md");
   });
 
   it("/cycle 0 after a closed cycle says the run stops without starting the next plan", () => {
