@@ -4,17 +4,22 @@
  * Agent screenshots, look HTML and browser profiles belong under
  * ~/.forge/sessions/<id>/looks (or ~/.forge/tmp/playwright-output), never in
  * the project tree. Playwright MCP is launched `--isolated` with that output
- * dir; this module moves leftover looks, removes `.forge/chrome-look*`
- * profiles, and kills Chromium whose --user-data-dir is one of ours.
+ * dir; this module moves leftover looks, removes `.forge/chrome-(look|cft|fresh|…)*`
+ * profiles, and kills Chromium whose --user-data-dir is one of ours (including
+ * /tmp/hashpet-* · mom-* bash-spawned Chrome for Testing).
  */
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { isTruthy } from "./bool.js";
+import { isFalsy, isTruthy } from "./bool.js";
 import { forgeHome } from "./fs.js";
 import { createChildEnv } from "../agent/tools/env-policy.js";
 
-const CHROME_LOOK_DIR_RE = /^chrome-look[^/]*$/i;
+const CHROME_LOOK_DIR_RE = /^chrome-(look|cft|fresh|desk|phone)[^/]*$/i;
+const SESSION_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const TMP_SCRATCH_RE = /hashpet|mom-|maze-|arts-/i;
+const NAMED_PROFILE_RE =
+  /chrome-cft|chrome-fresh|chrome-look|playwright-output|\/browsers\//i;
 
 export function playwrightOutputDir(): string {
   return path.join(forgeHome(), "tmp", "playwright-output");
@@ -25,12 +30,57 @@ export function playwrightKeepOutput(): boolean {
 }
 
 /** Paths this process owns — only browsers whose cmdline cites these die. */
-export function agentBrowserOwnedPaths(workspace?: string): string[] {
+export function agentBrowserOwnedPaths(
+  workspace?: string,
+  sessionId?: string,
+): string[] {
   const out = [playwrightOutputDir(), path.join(forgeHome(), "tmp")];
   if (workspace) {
     out.push(path.join(path.resolve(workspace), ".forge"));
   }
+  if (sessionId && SESSION_SLUG_RE.test(sessionId)) {
+    out.push(path.join(forgeHome(), "sessions", sessionId));
+    out.push(...readSessionLeaseUdds(sessionId));
+  }
   return out;
+}
+
+export function extractUserDataDir(cmd: string): string | undefined {
+  const m = cmd.match(
+    /--user-data-dir(?:\s*=\s*|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))/i,
+  );
+  const v = (m?.[1] || m?.[2] || m?.[3] || "").trim();
+  return v || undefined;
+}
+
+export function extractRemoteDebuggingPort(cmd: string): number | undefined {
+  const m = cmd.match(/--remote-debugging-port(?:\s*=\s*|\s+)(\d+)/i);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return Number.isInteger(n) && n > 0 && n <= 65535 ? n : undefined;
+}
+
+function isTmpAgentProfile(udd: string): boolean {
+  const u = udd.replace(/\\/g, "/");
+  if (!/^(\/private)?\/tmp\//i.test(u)) return false;
+  return TMP_SCRATCH_RE.test(u);
+}
+
+function readSessionLeaseUdds(sessionId: string): string[] {
+  try {
+    const file = path.join(forgeHome(), "sessions", sessionId, "browsers.json");
+    const raw = JSON.parse(fs.readFileSync(file, "utf8")) as {
+      leases?: Array<{ udd?: unknown }>;
+    };
+    if (!Array.isArray(raw.leases)) return [];
+    const out: string[] = [];
+    for (const row of raw.leases) {
+      if (typeof row?.udd === "string" && row.udd.trim()) out.push(row.udd.trim());
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 export function isAgentBrowserCommand(cmd: string, ownedPaths: string[]): boolean {
@@ -40,9 +90,17 @@ export function isAgentBrowserCommand(cmd: string, ownedPaths: string[]): boolea
     const p = raw.replace(/\\/g, "/");
     if (p.length >= 8 && c.includes(p)) return true;
   }
-  // Playwright MCP default profile names, only when the cmdline also
-  // mentions a Forge tmp / .forge path we already checked — do not kill
-  // a user's own mcp-chrome from another tool.
+  const udd = extractUserDataDir(cmd);
+  if (!udd) return false;
+  const u = udd.replace(/\\/g, "/");
+  for (const raw of ownedPaths) {
+    const p = raw.replace(/\\/g, "/");
+    if (p.length >= 8 && (u === p || u.startsWith(`${p}/`) || u.includes(p))) {
+      return true;
+    }
+  }
+  if (isTmpAgentProfile(u)) return true;
+  if (NAMED_PROFILE_RE.test(u)) return true;
   return false;
 }
 
@@ -163,14 +221,42 @@ function listProcesses(): PsRow[] {
   }
 }
 
-/** SIGTERM then SIGKILL browsers whose cmdline cites an owned Forge path. */
-export function killOrphanAgentBrowsers(workspace?: string): number {
-  const owned = agentBrowserOwnedPaths(workspace);
+/** Test helper — same rows killOrphanAgentBrowsers uses when `opts.rows` is omitted. */
+export function _listProcessesForTests(): Array<{ pid: number; cmd: string }> {
+  return listProcesses();
+}
+
+function browserReapDisabled(): boolean {
+  return isFalsy(process.env.FORGE_BROWSER_REAP);
+}
+
+/** SIGTERM browsers whose cmdline cites an owned Forge path (or a leased UDD). */
+export function killOrphanAgentBrowsers(
+  workspace?: string,
+  opts?: {
+    sessionId?: string;
+    rows?: Array<{ pid: number; cmd: string }>;
+    /** Lease reap: cmdline must also cite one of these paths (never a global pkill). */
+    requirePath?: string[];
+  },
+): number {
+  if (browserReapDisabled()) return 0;
+  const owned = [
+    ...agentBrowserOwnedPaths(workspace, opts?.sessionId),
+    ...(opts?.requirePath ?? []),
+  ];
+  const requirePath = (opts?.requirePath ?? [])
+    .map((p) => p.replace(/\\/g, "/"))
+    .filter((p) => p.length >= 8);
   const self = process.pid;
   let n = 0;
-  for (const row of listProcesses()) {
-    if (row.pid === self) continue;
+  for (const row of opts?.rows ?? listProcesses()) {
+    if (row.pid === self || row.pid <= 1) continue;
     if (!isAgentBrowserCommand(row.cmd, owned)) continue;
+    if (requirePath.length) {
+      const c = row.cmd.replace(/\\/g, "/");
+      if (!requirePath.some((p) => c.includes(p))) continue;
+    }
     try {
       process.kill(row.pid, "SIGTERM");
       n += 1;
@@ -188,9 +274,23 @@ export interface BrowserScratchCleanup {
   rehomed: string[];
 }
 
+export type SessionBrowserReapResult = { killed: number; removed: string[] };
+type SessionBrowserReaper = (
+  sessionId: string,
+  opts?: { workspace?: string },
+) => SessionBrowserReapResult;
+
+let sessionBrowserReaper: SessionBrowserReaper | undefined;
+
+/** Wired by browser-lease.ts so cleanup can reap leases without a circular import. */
+export function bindSessionBrowserReaper(fn: SessionBrowserReaper): void {
+  sessionBrowserReaper = fn;
+}
+
 /**
  * Session / MCP teardown: drop chrome-look profiles, wipe Playwright MCP
- * output, reap orphan Chromiums we spawned.
+ * output, reap orphan Chromiums we spawned. When sessionId is set, also
+ * reap that session's bash-spawned leases.
  */
 export function cleanupAgentBrowserScratch(opts: {
   workspace?: string;
@@ -198,6 +298,22 @@ export function cleanupAgentBrowserScratch(opts: {
 }): BrowserScratchCleanup {
   const chromeLooks = opts.workspace ? removeChromeLookDirs(opts.workspace) : [];
   const playwrightWiped = wipePlaywrightOutput();
-  const killed = killOrphanAgentBrowsers(opts.workspace);
-  return { chromeLooks, playwrightWiped, killed, rehomed: [] };
+  let killed = 0;
+  const extraRemoved: string[] = [];
+  if (opts.sessionId && sessionBrowserReaper) {
+    try {
+      const r = sessionBrowserReaper(opts.sessionId, { workspace: opts.workspace });
+      killed += r.killed;
+      extraRemoved.push(...r.removed);
+    } catch {
+      /* fail-open */
+    }
+  }
+  killed += killOrphanAgentBrowsers(opts.workspace, { sessionId: opts.sessionId });
+  return {
+    chromeLooks: [...chromeLooks, ...extraRemoved],
+    playwrightWiped,
+    killed,
+    rehomed: [],
+  };
 }

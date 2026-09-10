@@ -34,8 +34,33 @@ import {
   permissionDeniedTip,
   wrongPackageManagerTip,
 } from "../../util/project-intel.js";
+import {
+  browserLeaseFromCommand,
+  registerBrowserLease,
+} from "../browser-lease.js";
 
 const execAsync = promisify(exec);
+
+/** Chrome outlives the wrapper (CDP); lease before the wait so a hung look still reaps. */
+function maybeLeaseSpawnedBrowser(
+  command: string,
+  ctx: ToolContext,
+  pid?: number,
+): void {
+  try {
+    const parsed = browserLeaseFromCommand(command);
+    if (!parsed) return;
+    registerBrowserLease({
+      sessionId: ctx.sessionId || ctx.session?.meta.id || "anon",
+      udd: parsed.udd,
+      pid,
+      port: parsed.port,
+      cmd: command.slice(0, 800),
+    });
+  } catch {
+    /* fail-open — a missed lease must not fail the tool */
+  }
+}
 
 /** Foreground full suite — timeout is proof=✗; do not skip on consolidation/LAST. */
 export const FULL_SUITE_FOREGROUND_TIP =
@@ -327,6 +352,8 @@ export async function toolBash(
   const missingBackend = ctx.sandboxMissingBackend ?? "fail-closed";
   const env = createShellEnv(process.env);
 
+  maybeLeaseSpawnedBrowser(command, ctx);
+
   if (isTruthy(args.background) || isTruthy(args.run_in_background)) {
     const bgTimeoutRes = resolveTimeoutMs(
       args.timeout_ms,
@@ -393,6 +420,7 @@ export async function toolBash(
       };
     }
   const t = started.task;
+    maybeLeaseSpawnedBrowser(command, ctx, t.pid);
     const bgTimeout = bgTimeoutMs;
     return {
       output:

@@ -23,11 +23,13 @@ export interface McpManagerOptions {
   signal?: AbortSignal;
   /** Skip auto-load (tests). */
   config?: LoadedMcpConfig;
+  sessionId?: string;
 }
 
 export class McpManager {
   private readonly workspace: string;
   private readonly signal?: AbortSignal;
+  private readonly sessionId?: string;
   private readonly clients = new Map<string, McpClient>();
   private readonly disabled = new Set<string>();
   private config: LoadedMcpConfig;
@@ -37,6 +39,7 @@ export class McpManager {
   constructor(opts: McpManagerOptions) {
     this.workspace = opts.workspace;
     this.signal = opts.signal;
+    this.sessionId = opts.sessionId;
     this.config = opts.config ?? loadMcpConfig(opts.workspace);
     for (const [name, cfg] of Object.entries(this.config.servers)) {
       if (cfg.disabled) this.disabled.add(name);
@@ -83,7 +86,10 @@ export class McpManager {
     this.started = false;
     await Promise.all(all.map((c) => c.dispose().catch(() => {})));
     try {
-      cleanupAgentBrowserScratch({ workspace: this.workspace });
+      cleanupAgentBrowserScratch({
+        workspace: this.workspace,
+        sessionId: this.sessionId,
+      });
     } catch {
       /* best-effort — never fail the session over leftover Chromium */
     }

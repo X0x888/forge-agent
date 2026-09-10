@@ -180,6 +180,7 @@ import {
   commitDirtyTree,
   formatLeftUnstagedAdmit,
 } from "../util/git-auto-commit.js";
+import { reapSessionBrowsers } from "./browser-lease.js";
 import { cleanupAgentBrowserScratch } from "../util/look-cleanup.js";
 import { detectProjectIntel } from "../util/project-intel.js";
 import { appendProjectMemory } from "../harness/project-memory.js";
@@ -1192,13 +1193,17 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const mcpAutostart = opts.mcpAutostart !== false;
   const lspAutostart = opts.lspAutostart !== false;
   if (!mcp && mcpAutostart) {
-    mcp = new McpManager({ workspace, signal });
+    mcp = new McpManager({ workspace, signal, sessionId: session.meta.id });
     mcp.start();
     if (subagentDepth === 0) setActiveMcpManager(mcp);
   }
   if (!lsp && lspAutostart) {
     lsp = new LspManager({ workspace, signal });
     if (subagentDepth === 0) setActiveLspManager(lsp);
+  }
+  if (subagentDepth === 0) {
+    exitCleanupWorkspace = workspace;
+    exitCleanupSessionId = session.meta.id;
   }
   installMcpLspExitHook();
   /** Distinct divergent served models seen this run (provider tier routing). */
@@ -3533,6 +3538,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           /* */
         }
       }
+      // 403/400 leaves the TUI alive; reap here because process.exit may never run.
+      try { reapSessionBrowsers(session.meta.id, { workspace }); } catch { /* fail-open */ }
       throw err;
     }
   }
@@ -3834,6 +3841,8 @@ export async function runAgentLoopThroughDrops(
 
 /** Dispose process-scoped MCP/LSP on exit (once). */
 let mcpLspExitHookInstalled = false;
+let exitCleanupWorkspace: string | undefined;
+let exitCleanupSessionId: string | undefined;
 export function installMcpLspExitHook(): void {
   if (mcpLspExitHookInstalled) return;
   mcpLspExitHookInstalled = true;
@@ -3845,12 +3854,13 @@ export function installMcpLspExitHook(): void {
     // Sync best-effort: process is exiting; fire-and-forget dispose.
     void m?.dispose().catch(() => {});
     void l?.dispose().catch(() => {});
-    if (!m) {
-      try {
-        cleanupAgentBrowserScratch({});
-      } catch {
-        /* */
-      }
+    try {
+      cleanupAgentBrowserScratch({
+        workspace: exitCleanupWorkspace,
+        sessionId: exitCleanupSessionId,
+      });
+    } catch {
+      /* */
     }
   };
   process.once("exit", cleanup);

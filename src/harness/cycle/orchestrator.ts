@@ -9,6 +9,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { reapSessionBrowsers } from "../../agent/browser-lease.js";
 import { nowIso } from "../../util/fs.js";
 import { ensureGitRepo } from "../../util/git-ensure.js";
 import { envPositiveInt } from "../../util/env.js";
@@ -1012,6 +1013,11 @@ async function finishCycle(s: CycleState, rt: CycleRuntime, accepted: CheckRun |
     // Docs-only commits are not progress: a rename mill of READMEs would
     // otherwise reset the no-progress wall forever. Source/product files do.
     if (ac.commitKind !== "docs") s.directExecuteStreak = 0;
+    // Bash Chrome outlives the cycle; reap after commit, never during a Reviewer look.
+    safe(() => reapSessionBrowsers(s.sessionId, { workspace: rt.workspace }), {
+      killed: 0,
+      removed: [],
+    });
   } else if (ac.skipped) {
     rt.log?.(`ULW cycle ${s.cycle} commit skipped: ${ac.skipped}`);
   }
