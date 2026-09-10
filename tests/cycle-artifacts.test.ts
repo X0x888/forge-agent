@@ -281,6 +281,9 @@ describe("look artifact parser", () => {
       "Playwright MCP never initialized; opened leftover via bash Chrome — dock is empty",
       false,
     );
+    pin("Playwright MCP never initialized; use bash/browser lease", true);
+    pin("Playwright MCP never initialized — use bash/browser lease", true);
+    pin("Playwright MCP never initialized. I never actually opened anything", true);
     assert.equal(parseLookArtifact("# Cycle 1 look\nIdentity: a pet"), null);
   });
 });

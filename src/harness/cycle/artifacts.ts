@@ -364,10 +364,10 @@ export function parsePlanArtifact(text: string): ParsedPlan | null {
 const LOOK_COULD_NOT_RE =
   /could not run|never opened|did not open popup|playwright mcp never/i;
 const LOOK_NEGATED_OPEN_RE =
-  /could not run|never opened|did not open(?: popup)?|playwright mcp never(?: initialized)?/gi;
-/** Opening evidence after stripping MCP-never / could-not-run — a bash lease still counts. */
+  /could not run|never(?:\s+\w+){0,3}\s+opened|did(?: not|n't) open(?: popup)?|could not open|playwright mcp never(?: initialized)?/gi;
+/** Opening evidence after stripping fail phrases. Bare "lease" is the brief hint, not a look. */
 const LOOK_DID_OPEN_RE =
-  /\b(?:clicked|clicking|loaded|loading|opened|opening|navigated|unpacked|lease)\b|file:\/\/|bash chrome/i;
+  /\b(?:clicked|clicking|click|loaded|loading|load|opened|opening|navigated|unpacked)\b|file:\/\/|bash chrome/i;
 
 /** True when Looked: reports a failed look and does not also describe opening the product. */
 export function lookCouldNotLook(looked: string): boolean {
