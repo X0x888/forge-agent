@@ -1689,6 +1689,7 @@ describe("session metrics + permission timeout", () => {
       ok: false,
       lastErrorCode: "provider_error",
     });
+    assert.equal(crashSpend.turns, 0);
     assert.equal(crashEv.promptTokens, 12_000);
     assert.equal(crashEv.completionTokens, 800);
     assert.equal(crashEv.ok, false);

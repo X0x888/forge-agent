@@ -1508,8 +1508,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let cursorRebaseDue = false;
   /**
    * After two fetch-failed retries, cap outbound vision images and skip a
-   * second reap. Kept for the rest of the turn — inner drop/auth/quota
-   * recovery re-enters doChat and must not resend the look-loop payload.
+   * second reap. Cleared at the start of each for(;;) model turn; kept
+   * across inner drop/auth/quota doChat re-entry in the same turn.
    */
   let visionImageCap: number | undefined;
   let dropRetries = 0;
@@ -2006,6 +2006,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       }
       assertNotAborted(signal);
       turns += 1;
+      session.meta.providerRounds = turns;
+      visionImageCap = undefined;
+      dropRetries = 0;
+      browsersReapedThisChat = false;
 
       if (citeSeen && citeDeltaShouldPoke(citeStaleTurns)) {
         const already = session.messages.some(
@@ -3706,7 +3710,14 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       }
       // True fatals leave the TUI alive; skip blips the outer loop will auto-continue.
       if (!isContinueRecoverableProviderError(err)) {
-        try { reapSessionBrowsers(session.meta.id, { workspace }); } catch { /* fail-open */ }
+        try {
+          reapSessionBrowsers(session.meta.id, {
+            workspace,
+            chromeLooks: false,
+          });
+        } catch {
+          /* fail-open */
+        }
       }
       throw err;
     }

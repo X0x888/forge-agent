@@ -22,6 +22,7 @@ import {
   isLastVerificationStale,
   isSyntheticUserMessage,
 } from "../session/session.js";
+import { snapshotRunSpend } from "../session/metrics.js";
 import { formatSitDownResume } from "./status-card.js";
 import { log } from "../util/log.js";
 import {
@@ -712,12 +713,7 @@ export async function runRepl(opts: {
     abortController = new AbortController();
     // For the end-of-turn change summary: edits with turn > this landed now.
     const turnAtStart = session.meta.turnCount;
-    const spendAtStart = {
-      totalPromptTokens: Number(session.meta.totalPromptTokens) || 0,
-      totalCompletionTokens: Number(session.meta.totalCompletionTokens) || 0,
-      totalCacheReadTokens: Number(session.meta.totalCacheReadTokens) || 0,
-      turnCount: Number(session.meta.turnCount) || 0,
-    };
+    const spendAtStart = snapshotRunSpend(session.meta);
     // Live controls need stdin while working (editor stays open).
     beginTurn();
     pulseHeartbeat();
@@ -1083,10 +1079,16 @@ export async function runRepl(opts: {
               provider: String(config.provider),
               model: config.model,
               cwd: session.meta.cwd,
-              turns: 0,
               stopContinues: 0,
               editCount: session.meta.editCount,
               ...sessionSpendForRunEnd(session.meta, spendAtStart),
+              ...(typeof session.meta.providerRounds === "number" &&
+              session.meta.providerRounds > 0
+                ? {
+                    turns: session.meta.providerRounds,
+                    providerRounds: session.meta.providerRounds,
+                  }
+                : {}),
               aborted: false,
               ok: false,
               headless: false,

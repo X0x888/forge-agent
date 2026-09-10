@@ -122,7 +122,7 @@ export function sessionSpendForRunEnd(
   promptTokens: number;
   completionTokens: number;
   cacheReadTokens: number;
-  turns?: number;
+  turns: number;
   lastRoundPromptTokens?: number;
   lastRoundCacheReadTokens?: number;
   lastRoundCacheRatio?: number;
@@ -145,14 +145,12 @@ export function sessionSpendForRunEnd(
     promptTokens,
     completionTokens,
     cacheReadTokens,
-    ...(from
-      ? {
-          turns: Math.max(
-            0,
-            (Number(meta.turnCount) || 0) - (Number(from.turnCount) || 0),
-          ),
-        }
-      : {}),
+    turns: from
+      ? Math.max(
+          0,
+          (Number(meta.turnCount) || 0) - (Number(from.turnCount) || 0),
+        )
+      : 0,
     ...(lastP > 0 ? { lastRoundPromptTokens: lastP } : {}),
     ...(lastC > 0 ? { lastRoundCacheReadTokens: lastC } : {}),
     ...(lastP > 0

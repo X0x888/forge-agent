@@ -6386,7 +6386,6 @@ async function runHeadless(opts: {
         provider: String(opts.config.provider),
         model: opts.config.model,
         cwd: opts.session.meta.cwd,
-        turns: 0,
         stopContinues: 0,
         editCount: opts.session.meta.editCount,
         lastVerificationCommand:
@@ -6395,6 +6394,13 @@ async function runHeadless(opts: {
         lastEditAt: opts.session.meta.lastEditAt ?? null,
         lastVerificationStale: isLastVerificationStale(opts.session.meta),
         ...sessionSpendForRunEnd(opts.session.meta, spendAtStart),
+        ...(typeof opts.session.meta.providerRounds === "number" &&
+        opts.session.meta.providerRounds > 0
+          ? {
+              turns: opts.session.meta.providerRounds,
+              providerRounds: opts.session.meta.providerRounds,
+            }
+          : {}),
         durationMs: Date.now() - t0,
         aborted: ac.signal.aborted,
         timedOut,
