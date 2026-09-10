@@ -1071,8 +1071,12 @@ export async function runRepl(opts: {
           }
         }
         try {
-          const { appendSessionMetrics, buildRunEndMetrics, sessionSpendForRunEnd } =
-            await import("../session/metrics.js");
+          const {
+            appendSessionMetrics,
+            buildRunEndMetrics,
+            sessionSpendForRunEnd,
+            crashRunEndRounds,
+          } = await import("../session/metrics.js");
           appendSessionMetrics(
             buildRunEndMetrics({
               sessionId: session.meta.id,
@@ -1082,13 +1086,7 @@ export async function runRepl(opts: {
               stopContinues: 0,
               editCount: session.meta.editCount,
               ...sessionSpendForRunEnd(session.meta, spendAtStart),
-              ...(typeof session.meta.providerRounds === "number" &&
-              session.meta.providerRounds > 0
-                ? {
-                    turns: session.meta.providerRounds,
-                    providerRounds: session.meta.providerRounds,
-                  }
-                : {}),
+              ...crashRunEndRounds(session.meta),
               aborted: false,
               ok: false,
               headless: false,

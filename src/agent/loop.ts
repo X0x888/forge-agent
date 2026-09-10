@@ -1443,6 +1443,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   };
 
   let turns = 0;
+  // Per-run counter. Session leftover from the last successful loop must
+  // not leak onto a crash run_end that dies before the first turns += 1.
+  session.meta.providerRounds = 0;
   let finalText = "";
   let stopContinues = 0;
   /** Length / empty / content_filter only — never shared with Stop-blocks. */
@@ -3962,6 +3965,7 @@ export async function runAgentLoopThroughDrops(
   const max = envPositiveInt("FORGE_ULW_AUTO_CONTINUE_MAX", 3);
   let resume = Boolean(opts.resumeWithoutUserMessage);
   let n = 0;
+  let priorRounds = 0;
   for (;;) {
     try {
       return await runAgentLoop({
@@ -3969,6 +3973,8 @@ export async function runAgentLoopThroughDrops(
         resumeWithoutUserMessage: resume,
       });
     } catch (err) {
+      priorRounds += Number(opts.session.meta.providerRounds) || 0;
+      if (priorRounds > 0) opts.session.meta.providerRounds = priorRounds;
       if (off || opts.signal?.aborted) throw err;
       if (!isContinueRecoverableProviderError(err)) throw err;
       let ulwEnabled = Boolean(opts.session.meta.ultrawork);

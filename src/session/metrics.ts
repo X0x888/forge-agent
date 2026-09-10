@@ -159,6 +159,21 @@ export function sessionSpendForRunEnd(
   };
 }
 
+/**
+ * Overlay crash run_end turns with this-run model rounds.
+ * `runAgentLoop` zeros `providerRounds` at start, then stamps local `turns`.
+ * 0 means this invocation never entered a model turn — keep the spend helper's
+ * `turnCount` delta instead of replaying the previous prompt.
+ */
+export function crashRunEndRounds(meta: { providerRounds?: number }): {
+  turns?: number;
+  providerRounds?: number;
+} {
+  const n = Number(meta.providerRounds) || 0;
+  if (!(n > 0)) return {};
+  return { turns: n, providerRounds: n };
+}
+
 /** Run-level events (`run_end` / `session_end`) — what `forge stats` reads. */
 export function metricsPath(): string {
   return path.join(forgeHome(), "metrics.jsonl");

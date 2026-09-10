@@ -118,6 +118,7 @@ import {
   pruneMetrics,
   sessionSpendForRunEnd,
   snapshotRunSpend,
+  crashRunEndRounds,
 } from "./session/metrics.js";
 import {
   acquireSessionLock,
@@ -6394,13 +6395,7 @@ async function runHeadless(opts: {
         lastEditAt: opts.session.meta.lastEditAt ?? null,
         lastVerificationStale: isLastVerificationStale(opts.session.meta),
         ...sessionSpendForRunEnd(opts.session.meta, spendAtStart),
-        ...(typeof opts.session.meta.providerRounds === "number" &&
-        opts.session.meta.providerRounds > 0
-          ? {
-              turns: opts.session.meta.providerRounds,
-              providerRounds: opts.session.meta.providerRounds,
-            }
-          : {}),
+        ...crashRunEndRounds(opts.session.meta),
         durationMs: Date.now() - t0,
         aborted: ac.signal.aborted,
         timedOut,
