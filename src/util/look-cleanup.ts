@@ -10,6 +10,7 @@
  */
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import { isFalsy, isTruthy } from "./bool.js";
 import { forgeHome } from "./fs.js";
@@ -17,9 +18,7 @@ import { createChildEnv } from "../agent/tools/env-policy.js";
 
 const CHROME_LOOK_DIR_RE = /^chrome-(look|cft|fresh|desk|phone)[^/]*$/i;
 const SESSION_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
-const TMP_SCRATCH_RE = /hashpet|mom-|maze-|arts-/i;
-const NAMED_PROFILE_RE =
-  /chrome-cft|chrome-fresh|chrome-look|playwright-output|\/browsers\//i;
+const TMP_BASENAME_RE = /^(hashpet-|mom-|maze-|arts-)/i;
 
 export function playwrightOutputDir(): string {
   return path.join(forgeHome(), "tmp", "playwright-output");
@@ -42,12 +41,12 @@ export function agentBrowserOwnedPaths(
     out.push(path.join(forgeHome(), "sessions", sessionId));
     out.push(...readSessionLeaseUdds(sessionId));
   }
-  return out;
+  return out.filter((p) => !isForbiddenBrowserKillPath(p));
 }
 
 export function extractUserDataDir(cmd: string): string | undefined {
   const m = cmd.match(
-    /--user-data-dir(?:\s*=\s*|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))/i,
+    /--user-data-dir(?:\s*=\s*|\s+)(?:"([^"]+)"|'([^']+)'|([^\s"';&|]+))/i,
   );
   const v = (m?.[1] || m?.[2] || m?.[3] || "").trim();
   return v || undefined;
@@ -60,10 +59,67 @@ export function extractRemoteDebuggingPort(cmd: string): number | undefined {
   return Number.isInteger(n) && n > 0 && n <= 65535 ? n : undefined;
 }
 
+function posixResolve(p: string): string {
+  return path.resolve(p).replace(/\\/g, "/");
+}
+
+function pathVariants(p: string): string[] {
+  const n = posixResolve(p);
+  const out = new Set<string>([n]);
+  if (n.startsWith("/private/tmp/")) out.add(`/tmp/${n.slice("/private/tmp/".length)}`);
+  else if (n.startsWith("/tmp/")) out.add(`/private/tmp/${n.slice("/tmp/".length)}`);
+  if (n === "/private/tmp") out.add("/tmp");
+  else if (n === "/tmp") out.add("/private/tmp");
+  return [...out];
+}
+
+/** Never kill stock Chrome or wipe $HOME / the OS temp root. */
+export function isForbiddenBrowserKillPath(p: string): boolean {
+  const variants = pathVariants(p);
+  const home = posixResolve(os.homedir());
+  for (const n of variants) {
+    if (n === "/" || n === "/tmp" || n === "/private/tmp") return true;
+    if (n === home || (home && home.startsWith(`${n}/`))) return true;
+    if (
+      home &&
+      n.startsWith(`${home}/`) &&
+      /\/(Google\/Chrome|Google\/Chrome Canary|Chromium|Microsoft\/Edge)(\/|$)/i.test(n)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function isTmpAgentProfile(udd: string): boolean {
-  const u = udd.replace(/\\/g, "/");
+  const u = posixResolve(udd);
   if (!/^(\/private)?\/tmp\//i.test(u)) return false;
-  return TMP_SCRATCH_RE.test(u);
+  return TMP_BASENAME_RE.test(path.basename(u));
+}
+
+/** Last-resort UDD match when ownedPaths is empty (process-exit leftovers). */
+function isLastResortAgentUdd(udd: string): boolean {
+  if (isForbiddenBrowserKillPath(udd)) return false;
+  const u = posixResolve(udd);
+  const base = path.basename(u);
+  if (isTmpAgentProfile(u)) return true;
+  if (!CHROME_LOOK_DIR_RE.test(base)) return false;
+  const fh = posixResolve(forgeHome());
+  if (u === fh || u.startsWith(`${fh}/`)) return true;
+  if (u.includes("/.forge/")) return true;
+  if (/^(\/private)?\/tmp\//i.test(u)) return true;
+  return false;
+}
+
+function uddIsUnderOwned(udd: string, owned: string): boolean {
+  if (isForbiddenBrowserKillPath(owned) || isForbiddenBrowserKillPath(udd)) return false;
+  const roots = pathVariants(owned).filter((r) => r.length >= 8);
+  for (const u of pathVariants(udd)) {
+    for (const r of roots) {
+      if (u === r || u.startsWith(`${r}/`)) return true;
+    }
+  }
+  return false;
 }
 
 function readSessionLeaseUdds(sessionId: string): string[] {
@@ -75,7 +131,11 @@ function readSessionLeaseUdds(sessionId: string): string[] {
     if (!Array.isArray(raw.leases)) return [];
     const out: string[] = [];
     for (const row of raw.leases) {
-      if (typeof row?.udd === "string" && row.udd.trim()) out.push(row.udd.trim());
+      if (typeof row?.udd !== "string" || !row.udd.trim()) continue;
+      const udd = row.udd.trim();
+      if (isForbiddenBrowserKillPath(udd)) continue;
+      if (!isLastResortAgentUdd(udd) && !uddIsUnderOwned(udd, forgeHome())) continue;
+      out.push(udd);
     }
     return out;
   } catch {
@@ -86,21 +146,27 @@ function readSessionLeaseUdds(sessionId: string): string[] {
 export function isAgentBrowserCommand(cmd: string, ownedPaths: string[]): boolean {
   const c = cmd.replace(/\\/g, "/");
   if (!/(chrom(e|ium)|msedge|playwright)/i.test(c)) return false;
-  for (const raw of ownedPaths) {
-    const p = raw.replace(/\\/g, "/");
-    if (p.length >= 8 && c.includes(p)) return true;
-  }
   const udd = extractUserDataDir(cmd);
-  if (!udd) return false;
-  const u = udd.replace(/\\/g, "/");
+  if (udd) {
+    if (isForbiddenBrowserKillPath(udd)) return false;
+    for (const raw of ownedPaths) {
+      if (uddIsUnderOwned(udd, raw)) return true;
+    }
+    if (isLastResortAgentUdd(udd)) return true;
+    return false;
+  }
   for (const raw of ownedPaths) {
-    const p = raw.replace(/\\/g, "/");
-    if (p.length >= 8 && (u === p || u.startsWith(`${p}/`) || u.includes(p))) {
+    if (isForbiddenBrowserKillPath(raw)) continue;
+    for (const o of pathVariants(raw).filter((p) => p.length >= 8)) {
+      const idx = c.indexOf(o);
+      if (idx < 0) continue;
+      const before = idx === 0 ? "" : c[idx - 1];
+      const after = c[idx + o.length] ?? "";
+      if (before && !/[= \t"']/.test(before)) continue;
+      if (after && !/[/\s"']/.test(after)) continue;
       return true;
     }
   }
-  if (isTmpAgentProfile(u)) return true;
-  if (NAMED_PROFILE_RE.test(u)) return true;
   return false;
 }
 
@@ -241,21 +307,23 @@ export function killOrphanAgentBrowsers(
   },
 ): number {
   if (browserReapDisabled()) return 0;
+  const requiredRaw = opts?.requirePath ?? [];
+  const requirePath = requiredRaw.filter(
+    (p) => p.length >= 8 && !isForbiddenBrowserKillPath(p),
+  );
+  if (requiredRaw.length && !requirePath.length) return 0;
   const owned = [
     ...agentBrowserOwnedPaths(workspace, opts?.sessionId),
-    ...(opts?.requirePath ?? []),
-  ];
-  const requirePath = (opts?.requirePath ?? [])
-    .map((p) => p.replace(/\\/g, "/"))
-    .filter((p) => p.length >= 8);
+    ...requirePath,
+  ].filter((p) => !isForbiddenBrowserKillPath(p));
   const self = process.pid;
   let n = 0;
   for (const row of opts?.rows ?? listProcesses()) {
     if (row.pid === self || row.pid <= 1) continue;
     if (!isAgentBrowserCommand(row.cmd, owned)) continue;
     if (requirePath.length) {
-      const c = row.cmd.replace(/\\/g, "/");
-      if (!requirePath.some((p) => c.includes(p))) continue;
+      const udd = extractUserDataDir(row.cmd);
+      if (!udd || !requirePath.some((p) => uddIsUnderOwned(udd, p))) continue;
     }
     try {
       process.kill(row.pid, "SIGTERM");

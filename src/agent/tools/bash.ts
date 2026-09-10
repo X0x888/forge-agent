@@ -53,6 +53,7 @@ function maybeLeaseSpawnedBrowser(
     registerBrowserLease({
       sessionId: ctx.sessionId || ctx.session?.meta.id || "anon",
       udd: parsed.udd,
+      workspace: ctx.workspace,
       pid,
       port: parsed.port,
       cmd: command.slice(0, 800),

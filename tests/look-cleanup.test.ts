@@ -75,6 +75,34 @@ describe("look-cleanup", () => {
       false,
     );
     assert.equal(
+      isAgentBrowserCommand(
+        "/Chromium --user-data-dir=/tmp/unrelated",
+        owned,
+      ),
+      false,
+    );
+    assert.equal(
+      isAgentBrowserCommand(
+        "/Chromium --user-data-dir=/Users/x/projects/foo/browsers/profile",
+        owned,
+      ),
+      false,
+    );
+    const stockUdd = path.join(
+      os.homedir(),
+      "Library",
+      "Application Support",
+      "Google",
+      "Chrome",
+    );
+    assert.equal(
+      isAgentBrowserCommand(
+        `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=${stockUdd}`,
+        owned,
+      ),
+      false,
+    );
+    assert.equal(
       isAgentBrowserCommand("vim README.md", owned),
       false,
     );
@@ -134,6 +162,13 @@ describe("look-cleanup", () => {
     const pid = child.pid;
     assert.ok(pid && pid > 1);
     try {
+      const stockUdd = path.join(
+        os.homedir(),
+        "Library",
+        "Application Support",
+        "Google",
+        "Chrome",
+      );
       const killedStock = killOrphanAgentBrowsers(undefined, {
         rows: [
           {
@@ -143,6 +178,18 @@ describe("look-cleanup", () => {
         ],
       });
       assert.equal(killedStock, 0);
+      assert.equal(pidAlive(pid), true);
+
+      const killedStockUdd = killOrphanAgentBrowsers(undefined, {
+        rows: [
+          {
+            pid,
+            cmd: `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=${stockUdd}`,
+          },
+        ],
+        requirePath: [stockUdd],
+      });
+      assert.equal(killedStockUdd, 0);
       assert.equal(pidAlive(pid), true);
 
       const killed = killOrphanAgentBrowsers(undefined, {

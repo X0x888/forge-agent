@@ -3538,8 +3538,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           /* */
         }
       }
-      // 403/400 leaves the TUI alive; reap here because process.exit may never run.
-      try { reapSessionBrowsers(session.meta.id, { workspace }); } catch { /* fail-open */ }
+      // True fatals leave the TUI alive; skip blips the outer loop will auto-continue.
+      if (!isContinueRecoverableProviderError(err)) {
+        try { reapSessionBrowsers(session.meta.id, { workspace }); } catch { /* fail-open */ }
+      }
       throw err;
     }
   }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import {
   browserLeaseFromCommand,
   defaultBrowserUdd,
@@ -12,6 +13,13 @@ import {
   sessionBrowserOwnedPaths,
 } from "../src/agent/browser-lease.js";
 import { inspectSecureFile } from "../src/util/fs.js";
+import { cleanupSubagentSession } from "../src/agent/subagent.js";
+import { createSession, saveSession } from "../src/session/session.js";
+import {
+  _listProcessesForTests,
+  isAgentBrowserCommand,
+  killOrphanAgentBrowsers,
+} from "../src/util/look-cleanup.js";
 
 function withForgeHome(fn: (home: string) => void): void {
   const prevHome = process.env.FORGE_HOME;
@@ -156,5 +164,126 @@ describe("browser-lease", () => {
       assert.equal(fs.existsSync(file), true);
       assert.equal(readLeases(home, "anon").length, 1);
     });
+  });
+
+  it("does not lease or kill stock Chrome with its real UDD", () => {
+    withForgeHome((home) => {
+      const stockUdd = path.join(
+        os.homedir(),
+        "Library",
+        "Application Support",
+        "Google",
+        "Chrome",
+      );
+      const lease = registerBrowserLease({
+        sessionId: "stock",
+        udd: stockUdd,
+        cmd: `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=${stockUdd}`,
+      });
+      assert.equal(lease.id, "skipped");
+      assert.equal(
+        fs.existsSync(path.join(home, "sessions", "stock", "browsers.json")),
+        false,
+      );
+      const killed = killOrphanAgentBrowsers(undefined, {
+        rows: [
+          {
+            pid: process.pid,
+            cmd: `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=${stockUdd}`,
+          },
+        ],
+        requirePath: [stockUdd],
+      });
+      assert.equal(killed, 0);
+    });
+  });
+
+  it("third register with workspace chrome-cft* removes the oldest profile dir", () => {
+    withForgeHome((home) => {
+      process.env.FORGE_BROWSER_LEASE_MAX = "2";
+      process.env.FORGE_BROWSER_LEASE_MACHINE_MAX = "20";
+      const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-cft-ws-"));
+      try {
+        const u1 = path.join(ws, ".forge", "chrome-cft-a");
+        const u2 = path.join(ws, ".forge", "chrome-cft-b");
+        const u3 = path.join(ws, ".forge", "chrome-cft-c");
+        for (const d of [u1, u2, u3]) fs.mkdirSync(d, { recursive: true });
+        const sid = "cftcap";
+        registerBrowserLease({ sessionId: sid, udd: u1, workspace: ws });
+        registerBrowserLease({ sessionId: sid, udd: u2, workspace: ws });
+        registerBrowserLease({ sessionId: sid, udd: u3, workspace: ws });
+        const leases = readLeases(home, sid);
+        assert.equal(leases.length, 2);
+        assert.equal(fs.existsSync(u1), false);
+        assert.equal(fs.existsSync(u2), true);
+        assert.equal(fs.existsSync(u3), true);
+      } finally {
+        fs.rmSync(ws, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("cleanupSubagentSession reaps the child session's browser before deleting the dir", async () => {
+    const prevHome = process.env.FORGE_HOME;
+    const prevKeep = process.env.FORGE_SUBAGENT_KEEP;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-blease-child-"));
+    process.env.FORGE_HOME = home;
+    delete process.env.FORGE_SUBAGENT_KEEP;
+    const udd = `/tmp/hashpet-blease-${process.pid}-${Date.now()}`;
+    fs.mkdirSync(udd, { recursive: true });
+    const fake = spawn(
+      process.execPath,
+      ["-e", "setInterval(()=>{},1e9)", "--", `--user-data-dir=${udd}`, "Chromium"],
+      { stdio: "ignore" },
+    );
+    const pid = fake.pid;
+    try {
+      assert.ok(pid && pid > 1);
+      const sess = createSession({
+        cwd: home,
+        provider: "xai",
+        model: "grok-4",
+        ultrawork: false,
+      });
+      saveSession(sess);
+      const lease = registerBrowserLease({
+        sessionId: sess.meta.id,
+        udd,
+        workspace: home,
+      });
+      assert.notEqual(lease.id, "skipped");
+      await new Promise((r) => setTimeout(r, 200));
+      const row = _listProcessesForTests().find((r) => r.pid === pid);
+      assert.ok(row, `ps missing pid ${pid}`);
+      assert.equal(isAgentBrowserCommand(row.cmd, []), true, row.cmd);
+      await cleanupSubagentSession(sess.meta.id);
+      await new Promise((r) => setTimeout(r, 50));
+      let alive = true;
+      try {
+        process.kill(pid, 0);
+      } catch {
+        alive = false;
+      }
+      assert.equal(alive, false);
+      assert.equal(fs.existsSync(udd), false);
+      assert.equal(fs.existsSync(path.join(home, "sessions", sess.meta.id)), false);
+    } finally {
+      if (prevHome === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prevHome;
+      if (prevKeep === undefined) delete process.env.FORGE_SUBAGENT_KEEP;
+      else process.env.FORGE_SUBAGENT_KEEP = prevKeep;
+      try {
+        if (pid) process.kill(pid, "SIGKILL");
+      } catch {
+        /* */
+      }
+      fake.unref();
+      try {
+        fs.rmSync(udd, { recursive: true, force: true });
+      } catch {
+        /* */
+      }
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });

@@ -39,7 +39,7 @@ interface BrowserLeaseFile {
 
 const SESSION_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const CHROME_SCRATCH_DIR_RE = /^chrome-(look|cft|fresh|desk|phone)[^/]*$/i;
-const TMP_SCRATCH_RE = /hashpet|mom-|maze-|arts-/i;
+const TMP_BASENAME_RE = /^(hashpet-|mom-|maze-|arts-)/i;
 const DEFAULT_SESSION_MAX = 2;
 const DEFAULT_MACHINE_MAX = 6;
 
@@ -160,7 +160,7 @@ export function sessionBrowserOwnedPaths(sessionId: string): string[] {
     path.join(forgeHome(), "sessions", sid, "browsers"),
   ];
   for (const lease of readStore(sid).leases) {
-    if (lease.udd) out.push(lease.udd);
+    if (lease.udd && isReapableBrowserUdd(lease.udd)) out.push(lease.udd);
   }
   return out;
 }
@@ -208,7 +208,7 @@ export function isReapableBrowserUdd(udd: string, workspace?: string): boolean {
     if (parts[0] === "tmp" && parts.length >= 2) return true;
     return false;
   }
-  if (/^(\/private)?\/tmp\//i.test(n) && TMP_SCRATCH_RE.test(n)) {
+  if (/^(\/private)?\/tmp\//i.test(n) && TMP_BASENAME_RE.test(path.basename(n))) {
     return path.basename(n) !== "tmp";
   }
   if (workspace) {
@@ -246,10 +246,12 @@ function reapOneLease(
   lease: BrowserLease,
   opts?: { workspace?: string; dropRecord?: boolean },
 ): { killed: number; removed: string[] } {
-  const killed = killOrphanAgentBrowsers(opts?.workspace, {
-    sessionId,
-    requirePath: [lease.udd],
-  });
+  const killed = isReapableBrowserUdd(lease.udd, opts?.workspace)
+    ? killOrphanAgentBrowsers(opts?.workspace, {
+        sessionId,
+        requirePath: [lease.udd],
+      })
+    : 0;
   const removed: string[] = [];
   const gone = removeUddDir(lease.udd, opts?.workspace);
   if (gone) removed.push(gone);
@@ -303,13 +305,14 @@ function enforceMachineCap(keep?: { sessionId: string; leaseId: string }): Array
 export function registerBrowserLease(opts: {
   sessionId: string;
   udd: string;
+  workspace?: string;
   pid?: number;
   port?: number;
   cmd?: string;
 }): BrowserLease {
   const sessionId = safeSessionId(opts.sessionId);
   const udd = normalizeUdd(opts.udd);
-  if (!udd || udd === path.resolve("/") || udd === path.resolve(os.homedir())) {
+  if (!udd || !isReapableBrowserUdd(udd, opts.workspace)) {
     return {
       id: "skipped",
       udd,
@@ -347,11 +350,17 @@ export function registerBrowserLease(opts: {
     return created;
   });
   for (const extra of sessionExtras) {
-    reapOneLease(sessionId, extra, { dropRecord: false });
+    reapOneLease(sessionId, extra, {
+      dropRecord: false,
+      workspace: opts.workspace,
+    });
   }
   const machineExtras = enforceMachineCap({ sessionId, leaseId: lease.id });
   for (const extra of machineExtras) {
-    reapOneLease(extra.sessionId, extra.lease, { dropRecord: true });
+    reapOneLease(extra.sessionId, extra.lease, {
+      dropRecord: true,
+      workspace: opts.workspace,
+    });
   }
   return lease;
 }
@@ -363,7 +372,9 @@ export function reapSessionBrowsers(
   const sid = safeSessionId(sessionId);
   const data = readStore(sid);
   const requirePath = [
-    ...data.leases.map((l) => l.udd),
+    ...data.leases
+      .map((l) => l.udd)
+      .filter((u) => isReapableBrowserUdd(u, opts?.workspace)),
     path.join(forgeHome(), "sessions", sid, "browsers"),
   ].filter((p) => p.length >= 8);
   let killed = 0;

@@ -18,6 +18,7 @@ import type { McpManager } from "../mcp/manager.js";
 import type { LspManager } from "../lsp/manager.js";
 import { ensureDir, forgeHome } from "../util/fs.js";
 import { envPositiveInt } from "../util/env.js";
+import { reapSessionBrowsers } from "./browser-lease.js";
 import { log } from "../util/log.js";
 import { TOOL_DEFINITIONS } from "./tools/definitions.js";
 import type { PermissionGate } from "./permissions.js";
@@ -1426,6 +1427,17 @@ export async function cleanupSubagentSession(id: string): Promise<void> {
 }
 
 async function cleanupChildSession(id: string): Promise<void> {
+  try {
+    let workspace: string | undefined;
+    try {
+      workspace = loadSession(id)?.meta.cwd;
+    } catch {
+      /* sidecar optional */
+    }
+    reapSessionBrowsers(id, { workspace });
+  } catch {
+    /* fail-open — still delete the child dir */
+  }
   try {
     deleteSessionDetailed(id, { force: true });
   } catch {
