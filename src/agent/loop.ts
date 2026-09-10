@@ -137,7 +137,10 @@ import {
   storeNeedsCheckpoint,
   DEFAULT_CHECKPOINT_KEEP_STEPS,
 } from "../session/checkpoint.js";
-import { expandUserContentWithImages } from "../util/user-images.js";
+import {
+  expandUserContentWithImages,
+  stripOutboundImageParts,
+} from "../util/user-images.js";
 import { expandUserMentions } from "../util/user-mentions.js";
 import { maybeRecordUserConstraint } from "../harness/decision-memory.js";
 import {
@@ -235,7 +238,10 @@ import {
   switchOnAuthFailure,
   switchOnQuotaFailure,
 } from "../auth/accounts.js";
-import { isProviderApiError } from "../providers/errors.js";
+import {
+  isImageDimensionError,
+  isProviderApiError,
+} from "../providers/errors.js";
 import {
   costCapStatus,
   formatCostBudgetLine,
@@ -1421,6 +1427,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let lastFinishReason: string | null = null;
   let autoCommit: LoopResult["autoCommit"];
   let overflowCompactAttempted = false;
+  /** Dimension 400 is bad_request; drop outbound image_url and re-issue once. */
+  let visionImagesStripped = false;
   // max_turns <= 0 means unlimited (config default is 0). A silent 200-cap when
   // the file says 0 was a production footgun for long ULW/CI runs.
   const maxTurns = resolveMaxTurns(config.maxTurns);
@@ -1461,7 +1469,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         log.dim("Cursor Run rebase — slim history onto a new stream");
       }
     }
-    return buildChatRequest(config, session.messages, effortOverride, tools, {
+    const req = buildChatRequest(config, session.messages, effortOverride, tools, {
       conversationId: session.meta.id,
       estimatedTokens: estimated,
       lastApiPromptTokens: session.meta.lastRoundPromptTokens,
@@ -1491,6 +1499,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
       },
     });
+    if (!visionImagesStripped) return req;
+    return { ...req, messages: stripOutboundImageParts(req.messages) };
   };
 
   const requestTokenEstimate = (): number => {
@@ -2386,6 +2396,14 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 throw err2;
               }
             }
+          } else if (isImageDimensionError(err) && !visionImagesStripped) {
+            visionImagesStripped = true;
+            log.warn(
+              "Provider rejected image dimensions — dropping vision parts and retrying once",
+            );
+            events.onStatus?.("Image too small for vision — retrying without images");
+            events.onPhase?.("thinking");
+            response = await doChat();
           } else {
             // OAuth recovery: true token failures (401 + SuperGrok 403
             // "access token could not be validated"). Generic quota 403 must

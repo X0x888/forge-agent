@@ -17,7 +17,12 @@ import {
   lookupExploreMapFile,
   readHasExplicitWindow,
 } from "../../session/explore-map.js";
-import { imageReadReceipt, isImagePath } from "../../util/user-images.js";
+import {
+  imagePixelSize,
+  imageReadReceipt,
+  isImagePath,
+  MAX_IMAGE_BYTES,
+} from "../../util/user-images.js";
 
 function noteRead(
   ctx: ToolContext,
@@ -365,7 +370,21 @@ export async function toolRead(
   if (stat.isFile() && isImagePath(filePath)) {
     const rel = displayRelPath(ctx.workspace, filePath);
     noteRead(ctx, filePath, stat);
-    return { output: imageReadReceipt(rel, stat.size) };
+    let width: number | undefined;
+    let height: number | undefined;
+    if (stat.size > 0 && stat.size <= MAX_IMAGE_BYTES) {
+      try {
+        const buf = await fsp.readFile(filePath);
+        const dim = imagePixelSize(buf);
+        if (dim) {
+          width = dim.width;
+          height = dim.height;
+        }
+      } catch {
+        /* receipt still reports size */
+      }
+    }
+    return { output: imageReadReceipt(rel, stat.size, { width, height }) };
   }
 
   if (stat.isDirectory()) {

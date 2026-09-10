@@ -43,6 +43,18 @@ export function isProviderApiError(err: unknown): err is ProviderApiError {
   return err instanceof ProviderApiError;
 }
 
+const IMAGE_DIMENSION_RE = /image dimensions|too small|at least 8 pixels/i;
+
+/** xAI 400: "Image dimensions 1x1 are too small. Both width and height must be at least 8 pixels." */
+export function isImageDimensionError(err: unknown): boolean {
+  if (isProviderApiError(err)) {
+    if (err.status !== 400 && err.status !== 422) return false;
+    return IMAGE_DIMENSION_RE.test(`${err.body}\n${err.message}`);
+  }
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return IMAGE_DIMENSION_RE.test(msg);
+}
+
 /**
  * Parse Retry-After / retry-after-ms response headers into a delay in ms.
  * Supports delta-seconds and HTTP-date forms (RFC 7231).

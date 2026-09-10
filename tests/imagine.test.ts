@@ -1,20 +1,47 @@
-import { describe, it, before, after } from "node:test";
+import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { executeTool } from "../src/agent/tools/index.js";
 import { toolRead } from "../src/agent/tools/read.js";
-import { expandMessagesForVision } from "../src/agent/loop.js";
+import { expandMessagesForVision, runAgentLoop } from "../src/agent/loop.js";
 import { parseImageHits } from "../src/util/imagine-client.js";
-import { imageReadReceipt } from "../src/util/user-images.js";
+import {
+  imageReadReceipt,
+  loadImageDataUrl,
+} from "../src/util/user-images.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
-import type { ChatMessage } from "../src/providers/types.js";
+import type {
+  ChatMessage,
+  ChatRequest,
+  LLMProvider,
+  ChatResponse,
+} from "../src/providers/types.js";
+import { ProviderApiError } from "../src/providers/errors.js";
+import { createSession } from "../src/session/session.js";
+import { HookRunner } from "../src/harness/hooks.js";
+import { PermissionGate } from "../src/agent/permissions.js";
+import { McpManager } from "../src/mcp/manager.js";
+import { LspManager } from "../src/lsp/manager.js";
 
 const PNG_1X1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64",
 );
+
+function pngWithEdge(n: number): Buffer {
+  const b = Buffer.from(PNG_1X1);
+  b.writeUInt32BE(n, 16);
+  b.writeUInt32BE(n, 20);
+  return b;
+}
+
+const PNG_8X8 = pngWithEdge(8);
+const PNG_32X32 = pngWithEdge(32);
+
+const MAZE_DIMENSION_BODY =
+  "Image dimensions 1x1 are too small. Both width and height must be at least 8 pixels.";
 
 describe("Imagine client parse", () => {
   it("reads url and b64 hits", () => {
@@ -31,47 +58,115 @@ describe("Imagine client parse", () => {
 });
 
 describe("read_file vision", () => {
-  it("returns [[image:]] receipt instead of binary refuse", async () => {
+  it("does not attach a 1×1 PNG (leftover-door class)", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-img-read-"));
     const png = path.join(dir, "shot.png");
     fs.writeFileSync(png, PNG_1X1);
     const r = await toolRead({ path: png }, { workspace: dir });
     assert.notEqual(r.isError, true);
+    assert.doesNotMatch(r.output, /\[\[image:/);
+    assert.match(r.output, /Image:/);
+    assert.match(r.output, /1x1/);
+    assert.match(r.output, /Not attached/);
+    assert.equal(loadImageDataUrl(png, dir), null);
+  });
+
+  it("returns [[image:]] receipt for an 8×8 PNG instead of binary refuse", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-img-read-"));
+    const png = path.join(dir, "shot.png");
+    fs.writeFileSync(png, PNG_8X8);
+    const r = await toolRead({ path: png }, { workspace: dir });
+    assert.notEqual(r.isError, true);
     assert.match(r.output, /\[\[image:shot\.png\]\]/);
     assert.match(r.output, /Image:/);
+    assert.match(r.output, /8x8/);
+    assert.ok(loadImageDataUrl(png, dir));
   });
 });
 
+function visionMsgs(
+  dir: string,
+  receipt: string,
+): ChatMessage[] {
+  return [
+    { role: "user", content: "look" },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "c1",
+          type: "function",
+          function: { name: "read_file", arguments: '{"path":"shot.png"}' },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      tool_call_id: "c1",
+      content: receipt,
+    },
+  ];
+}
+
 describe("expandMessagesForVision tool results", () => {
-  it("appends a user vision turn after tool [[image:]]", () => {
+  it("does not emit image_url for a 1×1 PNG even when [[image:]] is in the tool result", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-vis-"));
     const png = path.join(dir, "shot.png");
     fs.writeFileSync(png, PNG_1X1);
-    const msgs: ChatMessage[] = [
-      { role: "user", content: "look" },
-      {
-        role: "assistant",
-        content: null,
-        tool_calls: [
-          {
-            id: "c1",
-            type: "function",
-            function: { name: "read_file", arguments: '{"path":"shot.png"}' },
-          },
-        ],
-      },
-      {
-        role: "tool",
-        tool_call_id: "c1",
-        content: imageReadReceipt("shot.png", PNG_1X1.length),
-      },
-    ];
-    const out = expandMessagesForVision(msgs, dir);
+    const out = expandMessagesForVision(
+      visionMsgs(dir, `see [[image:shot.png]]`),
+      dir,
+    );
+    const dumped = JSON.stringify(out);
+    assert.doesNotMatch(dumped, /"image_url"/);
+    assert.equal(
+      out.some(
+        (m) =>
+          Array.isArray(m.content) &&
+          m.content.some((p) => p.type === "image_url"),
+      ),
+      false,
+    );
+  });
+
+  it("appends a user vision turn after tool [[image:]] for an 8×8 PNG", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-vis-"));
+    const png = path.join(dir, "shot.png");
+    fs.writeFileSync(png, PNG_8X8);
+    const out = expandMessagesForVision(
+      visionMsgs(
+        dir,
+        imageReadReceipt("shot.png", PNG_8X8.length, { width: 8, height: 8 }),
+      ),
+      dir,
+    );
     const last = out[out.length - 1]!;
     assert.equal(last.role, "user");
     assert.ok(Array.isArray(last.content));
     const parts = last.content as Array<{ type: string }>;
     assert.ok(parts.some((p) => p.type === "image_url"));
+  });
+
+  it("appends image_url for a 32×32 PNG", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-vis-"));
+    const png = path.join(dir, "shot.png");
+    fs.writeFileSync(png, PNG_32X32);
+    const out = expandMessagesForVision(
+      visionMsgs(
+        dir,
+        imageReadReceipt("shot.png", PNG_32X32.length, {
+          width: 32,
+          height: 32,
+        }),
+      ),
+      dir,
+    );
+    const last = out[out.length - 1]!;
+    assert.ok(Array.isArray(last.content));
+    assert.ok(
+      (last.content as Array<{ type: string }>).some((p) => p.type === "image_url"),
+    );
   });
 });
 
@@ -118,5 +213,148 @@ describe("image_gen tool", () => {
     });
     assert.equal(r.isError, true);
     assert.match(r.output, /prompt is required/);
+  });
+});
+
+function hasImageUrl(req: ChatRequest): boolean {
+  return req.messages.some(
+    (m) =>
+      Array.isArray(m.content) &&
+      m.content.some((p) => p && p.type === "image_url"),
+  );
+}
+
+function textReply(text: string): ChatResponse {
+  return {
+    id: "chatcmpl_vis",
+    model: "grok-4.6",
+    message: { role: "assistant", content: text },
+    finish_reason: "stop",
+    usage: { prompt_tokens: 20, completion_tokens: 4, total_tokens: 24 },
+  };
+}
+
+describe("dimension 400 retry", () => {
+  let tmp: string;
+  const prevHome = process.env.FORGE_HOME;
+  const prevMcp = process.env.FORGE_MCP;
+  const prevLsp = process.env.FORGE_LSP;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-vis-retry-"));
+    process.env.FORGE_HOME = path.join(tmp, "home");
+    process.env.FORGE_MCP = "0";
+    process.env.FORGE_LSP = "0";
+    fs.writeFileSync(path.join(tmp, "shot.png"), PNG_8X8);
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.FORGE_HOME;
+    else process.env.FORGE_HOME = prevHome;
+    if (prevMcp === undefined) delete process.env.FORGE_MCP;
+    else process.env.FORGE_MCP = prevMcp;
+    if (prevLsp === undefined) delete process.env.FORGE_LSP;
+    else process.env.FORGE_LSP = prevLsp;
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    } catch {
+      /* */
+    }
+  });
+
+  function harness() {
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4.6",
+    });
+    const config = {
+      ...DEFAULT_CONFIG,
+      workspace: tmp,
+      maxTurns: 2,
+      goal: { ...DEFAULT_CONFIG.goal, autoArm: false, stuckThreshold: 20 },
+    };
+    return {
+      session,
+      config,
+      hooks: new HookRunner(config, tmp),
+      permissions: new PermissionGate({ interactive: false }),
+      mcp: new McpManager({
+        workspace: tmp,
+        config: { enabled: false, servers: {}, sources: [] },
+      }),
+      lsp: new LspManager({
+        workspace: tmp,
+        config: { enabled: false, servers: [], sources: [] },
+      }),
+    };
+  }
+
+  function dimension400(): ProviderApiError {
+    return new ProviderApiError({
+      provider: "xai",
+      status: 400,
+      body: MAZE_DIMENSION_BODY,
+    });
+  }
+
+  it("strips image_url and retries once after a dimension 400", async () => {
+    const h = harness();
+    const reqs: ChatRequest[] = [];
+    const provider: LLMProvider = {
+      id: "xai",
+      async chat(req) {
+        reqs.push(req);
+        if (hasImageUrl(req)) throw dimension400();
+        return textReply("ok without images");
+      },
+      async chatStream(req) {
+        return this.chat(req);
+      },
+    };
+    const result = await runAgentLoop({
+      ...h,
+      provider,
+      userMessage: "look at [[image:shot.png]]",
+      stream: false,
+      disableHarnessAutoArm: true,
+    });
+    assert.equal(result.aborted, false);
+    assert.match(result.finalText, /ok without images/);
+    assert.equal(reqs.length, 2);
+    assert.equal(hasImageUrl(reqs[0]!), true);
+    assert.equal(hasImageUrl(reqs[1]!), false);
+  });
+
+  it("throws on the second dimension 400", async () => {
+    const h = harness();
+    let calls = 0;
+    const provider: LLMProvider = {
+      id: "xai",
+      async chat() {
+        calls += 1;
+        throw dimension400();
+      },
+      async chatStream() {
+        calls += 1;
+        throw dimension400();
+      },
+    };
+    await assert.rejects(
+      () =>
+        runAgentLoop({
+          ...h,
+          provider,
+          userMessage: "look at [[image:shot.png]]",
+          stream: false,
+          disableHarnessAutoArm: true,
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof ProviderApiError);
+        assert.equal(err.status, 400);
+        return true;
+      },
+    );
+    assert.equal(calls, 2);
   });
 });
