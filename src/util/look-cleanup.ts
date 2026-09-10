@@ -345,7 +345,7 @@ export interface BrowserScratchCleanup {
 export type SessionBrowserReapResult = { killed: number; removed: string[] };
 type SessionBrowserReaper = (
   sessionId: string,
-  opts?: { workspace?: string },
+  opts?: { workspace?: string; chromeLooks?: boolean },
 ) => SessionBrowserReapResult;
 
 let sessionBrowserReaper: SessionBrowserReaper | undefined;
@@ -370,7 +370,10 @@ export function cleanupAgentBrowserScratch(opts: {
   const extraRemoved: string[] = [];
   if (opts.sessionId && sessionBrowserReaper) {
     try {
-      const r = sessionBrowserReaper(opts.sessionId, { workspace: opts.workspace });
+      const r = sessionBrowserReaper(opts.sessionId, {
+        workspace: opts.workspace,
+        chromeLooks: false,
+      });
       killed += r.killed;
       extraRemoved.push(...r.removed);
     } catch {

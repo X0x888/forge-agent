@@ -1434,7 +1434,7 @@ async function cleanupChildSession(id: string): Promise<void> {
     } catch {
       /* sidecar optional */
     }
-    reapSessionBrowsers(id, { workspace });
+    reapSessionBrowsers(id, { workspace, chromeLooks: false });
   } catch {
     /* fail-open — still delete the child dir */
   }

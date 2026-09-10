@@ -229,6 +229,9 @@ describe("browser-lease", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-blease-child-"));
     process.env.FORGE_HOME = home;
     delete process.env.FORGE_SUBAGENT_KEEP;
+    const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-blease-ws-"));
+    const lookDir = path.join(ws, ".forge", "chrome-cft-planner");
+    fs.mkdirSync(lookDir, { recursive: true });
     const udd = `/tmp/hashpet-blease-${process.pid}-${Date.now()}`;
     fs.mkdirSync(udd, { recursive: true });
     const fake = spawn(
@@ -240,7 +243,7 @@ describe("browser-lease", () => {
     try {
       assert.ok(pid && pid > 1);
       const sess = createSession({
-        cwd: home,
+        cwd: ws,
         provider: "xai",
         model: "grok-4",
         ultrawork: false,
@@ -249,7 +252,7 @@ describe("browser-lease", () => {
       const lease = registerBrowserLease({
         sessionId: sess.meta.id,
         udd,
-        workspace: home,
+        workspace: ws,
       });
       assert.notEqual(lease.id, "skipped");
       await new Promise((r) => setTimeout(r, 200));
@@ -267,6 +270,11 @@ describe("browser-lease", () => {
       assert.equal(alive, false);
       assert.equal(fs.existsSync(udd), false);
       assert.equal(fs.existsSync(path.join(home, "sessions", sess.meta.id)), false);
+      assert.equal(
+        fs.existsSync(lookDir),
+        true,
+        "child cleanup must not wipe shared workspace chrome-* dirs",
+      );
     } finally {
       if (prevHome === undefined) delete process.env.FORGE_HOME;
       else process.env.FORGE_HOME = prevHome;
@@ -284,6 +292,23 @@ describe("browser-lease", () => {
         /* */
       }
       fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(ws, { recursive: true, force: true });
     }
+  });
+
+  it("reapSessionBrowsers wipes workspace chrome-* dirs unless chromeLooks is false", () => {
+    withForgeHome(() => {
+      const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-blease-looks-"));
+      try {
+        const look = path.join(ws, ".forge", "chrome-cft-planner");
+        fs.mkdirSync(look, { recursive: true });
+        reapSessionBrowsers("looks1", { workspace: ws, chromeLooks: false });
+        assert.equal(fs.existsSync(look), true);
+        reapSessionBrowsers("looks1", { workspace: ws });
+        assert.equal(fs.existsSync(look), false);
+      } finally {
+        fs.rmSync(ws, { recursive: true, force: true });
+      }
+    });
   });
 });

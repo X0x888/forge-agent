@@ -367,7 +367,7 @@ export function registerBrowserLease(opts: {
 
 export function reapSessionBrowsers(
   sessionId: string,
-  opts?: { workspace?: string },
+  opts?: { workspace?: string; chromeLooks?: boolean },
 ): { killed: number; removed: string[] } {
   const sid = safeSessionId(sessionId);
   const data = readStore(sid);
@@ -394,7 +394,9 @@ export function reapSessionBrowsers(
   } catch {
     /* fail-open */
   }
-  if (opts?.workspace) {
+  // Isolation-none children share the parent workspace; wipe look dirs only
+  // on cycle commit / MCP dispose / process exit, never on child-session cleanup.
+  if (opts?.workspace && opts.chromeLooks !== false) {
     try {
       for (const rel of removeChromeLookDirs(opts.workspace)) {
         removed.push(rel);
