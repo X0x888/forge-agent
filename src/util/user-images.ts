@@ -45,7 +45,7 @@ export function mimeForImagePath(p: string): string {
 /** Max image bytes we'll base64-inline (default 4 MiB). */
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
-/** xAI (and peers) 400 below this; failed CDP sits were 1×1. */
+/** xAI rejects edges below 8px. */
 export const MIN_VISION_EDGE = 8;
 
 export function visionMinEdge(): number {

@@ -357,4 +357,43 @@ describe("dimension 400 retry", () => {
     );
     assert.equal(calls, 2);
   });
+
+  it("a generic 400 is fatal immediately and does not strip vision", async () => {
+    const h = harness();
+    let calls = 0;
+    const reqs: ChatRequest[] = [];
+    const provider: LLMProvider = {
+      id: "xai",
+      async chat(req) {
+        calls += 1;
+        reqs.push(req);
+        throw new ProviderApiError({
+          provider: "xai",
+          status: 400,
+          body: "invalid schema for function",
+        });
+      },
+      async chatStream(req) {
+        return this.chat(req);
+      },
+    };
+    await assert.rejects(
+      () =>
+        runAgentLoop({
+          ...h,
+          provider,
+          userMessage: "look at [[image:shot.png]]",
+          stream: false,
+          disableHarnessAutoArm: true,
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof ProviderApiError);
+        assert.equal(err.status, 400);
+        assert.match(err.body, /invalid schema for function/);
+        return true;
+      },
+    );
+    assert.equal(calls, 1);
+    assert.equal(hasImageUrl(reqs[0]!), true);
+  });
 });

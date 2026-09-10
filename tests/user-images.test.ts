@@ -256,6 +256,18 @@ describe("isImageDimensionError", () => {
       ),
       false,
     );
+    // Bare "too small" is other 400s (max_tokens, payload). Re-adding it to
+    // IMAGE_DIMENSION_RE must turn this red.
+    assert.equal(
+      isImageDimensionError(
+        new ProviderApiError({
+          provider: "xai",
+          status: 400,
+          body: "max_tokens is too small",
+        }),
+      ),
+      false,
+    );
     assert.equal(
       isImageDimensionError(
         new ProviderApiError({
