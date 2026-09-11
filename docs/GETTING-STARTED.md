@@ -9,11 +9,10 @@ This page is the first-day path. Harness details live in [HARNESS.md](./HARNESS.
 ```bash
 git clone https://github.com/X0x888/forge-agent.git
 cd forge-agent
-npm install
-npm run build
-npm link          # puts `forge` on your PATH
-# or: ./install.sh
+bash install.sh    # Node 20+, build, put `forge` on PATH. Safe to re-run after git pull.
 ```
+
+`bash install.sh` is also the update: `git pull && bash install.sh`. It relinks even when `npm link` fails (EACCES / a leftover `forge` earlier on PATH). If `forge` is already another tool (Foundry), use `forge-agent`.
 
 Node.js 20+.
 

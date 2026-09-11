@@ -33,11 +33,18 @@ Key capability comparison:
 ```bash
 git clone https://github.com/X0x888/forge-agent.git
 cd forge-agent
+bash install.sh    # Node 20+, build, put `forge` on PATH. Safe to re-run after git pull.
+eval "$(forge completion bash)"   # optional
+```
+
+`bash install.sh` is the update path on a second machine: it rebuilds this clone and relinks even when `npm link` hits EACCES or a leftover `forge` is earlier on PATH. If `forge` is already another tool (Foundry), the launcher is `forge-agent`.
+
+Or step by step:
+
+```bash
 npm install
 npm run build
-npm link          # puts `forge` on your PATH
-# or: ./install.sh
-eval "$(forge completion bash)"   # optional
+npm link          # puts `forge` on your PATH — or just `bash install.sh`
 ```
 
 Or run without linking:

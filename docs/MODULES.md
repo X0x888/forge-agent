@@ -60,6 +60,7 @@ Dense on purpose — each bullet is one module's invariants in the project's own
 
 ## Everything else
 
+- `install.sh` + `scripts/link-forge.mjs` — `bash install.sh` is the install/update path: Node 20+ (loads nvm/fnm/volta/asdf when the current shell lacks it), `npm install` + build, then put `forge` on PATH without dying on `npm link` (EACCES / EEXIST / prefix not on PATH). Writes a launcher that execs this clone's `dist/cli.js` with the Node that built it; never overwrites a foreign `forge` (Foundry); replaces a stale forge-agent bin; `forge-agent` alias when `forge` is taken. Linker report ends with `FORGE_BIN=`.
 - `src/mcp/` — Model Context Protocol (search_mcp / call_mcp); built-in defaults **context7** + **isolated playwright** (`src/mcp/defaults.ts`; output under `~/.forge/tmp/playwright-output`). GitHub source is the native `github` tool (`src/agent/tools/github.ts`), not an MCP.
 - `src/lsp/` — Language Server Protocol; ensure pack TS+Python (+ Rust/Go when detected); `forge lsp ensure`. Agent `lsp({ action: "ensure" })` is a mutation (not plan/read-only) — same gate class as `web_fetch allow_local`.
 - `src/providers/` — LLM clients; `errors.ts` expert recovery tips (`formatProviderError`)

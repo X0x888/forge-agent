@@ -68,6 +68,7 @@
     "CONTRIBUTING.md",
     "SECURITY.md",
     "install.sh",
+    "scripts/link-forge.mjs",
     ".env.example",
     "examples"
   ],

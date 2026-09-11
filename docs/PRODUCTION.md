@@ -5,7 +5,7 @@ Use this before putting Forge on a critical path (CI, shared machines, long ULW 
 ## Install & health
 
 ```bash
-./install.sh                 # Node 20+, build, npm link
+bash install.sh              # Node 20+, build, link (safe to re-run after git pull)
 npm run check                # typecheck + full test suite
 npm run smoke                # build + CLI binary smoke
 npm run ci                   # check + smoke (GitHub Actions)
