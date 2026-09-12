@@ -2,7 +2,7 @@
 
 # AGENTS.md — Forge CLI
 
-Forge is a TypeScript (Node 20+) AI coding agent CLI. The product is the **harness**: blocking Stop hooks, `/goal`, and ULW — a **plan-cycle** driver where a fresh-context Planner writes the plan, the session model executes it, a fresh-context Reviewer revises the cycle diff, and the harness runs the verify command and commits. Everything else (providers, auth, TUI) serves that.
+Forge is a TypeScript (Node 20+) AI coding agent CLI. The product is the **harness**: blocking Stop hooks, `/goal`, and ULW — a **plan-cycle** driver where a fresh-context Planner writes the plan, the session model executes it, a fresh-context Reviewer writes the review, and the harness runs the verify command and commits. Everything else (providers, auth, TUI) serves that.
 
 ## Commands
 

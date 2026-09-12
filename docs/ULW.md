@@ -61,9 +61,9 @@ The mandate only changes where the direction comes from.
 
 | Case | Prompt | What happens |
 |------|--------|--------------|
-| **a — clear goal** | `/ulw add --version with a test` | Cycle 1 plans and ships it. At re-plan the Planner writes `Verdict: fulfilled` and the run stops. |
-| **b — direction** | `/ulw polish the first-run experience` | The direction frames every plan; the run cycles until fulfilled or `/cycle 0`. |
-| **c — no prompt** | `/ulw` | The Planner derives the direction from the product: identity (README, `--help`, manifests, tests as spec) + category research + the tree's gaps. |
+| **a — clear goal** | `/ulw add --version with a test` | Cycle 1 plans and ships it. At re-plan a mandate `Verdict: fulfilled` ends the run (after `Looked:` or a prior commit; broken/unknown kept or named on `Operator:`). |
+| **b — direction** | `/ulw polish the first-run experience` | The direction frames every plan; the run cycles until mandate `fulfilled`, `/cycle 0`, `max_cycles`, Planner `blocked`, or the no-progress wall. |
+| **c — no prompt** | `/ulw` | The Planner derives the direction from the product: identity (README, `--help`, manifests, tests as spec) + category research + the tree's gaps. No-mandate does not end on `fulfilled`. |
 
 Invention and repair are both legitimate in every case; the tree decides which the cycle needs. There is no Bet contract and no mandate classifier. The user's words are passed through verbatim — they are **attention**, not a spec and not a quality ceiling. A laundry-list `/ulw make it more interesting, attractive, addictive, ship-ready` does not license a laundry-list cycle, and `/ulw add --version with a test` does not become a product rewrite. The Planner translates after using the product and knowing the category's bar (a shipped `forge-*` skill, or `web_search` if it does not already know). `Direction:` is that sentence. The Reviewer judges a demanding user of this product, not whether the diff matches the mandate's adjectives.
 

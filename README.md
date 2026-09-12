@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **Unreleased** — **`/ulw` is a plan-cycle driver**: a fresh-context Planner writes each cycle's plan, you (the session model) execute it, the harness runs the verify command (new failures only — pre-existing ones are baselined), a fresh-context Reviewer revises the cycle diff, the check runs again and the cycle commits, then re-plans. Still sit-down Next keys, Cursor provider (hosted Grok **256k**), **`/plan` ↔ `/build`**, apply_patch, `doctor --json`, blocking Stop, `/goal`.
+> **Unreleased** — **`/ulw` is a plan-cycle driver**: a fresh-context Planner writes each cycle's plan, you (the session model) execute it, the harness runs the verify command (new failures only — pre-existing ones are baselined), a fresh-context Reviewer writes the review (Must-fix is the revision channel), the check runs again and the cycle commits, then re-plans. Still sit-down Next keys, Cursor provider (hosted Grok **256k**), **`/plan` ↔ `/build`**, apply_patch, `doctor --json`, blocking Stop, `/goal`.
 
 Key capability comparison:
 
@@ -215,13 +215,13 @@ Auto-arm from prose (default on): prompts like `don't stop until tests pass` or 
 
 ### 3. Ultrawork — the plan-cycle driver (`/ulw`)
 
-Max-autonomy mode. The unit of work is a **cycle**: a fresh-context **Planner** subagent researches the product (identity, category, whole tree) and writes `plan.md`; the session model **executes** the plan's items for as many waves as it takes; a fresh-context **Reviewer** subagent reads the cycle diff as a reviewer and as an architect and writes the review (Must-fix is the revision channel); the harness runs the declared verify command itself and **commits** on green; then it re-plans. `Verdict: fulfilled` releases **only an explicit mandate**, and only after `Looked:` (or a prior commit) with unnamed broken/unknown promises on `Operator:`. A no-mandate run continues until `/cycle 0`, `max_cycles`, Planner `blocked`, or the no-progress wall.
+Max-autonomy mode. The unit of work is a **cycle**: a fresh-context **Planner** subagent researches the product (identity, category, whole tree) and writes `plan.md`; the session model **executes** the plan's items for as many waves as it takes; a fresh-context **Reviewer** subagent reads the cycle diff as a reviewer and as an architect and writes the review (Must-fix is the revision channel); the harness runs the declared verify command itself and **commits** on green; then it re-plans. `Verdict: fulfilled` releases **only an explicit mandate**, and only after `Looked:` (or a prior commit) when broken and unknown promises are kept or named on `Operator:`. A no-mandate run continues until `/cycle 0`, `max_cycles`, Planner `blocked`, or the no-progress wall.
 
 Three prompts, one procedure:
 
 | Case | Prompt | Ends when |
 |------|--------|-----------|
-| clear goal | `/ulw add --version with a test` | mandate `fulfilled` (after `Looked:` or a prior commit; unnamed broken/unknown promises on `Operator:`) |
+| clear goal | `/ulw add --version with a test` | mandate `fulfilled` (after `Looked:` or a prior commit; broken/unknown kept or named on `Operator:`) |
 | direction | `/ulw polish the first-run experience` | mandate `fulfilled`, `/cycle 0`, `max_cycles`, Planner `blocked`, or the no-progress wall |
 | no prompt | `/ulw` | `/cycle 0`, `max_cycles`, Planner `blocked`, or the no-progress wall — not `fulfilled` |
 

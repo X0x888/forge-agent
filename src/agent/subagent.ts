@@ -87,8 +87,8 @@ export type SubagentIsolation = "none" | "worktree";
 /**
  * Harness roles. A role is a subagent the harness launches with an empty
  * transcript and a fixed brief: the Planner writes a cycle plan (read-only,
- * research tools, may spawn explore children); the Reviewer reads the cycle
- * diff and revises in place (full write, no spawn).
+ * research tools, may spawn explore children); the Reviewer writes the
+ * review (look may drive; review turn is documentOnly, no spawn).
  */
 export type SubagentRole = "planner" | "reviewer";
 

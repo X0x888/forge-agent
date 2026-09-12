@@ -2150,7 +2150,7 @@ export async function handleSlash(
             `  plan-cycle mode${state.maxCycles != null ? `  max_cycles=${state.maxCycles}` : ""}${mandate ? "" : "  (no mandate — the Planner derives the direction)"}`,
           ),
         chalk.dim(
-          "Cycle 1: a fresh-context Planner researches (identity, category, whole tree) and writes the plan; you execute it; the harness runs the verify command; a fresh Reviewer revises; the check runs again and the cycle commits; then it re-plans.",
+          "Cycle 1: a fresh-context Planner researches (identity, category, whole tree) and writes the plan; you execute it; the harness runs the verify command; a fresh Reviewer writes the review; the check runs again and the cycle commits; then it re-plans.",
         ),
         chalk.cyan(ULW_LIVE_CONTROLS_HINT),
         ulwCheckTip,

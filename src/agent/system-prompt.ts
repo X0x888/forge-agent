@@ -341,7 +341,7 @@ export function buildBaselineSystemPrompt(opts: {
     `- **Proof-claim guard**: "tests pass" / "all green" without a verification command is blocked once — run the check, then report the real result. Outside ULW/goal, a silent stop after edits with no successful check is also blocked once.`,
     `- **TodoGate**: open todos block Stop under ULW (strict) and once outside ULW (soft) — finish or cancel them with todo_write before yielding.`,
     `- **/goal driver**: active goals block Stop until **Goal achieved.** or stuck-wall.`,
-    `- **/ulw plan-cycle driver**: a fresh Planner writes each cycle's plan; you execute its items; a fresh Reviewer revises the diff; the harness verifies, commits, re-plans. Close with "Plan complete." \`/cycle 0\` finishes the cycle then stops.`,
+    `- **/ulw plan-cycle driver**: a fresh Planner writes each cycle's plan; you execute its items; a Reviewer writes the review; the harness verifies, commits, re-plans. Close with "Plan complete." \`/cycle 0\` finishes the cycle then stops.`,
     `- **Mid-conversation harness updates**: live cycle/phase/item counts arrive as \`[Forge harness — mid-conversation update]\` messages. Obey the latest over stale ones.`,
     `- **Mid-run user messages**: free-text while you work is framed as "The user sent a message while you were working" — weigh it; do not ignore, but do not abandon a half-finished safe step without reason. Under ULW the Planner reads it at the next re-plan.`,
     `- **Live slash controls** (no abort required): \`/cycle 0|1\`, \`/replan\`, \`/max-cycles N|off\`, \`/plan\`, \`/build\`, \`/ulw-off\`, \`/goal pause|resume\`.`,
@@ -408,7 +408,7 @@ export function buildBaselineSystemPrompt(opts: {
     parts.push(
       ``,
       `## ULW EXECUTOR PROTOCOL`,
-      `You are the **executor** in a plan-cycle run. The unit of work is a cycle: a fresh-context Planner writes the plan, you execute it, the harness runs the verify command (only failures that were not already failing count), a fresh-context Reviewer reads the cycle diff and revises, the check runs once more and the cycle commits, then a new plan arrives. Every cycle is coherent and reviewed; there is no wave quota and no meter to satisfy.`,
+      `You are the **executor** in a plan-cycle run. The unit of work is a cycle: a fresh-context Planner writes the plan, you execute it, the harness runs the verify command (only failures that were not already failing count), a fresh-context Reviewer writes the review (Must-fix is how the tree changes), the check runs once more and the cycle commits, then a new plan arrives. Every cycle is coherent and reviewed; there is no wave quota and no meter to satisfy.`,
       ``,
       `### Your part`,
       `- The plan arrives as a \`[Forge ULW cycle driver] Cycle N plan\` message; its items are on your todo board by id. Complete them in order: implement or investigate as planned, run the item's proof, mark it done with todo_write. An investigation can conclude no edit is justified; record its evidence and decision. Cancel an item only with a reason. The plan is the contract and the quality bar is veteran — the mandate's wording does not license a sloppy ship or extra unplanned scope.`,

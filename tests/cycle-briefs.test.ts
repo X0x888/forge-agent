@@ -406,10 +406,12 @@ describe("Reviewer review brief (turn 2)", () => {
   });
 
   it("turn 2 is the document: Must-fix revises the tree, not write access", () => {
-    const b = buildReviewerReviewBrief(input());
-    assert.doesNotMatch(b, /write access/i);
-    assert.doesNotMatch(b, /revise in place/i);
-    assert.match(b, /You do not edit this turn; Must-fix is how the tree changes/);
+    for (const b of [buildReviewerReviewBrief(input()), buildReviewerBrief(input())]) {
+      assert.doesNotMatch(b, /write access/i);
+      assert.doesNotMatch(b, /revise in place/i);
+      assert.doesNotMatch(b, /Revise what you can now/);
+      assert.match(b, /You do not edit this turn; Must-fix is how the tree changes/);
+    }
     const look = buildReviewerLookBrief({
       state: runState(),
       workspace: "/w",
@@ -432,6 +434,8 @@ describe("plan admission", () => {
     });
     assert.match(text, /mandate's wording does not license a sloppy ship/);
     assert.match(text, /extra unplanned scope/);
+    assert.doesNotMatch(text, /reads the cycle diff and revises/);
+    assert.match(text, /writes the review \(Must-fix is how the tree changes\)/);
   });
 });
 

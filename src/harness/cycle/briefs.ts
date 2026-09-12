@@ -656,11 +656,12 @@ export interface ReviewNotesForExecutor {
 }
 
 /**
- * The Reviewer revises the executor's work in place and the next Planner reads
- * the review, but the executor — the author — used to hear none of it, so the
- * same revision was made cycle after cycle. This block is the review turned
- * toward its author: what changed and why, what the board overstated, the
- * shape notes, and the standing instruction that they carry forward.
+ * The Reviewer writes the review (Must-fix is how the tree changes) and the
+ * next Planner reads it, but the executor — the author — used to hear none
+ * of it, so the same Must-fix landed cycle after cycle. This block is the
+ * review turned toward its author: what changed and why, what the board
+ * overstated, the shape notes, and the standing instruction that they carry
+ * forward.
  */
 export function formatReviewNotesForExecutor(r: ReviewNotesForExecutor): string {
   const worth = r.worth ? ` · Worth: ${clipBlock(r.worth, 200).replace(/\n/g, " ")}` : "";
@@ -713,7 +714,7 @@ export function formatPlanAdmission(opts: {
     opts.planText.trim(),
     ``,
     ...(opts.lastReview ? [formatReviewNotesForExecutor(opts.lastReview), ``] : []),
-    `You are the executor. Complete the items in order: implement or investigate as planned, run the item's proof, mark it done with todo_write. An investigation can conclude no edit is justified; record its evidence and decision. Cancel an item only with a reason. Ship at veteran quality — the mandate's wording does not license a sloppy ship or extra unplanned scope. Close with "Plan complete." when every item is done or cancelled. The harness then runs ${opts.verifyCommand ? `\`${opts.verifyCommand}\`` : "the project check"} (only failures that were not already failing before the cycle count), a fresh reviewer reads the cycle diff and revises, the check runs once more and changes commit only after an accepting review and green verification. ${budget}`,
+    `You are the executor. Complete the items in order: implement or investigate as planned, run the item's proof, mark it done with todo_write. An investigation can conclude no edit is justified; record its evidence and decision. Cancel an item only with a reason. Ship at veteran quality — the mandate's wording does not license a sloppy ship or extra unplanned scope. Close with "Plan complete." when every item is done or cancelled. The harness then runs ${opts.verifyCommand ? `\`${opts.verifyCommand}\`` : "the project check"} (only failures that were not already failing before the cycle count), a fresh reviewer writes the review (Must-fix is how the tree changes), the check runs once more and changes commit only after an accepting review and green verification. ${budget}`,
     board,
     `Do not stop mid-item, do not ask the user to choose; Operator: lines are for a secret, an irreversible action, or an external blocker only. What you notice and leave alone goes on one \`Serendipity:\` line in your closer; the next Planner reads it. Live controls: /cycle 0 · /replan · /ulw-off.`,
   ].join("\n");
