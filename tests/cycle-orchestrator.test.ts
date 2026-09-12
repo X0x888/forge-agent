@@ -33,16 +33,16 @@ const PLAN_OK = (n: number, items = 2) =>
     (_, i) => `${i + 1}. ${ITEM(`item ${n}.${i + 1}`, `src/f${i}.ts`)}`,
   ).join("\n")}\nOut of scope:\n- nothing`;
 const PLAN_FULFILLED = `# Cycle 2 plan\nVerdict: fulfilled — the widget exists and is tested`;
-const REVIEW_OK = `# Cycle 1 review\nVerdict: ship\nFulfillment:\n- item — done\nRevisions:\n- none\nMust-fix:\n- none`;
-const REVIEW_MUSTFIX = `# Cycle 1 review\nVerdict: ship-with-revisions\nMust-fix:\n- the flag prints nothing`;
-const REVIEW_REVISED = `# Cycle 1 review\nVerdict: ship-with-revisions\nRevisions:\n- restored the flag output\nMust-fix:\n- none`;
+const REVIEW_OK = `# Cycle 1 review\nVerdict: ship\nFulfillment:\n- item — done\nRevisions:\n- none\nMust-fix:\n- none\nWorth: yes — the card shows`;
+const REVIEW_MUSTFIX = `# Cycle 1 review\nVerdict: ship-with-revisions\nMust-fix:\n- the flag prints nothing\nWorth: yes — the rest of the cycle landed`;
+const REVIEW_REVISED = `# Cycle 1 review\nVerdict: ship-with-revisions\nRevisions:\n- restored the flag output\nMust-fix:\n- none\nWorth: yes — the flag output is restored`;
 const SCOUT = (n: number) =>
   `# Cycle ${n} scout\nIdentity: a CLI for tests, scouted\nLooked: built dist and ran --help; no first-run card\nPromises:\n- README: a first-run card — broken — bare prompt\n- --help lists every command — kept — matches\nConsidered:\n- broken promise: the first-run card — the first thing a new user meets\n- leave it — the CLI works without it`;
 const SCOUT_KEPT = (n: number) =>
   `# Cycle ${n} scout\nIdentity: a CLI for tests, scouted\nLooked: built dist and ran --help; the card shows\nPromises:\n- README: a first-run card — kept — the card shows\n- --help lists every command — kept — matches\nConsidered:\n- go deeper — a flow not walked\n- leave it — it works`;
 const LOOK = (n: number) => `# Cycle ${n} look\nLooked: ran node dist/cli.js in an empty dir — the card shows`;
 const REVIEW_LOOKED =
-  `# Cycle 1 review\nVerdict: ship\nLooked: opened the leftover door in Chrome\nFulfillment:\n- item — done\nRevisions:\n- none\nMust-fix:\n- none`;
+  `# Cycle 1 review\nVerdict: ship\nLooked: opened the leftover door in Chrome\nFulfillment:\n- item — done\nRevisions:\n- none\nMust-fix:\n- none\nWorth: yes — leftover door opened`;
 
 interface FakeOpts {
   planner?: string[];
@@ -467,7 +467,7 @@ describe("cycle orchestrator", () => {
       armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "the flag" }] });
       setCycleFlag(sid, 0);
       const { rt, calls, todos } = fakeRuntime(cwd, {
-        reviewer: [`# Cycle 1 review\nVerdict: ship\nFulfillment:\n- the flag - ${state} - no output\nMust-fix:\n- none`, REVIEW_OK],
+        reviewer: [`# Cycle 1 review\nVerdict: ship\nFulfillment:\n- the flag - ${state} - no output\nMust-fix:\n- none\nWorth: yes — the rest landed`, REVIEW_OK],
       });
       todos.push({ id: "i1", status: "completed" });
       const first = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
@@ -548,7 +548,7 @@ describe("cycle orchestrator", () => {
     armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "the flag" }] });
     let brief = "";
     const base = fakeRuntime(cwd, {
-      reviewer: [`# Cycle 1 review\nVerdict: blocked — the flag deletes user data\nMust-fix:\n- do not delete\n`],
+      reviewer: [`# Cycle 1 review\nVerdict: blocked — the flag deletes user data\nMust-fix:\n- do not delete\nWorth: no — deletes user data\n`],
       planner: [PLAN_OK(2)],
     });
     const rt: CycleRuntime = {
@@ -720,7 +720,7 @@ describe("cycle orchestrator", () => {
     saveCycleState(st);
     fs.writeFileSync(
       rec.planPath,
-      `# Cycle 1 plan — x\nVerdict: continue\n${CONSIDERED}\nDirection: Sit leftover sits with Murmur\nVerify: npm test\nItems:\n1. ${ITEM("the flag", "a.ts")}\nOut of scope:\n- Day-0 hunt \`Nexus ate Philosophy.\` — the next rename\n`,
+      `# Cycle 1 plan — x\nVerdict: continue\nLooked: ran the popup\n${CONSIDERED}\nDirection: Sit leftover sits with Murmur\nWorth the cycle: leftover sits with Murmur in the first minute\nVerify: npm test\nItems:\n1. ${ITEM("the flag", "a.ts")}\nOut of scope:\n- Day-0 hunt \`Nexus ate Philosophy.\` — the next rename\n`,
     );
     let brief = "";
     const base = fakeRuntime(cwd, {
@@ -835,7 +835,7 @@ describe("cycle orchestrator", () => {
     const first = await ensureCyclePlanned(sid, rt);
     assert.doesNotMatch(first!.reanchor!, /The Reviewer's notes/, "no review has happened yet");
     const second = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
-    assert.match(second!.reanchor!, /## The Reviewer's notes on cycle 1 — standing for this run\nVerdict: ship\. The Reviewer shipped the cycle as written; keep that bar\./);
+    assert.match(second!.reanchor!, /## The Reviewer's notes on cycle 1 — standing for this run\nVerdict: ship · Worth: yes — the card shows\. The Reviewer shipped the cycle as written; keep that bar\./);
   });
 
   it("Serendipity lines the executor wrote at its Stops reach the next Planner, newest cycle first", async () => {
@@ -962,7 +962,7 @@ describe("cycle orchestrator", () => {
   });
 
   for (const scenario of [
-    { name: "blocked-review", reviewer: "# Cycle 1 review\nVerdict: blocked\nMust-fix:\n- the changed export is unsafe", clean: true },
+    { name: "blocked-review", reviewer: "# Cycle 1 review\nVerdict: blocked\nMust-fix:\n- the changed export is unsafe\nWorth: no — the changed export is unsafe", clean: true },
     { name: "dirty-tree", reviewer: REVIEW_OK, clean: false },
     { name: "unknown-tree", reviewer: REVIEW_OK, clean: null },
     { name: "unavailable-clean-query", reviewer: REVIEW_OK, clean: undefined },
@@ -1062,7 +1062,7 @@ describe("cycle orchestrator", () => {
     const sid = "orch-isolate-gate";
     const { rt, calls } = fakeRuntime(cwd, {
       planner: [
-        `# Cycle 1 plan — x\nVerdict: continue\n${CONSIDERED}\nVerify: \`npx tsx --test tests/one.test.ts\`\nItems:\n1. ${ITEM("thing", "a.ts")}`,
+        `# Cycle 1 plan — x\nVerdict: continue\nLooked: ran it\n${CONSIDERED}\nDirection: isolate\nWorth the cycle: x\nVerify: \`npx tsx --test tests/one.test.ts\`\nItems:\n1. ${ITEM("thing", "a.ts")}`,
       ],
       reviewer: [REVIEW_OK],
     });
@@ -1117,7 +1117,7 @@ describe("cycle orchestrator", () => {
     });
     const { rt } = fakeRuntime(cwd, {
       reviewer: [
-        `# Cycle 1 review\nLooked: opened leftover\nVerdict: ship\nFulfillment:\n- item — done\nMust-fix:\n- none`,
+        `# Cycle 1 review\nLooked: opened leftover\nVerdict: ship\nFulfillment:\n- item — done\nMust-fix:\n- none\nWorth: yes — leftover opened`,
       ],
     });
     const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
@@ -1136,7 +1136,7 @@ describe("cycle orchestrator", () => {
     });
     const { rt, calls } = fakeRuntime(cwd, {
       reviewer: [
-        `# Cycle 1 review\nLooked: Playwright MCP never initialized\nVerdict: ship\nFulfillment:\n- item — done\nMust-fix:\n- none`,
+        `# Cycle 1 review\nLooked: Playwright MCP never initialized\nVerdict: ship\nFulfillment:\n- item — done\nMust-fix:\n- none\nWorth: yes — shipped from source`,
       ],
     });
     const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
@@ -1156,7 +1156,7 @@ describe("cycle orchestrator", () => {
     });
     const { rt } = fakeRuntime(cwd, {
       reviewer: [
-        `# Cycle 1 review\nLooked: Playwright MCP never initialized\nVerdict: ship\nFulfillment:\n- item — done\nMust-fix:\n- none`,
+        `# Cycle 1 review\nLooked: Playwright MCP never initialized\nVerdict: ship\nFulfillment:\n- item — done\nMust-fix:\n- none\nWorth: yes — shipped from source`,
       ],
     });
     const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
@@ -1204,7 +1204,7 @@ describe("cycle orchestrator — two turns per role", () => {
     armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "ship" }] });
     const { rt, calls, briefs, remembered } = fakeRuntime(cwd, {
       twoTurn: true,
-      reviewer: [LOOK(1), `${REVIEW_OK}\nWorth: yes — the card shows`],
+      reviewer: [LOOK(1), REVIEW_OK],
       planner: [SCOUT(2), PLAN_OK(2)],
     });
     const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
@@ -1281,7 +1281,10 @@ describe("cycle orchestrator — two turns per role", () => {
     assert.equal(calls.filter((c) => c === "role:planner#1").length, 1, "one scout");
     assert.equal(calls.filter((c) => c === "role:planner#2").length, 2, "the plan turn ran twice");
     const retry = briefs[2].brief;
-    assert.match(retry, /did not parse: Considered: missing/);
+    assert.match(retry, /did not parse: Looked: missing/);
+    assert.match(retry, /Direction: missing/);
+    assert.match(retry, /Worth the cycle: missing/);
+    assert.match(retry, /Considered: missing/);
     assert.match(retry, /item 1 \(thing\) has no serves: \/ red now:/);
     assert.doesNotMatch(retry, /## What this run has shipped/, "the retry is a short resumed turn, not the brief again");
     assert.match(retry, /# Cycle 1 plan — <short title>/, "the contract is reprinted");
@@ -1576,7 +1579,7 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
       twoTurn: true,
       reviewer: [
         LOOK(1),
-        "[Forge] maxTurns (80) reached — releasing.\n\n# Cycle 1 review\nVerdict: **ship.**\nFulfillment:\n- item — done\nMust-fix:\n- none",
+        "[Forge] maxTurns (80) reached — releasing.\n\n# Cycle 1 review\nVerdict: **ship.**\nFulfillment:\n- item — done\nMust-fix:\n- none\nWorth: **yes.** — both items landed",
       ],
     });
     const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });

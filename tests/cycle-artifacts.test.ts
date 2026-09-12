@@ -60,9 +60,16 @@ Guidelines: fix: AGENTS.md names npm run lint which does not exist
 Operator: none
 `;
 
+/** Presence-only sit every `continue` plan owes. A failed sit still counts. */
+const LOOK_DIR_WORTH = [
+  "Looked: ran the binary — bare prompt",
+  "Direction: first-run card",
+  "Worth the cycle: a new user should see a card without the docs",
+].join("\n");
+
 /** The smallest continue plan the parser accepts. */
 const MINIMAL = (extra = "") =>
-  `# Cycle 2 plan — x\nVerdict: continue\n${CONSIDERED}\nVerify: npm test\nItems:\n1. ${ITEM("a thing", "a.ts", "npm test")}\n${extra}`;
+  `# Cycle 2 plan — x\nVerdict: continue\n${LOOK_DIR_WORTH}\n${CONSIDERED}\nVerify: npm test\nItems:\n1. ${ITEM("a thing", "a.ts", "npm test")}\n${extra}`;
 
 describe("plan artifact parser", () => {
   it("parses verdict, identity, looked, considered, direction, worth claim, verify, items, out-of-scope, guidelines", () => {
@@ -93,7 +100,7 @@ describe("plan artifact parser", () => {
 
   it("refuses prose under Verify: and reports it", () => {
     const p = parsePlanArtifact(
-      `# Cycle 2 plan — x\nVerdict: continue\n${CONSIDERED}\nVerify: the login flow works end to end\nItems:\n1. ${ITEM("a thing", "a.ts", "npm test")}`,
+      `# Cycle 2 plan — x\nVerdict: continue\n${LOOK_DIR_WORTH}\n${CONSIDERED}\nVerify: the login flow works end to end\nItems:\n1. ${ITEM("a thing", "a.ts", "npm test")}`,
     );
     assert.ok(p);
     assert.equal(p.verifyCommand, undefined);
@@ -102,7 +109,7 @@ describe("plan artifact parser", () => {
 
   it("accepts Verify: none — why", () => {
     const p = parsePlanArtifact(
-      `# Cycle 2 plan — x\nVerdict: continue\n${CONSIDERED}\nVerify: none — this repo has no test runner yet\nItems:\n1. ${ITEM("add one", "a.ts", "npm test")}`,
+      `# Cycle 2 plan — x\nVerdict: continue\n${LOOK_DIR_WORTH}\n${CONSIDERED}\nVerify: none — this repo has no test runner yet\nItems:\n1. ${ITEM("add one", "a.ts", "npm test")}`,
     );
     assert.ok(p);
     assert.equal(p.verifyCommand, undefined);
@@ -134,7 +141,7 @@ describe("plan artifact parser", () => {
     assert.equal(parsePlanArtifact(noLeaveIt), null);
     assert.match(explainPlanParseFailure(noLeaveIt), /leave it/);
     // A bold leave-it entry counts.
-    const bold = `# Cycle 1 plan\nVerdict: continue\nConsidered:\n- rough edge: x — y\n- **leave it** — fine as is\nVerify: npm test\nItems:\n1. ${ITEM("a", "a.ts", "npm test")}`;
+    const bold = `# Cycle 1 plan\nVerdict: continue\n${LOOK_DIR_WORTH}\nConsidered:\n- rough edge: x — y\n- **leave it** — fine as is\nVerify: npm test\nItems:\n1. ${ITEM("a", "a.ts", "npm test")}`;
     assert.ok(parsePlanArtifact(bold));
   });
 
@@ -146,8 +153,29 @@ describe("plan artifact parser", () => {
     assert.equal(parsePlanArtifact(noRed), null);
     assert.match(explainPlanParseFailure(noRed), /item 1 .*red now:/);
     // `red now: unchecked — why` is a valid labelled line.
-    const unchecked = `# Cycle 1 plan\nVerdict: continue\n${CONSIDERED}\nVerify: npm test\nItems:\n1. a thing — files: a.ts — serves: the job — red now: unchecked, needs a browser — proof: npm test`;
+    const unchecked = `# Cycle 1 plan\nVerdict: continue\n${LOOK_DIR_WORTH}\n${CONSIDERED}\nVerify: npm test\nItems:\n1. a thing — files: a.ts — serves: the job — red now: unchecked, needs a browser — proof: npm test`;
     assert.ok(parsePlanArtifact(unchecked));
+  });
+
+  it("a continue plan without Looked, Direction, or Worth the cycle does not parse; a failed sit is a look", () => {
+    const onlyShape = `# Cycle 1 plan\nVerdict: continue\n${CONSIDERED}\nVerify: npm test\nItems:\n1. ${ITEM("a", "a.ts", "npm test")}`;
+    assert.equal(parsePlanArtifact(onlyShape), null);
+    assert.match(explainPlanParseFailure(onlyShape), /Looked:/);
+    assert.match(explainPlanParseFailure(onlyShape), /Direction:/);
+    assert.match(explainPlanParseFailure(onlyShape), /Worth the cycle:/);
+    const noLooked = `# Cycle 1 plan\nVerdict: continue\nLooked:\n${CONSIDERED}\nDirection: first-run card\nWorth the cycle: x\nVerify: npm test\nItems:\n1. ${ITEM("a", "a.ts", "npm test")}`;
+    assert.equal(parsePlanArtifact(noLooked), null);
+    assert.match(explainPlanParseFailure(noLooked), /Looked:/);
+    const noDirection = `# Cycle 1 plan\nVerdict: continue\nLooked: ran it\n${CONSIDERED}\nWorth the cycle: x\nVerify: npm test\nItems:\n1. ${ITEM("a", "a.ts", "npm test")}`;
+    assert.equal(parsePlanArtifact(noDirection), null);
+    assert.match(explainPlanParseFailure(noDirection), /Direction:/);
+    const noWorth = `# Cycle 1 plan\nVerdict: continue\nLooked: ran it\n${CONSIDERED}\nDirection: first-run card\nVerify: npm test\nItems:\n1. ${ITEM("a", "a.ts", "npm test")}`;
+    assert.equal(parsePlanArtifact(noWorth), null);
+    assert.match(explainPlanParseFailure(noWorth), /Worth the cycle:/);
+    const failedSit = `# Cycle 1 plan\nVerdict: continue\nLooked: could not run — Playwright MCP never initialized; Godot grey\n${CONSIDERED}\nDirection: first-run card\nWorth the cycle: x\nVerify: npm test\nItems:\n1. ${ITEM("a", "a.ts", "npm test")}`;
+    const p = parsePlanArtifact(failedSit);
+    assert.ok(p);
+    assert.match(p.looked ?? "", /could not run/);
   });
 
   it("explainPlanParseFailure lists every defect and says so when the plan is fine", () => {
@@ -249,7 +277,10 @@ describe("scout artifact parser", () => {
       { text: "Recovery after restart", state: "unknown", seen: "cannot restart the service here" },
       { text: "Offline delivery", state: "unknown" },
     ];
-    assert.deepEqual(parseScoutArtifact(promises)?.promises, expected);
+    assert.deepEqual(
+      parseScoutArtifact(`Looked: could not run — recovery fixture unavailable\n${promises}`)?.promises,
+      expected,
+    );
     assert.deepEqual(parsePlanArtifact(`Verdict: fulfilled\n${promises}`)?.promises, expected);
   });
 
@@ -276,6 +307,17 @@ describe("scout artifact parser", () => {
     for (const label of ["# Cycle 3 scout", "Identity:", "Looked:", "Promises:", "kept | broken | absent | unknown | limited", "Considered:", "leave it"]) {
       assert.ok(c.includes(label), label);
     }
+  });
+
+  it("a scout without Looked: is incomplete; an empty Looked is not a look", () => {
+    const noLook = `# Cycle 1 scout\nIdentity: a\nPromises:\n- x — kept\nConsidered:\n- leave it — fine`;
+    assert.equal(parseScoutArtifact(noLook), null);
+    const emptyLook = `# Cycle 1 scout\nIdentity: a\nLooked:\nPromises:\n- x — kept\nConsidered:\n- leave it — fine`;
+    assert.equal(parseScoutArtifact(emptyLook), null);
+    const failedLook = `# Cycle 1 scout\nIdentity: a\nLooked: could not run — Playwright MCP never initialized\nPromises:\n- x — unknown — MCP down\nConsidered:\n- leave it — fine`;
+    const s = parseScoutArtifact(failedLook);
+    assert.ok(s);
+    assert.match(s.looked ?? "", /could not run/);
   });
 });
 
@@ -476,25 +518,33 @@ describe("review artifact parser", () => {
     assert.deepEqual(r.operator, []);
   });
 
-  it("a review without a verdict does not parse; Looked: is optional", () => {
+  it("a review without a verdict does not parse; Looked: is optional; Worth: yes|no is required", () => {
     assert.equal(parseReviewArtifact("looks fine to me"), null);
     assert.equal(parseReviewArtifact("looks fine to me\n**Goal achieved.**"), null);
-    const r = parseReviewArtifact("Verdict: ship");
+    const r = parseReviewArtifact("Verdict: ship\nWorth: yes — the card shows");
     assert.equal(r?.verdict, "ship");
     assert.equal(r?.looked, undefined);
+    assert.match(r?.worth ?? "", /^yes/);
     assert.match(explainReviewParseFailure("looks fine to me"), /no Verdict:/);
     assert.match(explainReviewParseFailure("Verdict: maybe"), /not ship/);
-    assert.equal(explainReviewParseFailure("Verdict: ship"), "");
+    assert.equal(parseReviewArtifact("Verdict: ship"), null);
+    assert.match(explainReviewParseFailure("Verdict: ship"), /Worth:/);
+    assert.equal(parseReviewArtifact("Verdict: ship\nWorth: maybe"), null);
+    assert.match(explainReviewParseFailure("Verdict: ship\nWorth: maybe"), /Worth:/);
+    assert.equal(explainReviewParseFailure("Verdict: ship\nWorth: yes"), "");
+    const boldNo = parseReviewArtifact("Verdict: ship\nWorth: **no** — a one-word rename");
+    assert.ok(boldNo);
+    assert.match(boldNo.worth ?? "", /^no\b/i);
   });
 
   it("ship and blocked verdicts parse; the contract names the sections", () => {
-    assert.equal(parseReviewArtifact("Verdict: ship")?.verdict, "ship");
-    assert.equal(parseReviewArtifact("Verdict: **ship.**")?.verdict, "ship");
+    assert.equal(parseReviewArtifact("Verdict: ship\nWorth: yes")?.verdict, "ship");
+    assert.equal(parseReviewArtifact("Verdict: **ship.**\nWorth: **yes.**")?.verdict, "ship");
     assert.equal(
-      parseReviewArtifact("[Forge] maxTurns (80) reached — releasing.\n\n# Cycle 11 review\nVerdict: ship — both items landed")?.verdict,
+      parseReviewArtifact("[Forge] maxTurns (80) reached — releasing.\n\n# Cycle 11 review\nVerdict: ship — both items landed\nWorth: yes — both items landed")?.verdict,
       "ship",
     );
-    assert.equal(parseReviewArtifact("Verdict: blocked — secret missing")?.verdict, "blocked");
+    assert.equal(parseReviewArtifact("Verdict: blocked — secret missing\nWorth: no — cannot review")?.verdict, "blocked");
     const c = reviewArtifactContract(2);
     for (const label of ["Verdict:", "Looked:", "Fulfillment:", "Revisions:", "Must-fix:", "Architecture:", "Worth:"]) {
       assert.ok(c.includes(label), label);

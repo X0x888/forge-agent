@@ -316,6 +316,9 @@ export function explainPlanParseFailure(text: string): string {
   if (verdict !== "continue") return "";
   const items = bullets(sections.get("items")).map(parsePlanItemLine);
   if (items.length === 0) problems.push("Verdict: continue with an empty Items: list");
+  if (!paragraph(sections.get("looked"))) {
+    problems.push("Looked: missing or empty (what you ran or opened — or: could not run — why; an empty Looked is not a look)");
+  }
   const considered = bullets(sections.get("considered"));
   if (considered.length < 2) {
     problems.push(
@@ -323,6 +326,12 @@ export function explainPlanParseFailure(text: string): string {
     );
   } else if (!considered.some((c) => LEAVE_IT_RE.test(c))) {
     problems.push("Considered: has no `leave it` entry (say why leaving the product as it stands lost)");
+  }
+  if (!paragraph(sections.get("direction"))) {
+    problems.push("Direction: missing or empty (this cycle's intended benefit, in your words after using the product)");
+  }
+  if (!paragraph(sections.get("worth-the-cycle"))) {
+    problems.push("Worth the cycle: missing or empty (why this beats leaving it for the user in Identity)");
   }
   items.forEach((it, i) => {
     const missing = [!it.serves ? "serves:" : "", !it.redNow ? "red now:" : ""].filter(Boolean);
@@ -362,6 +371,9 @@ function parsePlanArtifactFromSections(text: string): ParsedPlan | null {
   const { verdict, note } = parsePlanVerdict(firstLine(sections.get("verdict")));
   const items = bullets(sections.get("items")).map(parsePlanItemLine);
   const considered = bullets(sections.get("considered"));
+  const looked = paragraph(sections.get("looked"));
+  const direction = paragraph(sections.get("direction"));
+  const worthClaim = paragraph(sections.get("worth-the-cycle"));
   const verifyRaw = firstLine(sections.get("verify"));
   let verifyCommand: string | undefined;
   let verifyNone: string | undefined;
@@ -378,10 +390,12 @@ function parsePlanArtifactFromSections(text: string): ParsedPlan | null {
     }
   }
   if (verdict === "continue") {
-    // The shape a continue plan owes (forge-shape: the roads not taken,
-    // leave-it among them; forge-surface: every item traceable to the job;
-    // forge-redgreen: every item red before it is planned). Presence only.
+    // Presence only: Looked/Direction/Worth the cycle must be nonempty (a
+    // failed sit — "could not run — why" — is a look); forge-shape: the
+    // roads not taken, leave-it among them; forge-surface: every item
+    // traceable to the job; forge-redgreen: every item red before it is planned.
     if (items.length === 0) return null;
+    if (!looked || !direction || !worthClaim) return null;
     if (considered.length < 2 || !considered.some((c) => LEAVE_IT_RE.test(c))) return null;
     if (items.some((i) => !i.serves || !i.redNow)) return null;
   }
@@ -390,10 +404,10 @@ function parsePlanArtifactFromSections(text: string): ParsedPlan | null {
     verdict,
     verdictNote: note,
     identity: paragraph(sections.get("identity")),
-    direction: paragraph(sections.get("direction")),
-    looked: paragraph(sections.get("looked")),
+    direction,
+    looked,
     considered,
-    worthClaim: paragraph(sections.get("worth-the-cycle")),
+    worthClaim,
     promises: parsePromiseLines(sections.get("promises")),
     verifyCommand,
     verifyNone,
@@ -597,13 +611,15 @@ export function architectureHoldMessage(cls: string): string {
   return `the last two shipped reviews named the architecture class \`${cls}\`; a continue plan must include an item whose title/serves mentions that class, or leave it that class in Considered: or Out of scope:`;
 }
 
-/** The Planner's turn-1 document. Null only when none of its sections is there. */
+/** The Planner's turn-1 document. Null when none of its sections is there, or Looked: is missing or empty. */
 export function parseScoutArtifact(text: string): ParsedScout | null {
   const sections = splitSections(text);
   if (!["identity", "looked", "promises", "considered"].some((k) => sections.has(k))) return null;
+  const looked = paragraph(sections.get("looked"));
+  if (!looked) return null;
   return {
     identity: paragraph(sections.get("identity")),
-    looked: paragraph(sections.get("looked")),
+    looked,
     promises: parsePromiseLines(sections.get("promises")),
     considered: bullets(sections.get("considered")),
   };
@@ -618,6 +634,9 @@ export function explainReviewParseFailure(text: string): string {
   }
   const verdict = parseReviewVerdict(firstLine(sections.get("verdict")));
   if (!verdict) return "Verdict: is not ship, ship-with-revisions, or blocked";
+  const worthRaw = firstLine(sections.get("worth"));
+  if (!worthRaw) return "no Worth: line (need `yes` | `no`)";
+  if (!parseReviewWorth(worthRaw)) return "Worth: is not yes or no";
   return "";
 }
 
@@ -634,6 +653,13 @@ function parseReviewVerdict(raw: string | undefined): ReviewVerdict | null {
   if (/^ship-with-revisions\b/.test(t) || /^ship with revisions\b/.test(t)) return "ship-with-revisions";
   if (/^ship\b/.test(t)) return "ship";
   if (/^blocked\b/.test(t)) return "blocked";
+  return null;
+}
+
+function parseReviewWorth(raw: string | undefined): "yes" | "no" | null {
+  const t = stripMarkdownTicks((raw || "").trim().toLowerCase());
+  if (/^yes\b/.test(t)) return "yes";
+  if (/^no\b/.test(t)) return "no";
   return null;
 }
 
@@ -680,6 +706,7 @@ function parseReviewArtifactFromSections(text: string): CycleReviewNotes | null 
   const sections = splitSections(text);
   const verdict = parseReviewVerdict(firstLine(sections.get("verdict")));
   if (!verdict) return null;
+  if (!parseReviewWorth(firstLine(sections.get("worth")))) return null;
   const fulfillment = bullets(sections.get("fulfillment")).map((b) => {
     const m = b.match(/^(.*?)\s+(?:—|–|-|:)\s*(done|partial|missing)\b\s*(?:[—–:-]\s*)?(.*)$/i);
     if (!m) return { item: b, state: "partial" as const };
