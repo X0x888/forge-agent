@@ -728,6 +728,30 @@ function parseReviewArtifactFromSections(text: string): CycleReviewNotes | null 
   };
 }
 
+/**
+ * Resume backfill: labelled Direction/Looked without the continue admit
+ * gates, so a pre-contract plan.md can still restore the ledger.
+ */
+export function readPlanRecordLabels(text: string): { direction?: string; looked?: string } {
+  const sections = splitSections(stripRoleBudgetPrefix(String(text || "")));
+  return {
+    direction: paragraph(sections.get("direction")),
+    looked: paragraph(sections.get("looked")),
+  };
+}
+
+/**
+ * Resume backfill: labelled Architecture/Worth without the Worth: yes|no
+ * approve gate, so a shipped review.md can still name the class.
+ */
+export function readReviewRecordLabels(text: string): { architecture: string[]; worth?: string } {
+  const sections = splitSections(stripRoleBudgetPrefix(String(text || "")));
+  return {
+    architecture: bullets(sections.get("architecture")),
+    worth: paragraph(sections.get("worth")),
+  };
+}
+
 /** The exact shape the Planner's first turn ends with — written before it is handed the record. */
 export function scoutArtifactContract(cycle: number): string {
   return [

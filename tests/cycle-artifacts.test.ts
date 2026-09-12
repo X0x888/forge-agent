@@ -17,6 +17,8 @@ import {
   parsePlanItemLine,
   parseReviewArtifact,
   parseScoutArtifact,
+  readPlanRecordLabels,
+  readReviewRecordLabels,
   planAddressesArchitectureClass,
   planCollapsesArchitectureClass,
   planArtifactContract,
@@ -176,6 +178,15 @@ describe("plan artifact parser", () => {
     const p = parsePlanArtifact(failedSit);
     assert.ok(p);
     assert.match(p.looked ?? "", /could not run/);
+  });
+
+  it("resume backfill reads Direction/Looked from a continue plan the admit parser refuses", () => {
+    const plan = `# Cycle 1 plan — x\nVerdict: continue\nLooked: ran the popup\n${CONSIDERED}\nDirection: leftover sits with Murmur\nVerify: npm test\nItems:\n1. ${ITEM("a", "a.ts", "npm test")}`;
+    assert.equal(parsePlanArtifact(plan), null, "no Worth the cycle: — does not admit");
+    assert.deepEqual(readPlanRecordLabels(plan), {
+      direction: "leftover sits with Murmur",
+      looked: "ran the popup",
+    });
   });
 
   it("explainPlanParseFailure lists every defect and says so when the plan is fine", () => {
@@ -545,6 +556,11 @@ describe("review artifact parser", () => {
       "ship",
     );
     assert.equal(parseReviewArtifact("Verdict: blocked — secret missing\nWorth: no — cannot review")?.verdict, "blocked");
+    const unapproved = `# Cycle 1 review\nVerdict: ship\nArchitecture:\n- two formatters, one sentence\nWorth: a user would notice the card`;
+    assert.equal(parseReviewArtifact(unapproved), null, "Worth: is not yes|no — does not approve");
+    const labels = readReviewRecordLabels(unapproved);
+    assert.deepEqual(labels.architecture, ["two formatters, one sentence"]);
+    assert.match(labels.worth ?? "", /user would notice/);
     const c = reviewArtifactContract(2);
     for (const label of ["Verdict:", "Looked:", "Fulfillment:", "Revisions:", "Must-fix:", "Architecture:", "Worth:"]) {
       assert.ok(c.includes(label), label);

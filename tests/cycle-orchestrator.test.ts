@@ -706,6 +706,45 @@ describe("cycle orchestrator", () => {
     assert.match(brief, /## Mandate\nadd a widget/);
   });
 
+  it("resume backfill restores Direction/Looked/Architecture/Worth from artifacts the admit parsers refuse", async () => {
+    const sid = "orch-resume-labels";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "the flag" }] });
+    const st = loadCycleState(sid)!;
+    st.phase = "plan";
+    const rec = st.cycles[0];
+    rec.commitSha = "aaa";
+    rec.endedAt = new Date().toISOString();
+    rec.reviewVerdict = "ship";
+    rec.direction = undefined;
+    rec.looked = undefined;
+    rec.worth = undefined;
+    rec.architecture = undefined;
+    rec.planPath = path.join(cycleArtifactsDir(sid, 1), "plan.md");
+    rec.reviewPath = path.join(cycleArtifactsDir(sid, 1), "review.md");
+    const { saveCycleState } = await import("../src/harness/cycle/state.js");
+    saveCycleState(st);
+    fs.mkdirSync(path.dirname(rec.planPath), { recursive: true });
+    fs.writeFileSync(
+      rec.planPath,
+      `# Cycle 1 plan — x\nVerdict: continue\nLooked: ran the popup\n${CONSIDERED}\nDirection: leftover sits with Murmur\nVerify: npm test\nItems:\n1. ${ITEM("the flag", "a.ts")}\n`,
+    );
+    fs.writeFileSync(
+      rec.reviewPath,
+      `# Cycle 1 review\nVerdict: ship\nArchitecture:\n- two formatters, one sentence\nWorth: a user would notice the card\n`,
+    );
+    const { rt, briefs } = fakeRuntime(cwd, { planner: [PLAN_OK(2)] });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.equal(out?.planAdmitted, true);
+    const s = loadCycleState(sid)!;
+    assert.equal(s.cycles[0].direction, "leftover sits with Murmur");
+    assert.equal(s.cycles[0].looked, "ran the popup");
+    assert.deepEqual(s.cycles[0].architecture, ["two formatters, one sentence"]);
+    assert.match(s.cycles[0].worth ?? "", /user would notice/);
+    const plannerBrief = briefs.find((b) => b.role === "planner")!.brief;
+    assert.match(plannerBrief, /leftover sits with Murmur/);
+    assert.match(plannerBrief, /two formatters, one sentence/);
+  });
+
   it("the Planner brief is a ledger of what shipped, not the last plan's body: direction, verdict, worth — never Out of scope", async () => {
     const sid = "orch-ledger";
     armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "the flag" }] });

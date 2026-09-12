@@ -36,6 +36,8 @@ import {
   parsePlanArtifact,
   parseReviewArtifact,
   parseScoutArtifact,
+  readPlanRecordLabels,
+  readReviewRecordLabels,
   lookInfraFailed,
   isLeaveItEntry,
   planAddressesArchitectureClass,
@@ -349,22 +351,19 @@ async function runPlanner(
 > {
   const lastPlanAt = currentCycleRecord(s)?.startedAt ?? s.startedAt;
   const next = s.cycle + 1;
-  // Older records (before direction/worth were stamped) read them back from
-  // the artifacts so a resumed run gets the same ledger.
+  // Older records (before direction/worth were stamped) read labelled
+  // Direction/Looked/Architecture/Worth back from the artifacts without the
+  // admit/approve gates — a pre-contract plan.md can still name Direction.
   for (const c of s.cycles) {
     if (!c.direction && c.planPath) {
-      const p = parsePlanArtifact(readArtifact(c.planPath));
-      if (p) {
-        c.direction = p.direction;
-        c.looked = p.looked;
-      }
+      const labels = readPlanRecordLabels(readArtifact(c.planPath));
+      if (labels.direction) c.direction = labels.direction;
+      if (!c.looked && labels.looked) c.looked = labels.looked;
     }
     if (c.worth === undefined && !c.architecture && c.reviewPath) {
-      const r = parseReviewArtifact(readArtifact(c.reviewPath));
-      if (r) {
-        c.architecture = r.architecture;
-        c.worth = r.worth;
-      }
+      const labels = readReviewRecordLabels(readArtifact(c.reviewPath));
+      if (labels.architecture.length) c.architecture = labels.architecture;
+      if (labels.worth !== undefined) c.worth = labels.worth;
     }
   }
   const gitStatus = safe(() => rt.gitStatus(), "");
