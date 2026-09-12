@@ -183,7 +183,7 @@ import {
 import { reapSessionBrowsers } from "./browser-lease.js";
 import { cleanupAgentBrowserScratch } from "../util/look-cleanup.js";
 import { detectProjectIntel } from "../util/project-intel.js";
-import { appendProjectMemory } from "../harness/project-memory.js";
+import { replacePrefixedProjectMemory } from "../harness/project-memory.js";
 import {
   describeGuidelineFile,
   formatGuidelineStatusLine,
@@ -548,6 +548,8 @@ function applyVerificationCredit(opts: {
   cls: VerificationRunClass;
   command: string;
   preferred?: string[];
+  /** Harness cycle gate — stamps lastVerificationCommand even when ULW is armed. */
+  fromHarnessGate?: boolean;
 }): void {
   const { harnessStats, meta, cls } = opts;
   if (!cls.ran) return;
@@ -565,11 +567,14 @@ function applyVerificationCredit(opts: {
     }
   }
   try {
-    applyVerificationTrail(meta, {
-      command: opts.command,
-      isError: !cls.passed,
-      preferredCheckCommands: opts.preferred,
-    });
+    const ulwArmed = !opts.fromHarnessGate && cycleActive(loadActiveCycle(meta.id));
+    if (!ulwArmed) {
+      applyVerificationTrail(meta, {
+        command: opts.command,
+        isError: !cls.passed,
+        preferredCheckCommands: opts.preferred,
+      });
+    }
     if (meta.lastVerificationOk === true) {
       if (opts.proofPoke) noteGreenVerification(opts.proofPoke);
     } else if (meta.lastVerificationOk === false) {
@@ -1865,6 +1870,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               },
               command: run.command,
               preferred,
+              fromHarnessGate: true,
             });
             saveSession(session);
           },
@@ -1946,26 +1952,20 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           },
           rememberIdentity: (text) => {
             try {
-              appendProjectMemory(workspace, { text: `Identity: ${text}`, kind: "fact", source: "agent" });
+              replacePrefixedProjectMemory(workspace, "Identity:", [`Identity: ${text}`.slice(0, 400)]);
             } catch {
               /* project memory is best-effort */
             }
           },
           rememberPromises: (promises) => {
-            // One fact row per promise as last inspected; the store dedupes on
-            // text, so a promise adds a row only when its state changes. Where
-            // it was seen stays on ulw.json — it is rewritten every cycle and
-            // would grow the tracked MEMORY.md mirror by a row per rewording.
-            for (const p of promises.slice(0, 24)) {
-              try {
-                appendProjectMemory(workspace, {
-                  text: `Promise: ${p.text} — ${p.state}`.slice(0, 400),
-                  kind: "fact",
-                  source: "agent",
-                });
-              } catch {
-                /* project memory is best-effort */
-              }
+            try {
+              replacePrefixedProjectMemory(
+                workspace,
+                "Promise:",
+                promises.slice(0, 24).map((p) => `Promise: ${p.text} — ${p.state}`.slice(0, 400)),
+              );
+            } catch {
+              /* project memory is best-effort */
             }
           },
           log: (line) => log.info(chalk.magenta(line)),

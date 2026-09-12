@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   appendProjectMemory,
+  replacePrefixedProjectMemory,
   archiveProjectMemory,
   clearProjectMemory,
   formatProjectMemoryForPrompt,
@@ -74,6 +75,14 @@ describe("project memory", () => {
     } catch {
       /* */
     }
+  });
+
+  it("replaces Promise: rows instead of appending siblings", () => {
+    appendProjectMemory(ws, { kind: "fact", text: "Promise: climb — broken", source: "agent" });
+    appendProjectMemory(ws, { kind: "fact", text: "Promise: climb — kept", source: "agent" });
+    replacePrefixedProjectMemory(ws, "Promise:", ["Promise: climb — kept", "Promise: shop — absent"]);
+    const active = listActiveProjectMemory(ws).map((r) => r.text);
+    assert.deepEqual(active, ["Promise: climb — kept", "Promise: shop — absent"]);
   });
 
   it("keys by resolved root", () => {

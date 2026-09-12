@@ -1543,6 +1543,132 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     assert.equal(calls.filter((c) => c === "role:reviewer#2").length, 2, "look then review then retry");
   });
 
+  it("a completed look plus unlabelled closer does not invent a review", async () => {
+    const sid = "orch-parse-salvage";
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      verifyCommand: "npm test",
+      maxCycles: 1,
+      items: [{ title: "ship the widget", proof: "npm test" }],
+    });
+    const { rt, calls } = fakeRuntime(cwd, {
+      twoTurn: true,
+      reviewer: [LOOK(1), "looks fine to me\n**Goal achieved.**", "still prose"],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r?.committed?.sha, undefined);
+    assert.equal(r?.committed?.skipped, "review blocked");
+    assert.equal(loadCycleState(sid)!.cycles[0].reviewVerdict, "blocked");
+    assert.ok(!calls.some((c) => c.startsWith("commit:")));
+  });
+
+  it("a labelled Verdict after maxTurns is a review, not a parse miss", async () => {
+    const sid = "orch-labelled-salvage";
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      verifyCommand: "npm test",
+      maxCycles: 1,
+      items: [{ title: "ship the widget", proof: "npm test" }],
+    });
+    const { rt, calls } = fakeRuntime(cwd, {
+      twoTurn: true,
+      reviewer: [
+        LOOK(1),
+        "[Forge] maxTurns (80) reached — releasing.\n\n# Cycle 1 review\nVerdict: **ship.**\nFulfillment:\n- item — done\nMust-fix:\n- none",
+      ],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r?.committed?.sha, "a labelled Verdict buried after the budget prefix still commits");
+    assert.equal(loadCycleState(sid)!.cycles[0].reviewVerdict, "ship");
+    assert.ok(calls.some((c) => c.startsWith("commit:")));
+  });
+
+  it("kernel evidence on an infra look does not block a surface-claim cycle", async () => {
+    const sid = "orch-kernel-look";
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      verifyCommand: "npm test",
+      maxCycles: 1,
+      items: [{ title: "Stay dock leftover", proof: "open leftover door" }],
+    });
+    const { rt } = fakeRuntime(cwd, {
+      twoTurn: true,
+      reviewer: [
+        `# Cycle 1 look\nLooked: [Forge] maxTurns (15) reached — walk() tape green; npm test 12/12`,
+        REVIEW_OK,
+      ],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r?.committed?.sha, "kernel look is a valid look when the GUI lease died");
+  });
+
+  it("npm test in Looked: is not a kernel look", async () => {
+    const sid = "orch-gate-is-not-look";
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      verifyCommand: "npm test",
+      maxCycles: 1,
+      items: [{ title: "Stay dock leftover", proof: "open leftover door" }],
+    });
+    const { rt, calls } = fakeRuntime(cwd, {
+      twoTurn: true,
+      reviewer: [
+        `# Cycle 1 look\nLooked: [Forge] maxTurns (15) reached — npm test 12/12`,
+        REVIEW_OK,
+      ],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r?.committed?.sha, undefined);
+    assert.equal(r?.committed?.skipped, "review blocked");
+    assert.ok(!calls.some((c) => c.startsWith("commit:")));
+    assert.match(loadCycleState(sid)!.lastReview?.mustFix[0] ?? "", /look infrastructure failed/);
+  });
+
+  it("/cycle 0 with items done skips a dead look when the review labelled Verdict", async () => {
+    const sid = "orch-cycle0-skip-look";
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      verifyCommand: "npm test",
+      maxCycles: 1,
+      items: [{ title: "Stay dock leftover", proof: "open leftover door", status: "done" }],
+    });
+    assert.equal(setCycleFlag(sid, 0).ok, true);
+    const { rt, calls } = fakeRuntime(cwd, {
+      twoTurn: true,
+      reviewer: [
+        `# Cycle 1 look\nLooked: [Forge] maxTurns (15) reached — releasing.`,
+        REVIEW_OK,
+      ],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r?.committed?.sha, "/cycle 0 does not block a labelled ship on a dead look");
+    assert.ok(calls.some((c) => c.startsWith("commit:")));
+  });
+
+  it("a starved Planner's scout candidates become the synthesized items and keep the gate", async () => {
+    const sid = "orch-synth-scout-items";
+    const scout = `# Cycle 1 scout
+Identity: a CLI
+Looked: ran --help
+Considered:
+- restow the title door — first session still has stock Start
+- leave it — the match already pops
+`;
+    const { rt } = fakeRuntime(cwd, { twoTurn: true, planner: [scout, "prose", "still prose"] });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: null, cwd });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.equal(out?.planAdmitted, true);
+    const s = loadCycleState(sid)!;
+    assert.match(s.items[0]?.title ?? "", /restow the title door/i);
+    assert.doesNotMatch(s.items[0]?.title ?? "", /From the scout's findings/);
+  });
+
   it("/cycle 0 during the next Planner does not write the next scout.md", async () => {
     const sid = "orch2-cycle0-no-scout";
     armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test" });

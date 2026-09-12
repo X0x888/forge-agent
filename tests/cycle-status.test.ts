@@ -74,7 +74,7 @@ describe("/cycle status", () => {
     s.directExecuteStreak = 2;
     s.cycles[1].plannerStatus = "scout-admitted";
     const text = formatUlwStatus(s);
-    assert.match(text, /Synthesized streak: 2/);
+    assert.match(text, /Planner starved → Direct execute 2\/3/);
     assert.match(text, /Planner: scout-admitted/);
   });
 });

@@ -46,7 +46,9 @@ export function formatUlwBadge(s: CycleState | null | undefined): string {
     : "";
   const cap = s.maxCycles != null ? `/${s.maxCycles}` : "";
   const last = s.cycleZeroRequested ? " LAST" : "";
-  return `ULW c${s.cycle}${cap} ${phase}${items}${last}`;
+  const synth =
+    s.directExecuteStreak > 0 ? ` synth ${s.directExecuteStreak}/3` : "";
+  return `ULW c${s.cycle}${cap} ${phase}${items}${last}${synth}`;
 }
 
 /** `cycle=3 phase=execute wave=4 items=2/7` — admit fingerprints and logs. */
@@ -94,8 +96,10 @@ function cycleRow(c: CycleRecord): string {
 function promiseTally(s: CycleState): string {
   const p = s.promises ?? [];
   if (!p.length) return "";
-  const n = (state: "kept" | "broken" | "absent" | "unknown") => p.filter((x) => x.state === state).length;
-  return `${n("kept")} kept · ${n("broken")} broken · ${n("absent")} absent${n("unknown") ? ` · ${n("unknown")} unknown` : ""}`;
+  const n = (state: "kept" | "broken" | "absent" | "unknown" | "limited") =>
+    p.filter((x) => x.state === state).length;
+  const limited = n("limited");
+  return `${n("kept")} kept · ${n("broken")} broken · ${n("absent")} absent${n("unknown") ? ` · ${n("unknown")} unknown` : ""}${limited ? ` · ${limited} limited` : ""}`;
 }
 
 export function formatUlwStatus(s: CycleState | null | undefined): string {
@@ -123,7 +127,9 @@ export function formatUlwStatus(s: CycleState | null | undefined): string {
   }
   if (s.verifyCommand) lines.push(`  Verify: ${s.verifyCommand}`);
   if (s.directExecuteStreak > 0) {
-    lines.push(`  Synthesized streak: ${s.directExecuteStreak} (no-progress wall at 3)`);
+    lines.push(
+      `  Planner starved → Direct execute ${s.directExecuteStreak}/3 (no-progress wall; /cycle 0 stops)`,
+    );
   }
   const lastCycle = s.cycles[s.cycles.length - 1];
   if (lastCycle?.plannerStatus && lastCycle.plannerStatus !== "planned") {
@@ -193,7 +199,7 @@ export function cycleReportFacts(s: CycleState | null | undefined): {
   for (const m of last?.mustFix ?? []) notDone.push(`Must-fix: ${m}`);
   // Unkept promises need repair; unknown promises still need evidence.
   for (const p of s.promises ?? []) {
-    if (p.state === "kept") continue;
+    if (p.state === "kept" || p.state === "limited") continue;
     notDone.push(`Promise ${p.state}: ${p.text}${p.seen ? ` — ${p.seen}` : ""}`);
   }
   const needsYou: string[] = [];

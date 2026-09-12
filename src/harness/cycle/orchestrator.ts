@@ -31,11 +31,13 @@ import {
   extractSerendipityLines,
   isSurfaceSit,
   lookCouldNotLook,
+  lookHasKernelEvidence,
   parseLookArtifact,
   parsePlanArtifact,
   parseReviewArtifact,
   parseScoutArtifact,
   lookInfraFailed,
+  isLeaveItEntry,
   planAddressesArchitectureClass,
   planArtifactContract,
   planCollapsesArchitectureClass,
@@ -63,6 +65,7 @@ import {
 import { decideAtStop, syncItemsFromTodos, type CycleAction, type StopFacts } from "./machine.js";
 import {
   plannerPlanTurns,
+  reviewerDocumentTurns,
   reviewerLookTurns,
   roleBody,
   roleTokens,
@@ -496,7 +499,9 @@ function synthesizeWorkPlan(
   opts?: { targets?: CyclePromise[]; mustFix?: string[] },
 ): { plan: ParsedPlan; raw: string; mustFix: string[] } {
   const promises = s.promises ?? scout?.parsed?.promises ?? [];
-  const unkept = (opts?.targets?.length ? opts.targets : promises.filter((p) => p.state !== "kept"));
+  const unkept = (opts?.targets?.length
+    ? opts.targets
+    : promises.filter((p) => p.state !== "kept" && p.state !== "limited"));
   const considered = scout?.parsed?.considered ?? [];
   let consideredOut = [...considered];
   const looked = scout?.parsed?.looked ?? "";
@@ -534,21 +539,29 @@ function synthesizeWorkPlan(
       },
     ];
   } else {
-    title = "Direct execute — ship what the scout found";
-    direction =
-      "The Planner could not produce a plan within its budget. Use the scout's evidence to select one worthwhile improvement for this product's users or maintainers. Investigate first when the evidence is incomplete.";
-    items = [
-      {
-        id: "i1",
-        title:
-          "From the scout's findings, reproduce the highest-value gap in a core workflow or consequential risk and improve it. If the scout found nothing concrete, exercise the product through its public interface and record evidence before choosing a change. Do not manufacture production edits to fill a cycle; an investigation with no justified change should report its findings and limits.",
-        files: [],
-        serves: "the product's core job and the people who depend on it",
-        redNow: looked ? `the scout saw: ${looked.slice(0, 200)}` : "use the product and find it",
-        proof: "a reproducible observation or measurement of the selected gap, plus the project gate for changes",
-        status: "open",
-      },
-    ];
+    const fromScout = itemsFromScout(scout);
+    if (fromScout.length) {
+      title = fromScout[0]!.title.slice(0, 80);
+      direction =
+        "The Planner could not produce a plan within its budget. These items are the scout's evidenced candidates — not a generic hunt.";
+      items = fromScout;
+    } else {
+      title = "Direct execute — ship what the scout found";
+      direction =
+        "The Planner could not produce a plan within its budget. Use the scout's evidence to select one worthwhile improvement for this product's users or maintainers. Investigate first when the evidence is incomplete.";
+      items = [
+        {
+          id: "i1",
+          title:
+            "From the scout's findings, reproduce the highest-value gap in a core workflow or consequential risk and improve it. If the scout found nothing concrete, exercise the product through its public interface and record evidence before choosing a change. Do not manufacture production edits to fill a cycle; an investigation with no justified change should report its findings and limits.",
+          files: [],
+          serves: "the product's core job and the people who depend on it",
+          redNow: looked ? `the scout saw: ${looked.slice(0, 200)}` : "use the product and find it",
+          proof: "a reproducible observation or measurement of the selected gap, plus the project gate for changes",
+          status: "open",
+        },
+      ];
+    }
   }
 
   const mustFix = [...(opts?.mustFix ?? [])];
@@ -833,7 +846,10 @@ async function admitPlan(
       status: "open",
     });
   }
-  s.outOfScope = plan.outOfScope;
+  // Persist first-hour parking: a later synthesized plan with empty
+  // Out of scope must not wipe cycle 1's "combat/shop later" slice.
+  if (plan.outOfScope.length) s.outOfScope = uniqueLines(s.outOfScope, plan.outOfScope);
+  else if (plannerStatus !== "synthesized") s.outOfScope = plan.outOfScope;
   const gate = resolveVerifyCommand(plan, safe(() => rt.projectChecks(), []));
   s.verifyCommand = gate.command;
   if (gate.declared && !s.declaredChecks.some((c) => c.toLowerCase() === gate.declared!.toLowerCase())) {
@@ -1051,7 +1067,7 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     const note = `[Forge] Your previous review did not parse: ${why}. Write the review again and end with the contract exactly:\n${reviewArtifactContract(s.cycle)}`;
     const again = await runRoleTurnAgain(rt, "reviewer", tt.sessionId, note, {
       cycle: s.cycle,
-      maxTurns: plannerPlanTurns(),
+      maxTurns: reviewerDocumentTurns(),
       documentOnly: true,
     });
     reviewRetry = again;
@@ -1081,8 +1097,18 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
   if (!notes.looked && lookLooked) notes.looked = lookLooked;
   // A surface-claim ship whose look never opened the product is the same
   // incomplete review as an unparseable body — no commit.
-  const infraFailed = lookInfraFailed(lookLooked ?? notes.looked ?? "");
-  if (surfaceLookGateBlocks(s, notes, { hasLookMd, couldNotLook: lookCouldNot, infraFailed })) {
+  const lookedBlob = lookLooked ?? notes.looked ?? "";
+  const infraFailed = lookInfraFailed(lookedBlob);
+  const kernelLook = lookHasKernelEvidence(lookedBlob);
+  const cycleZeroSkipLook =
+    s.cycleZeroRequested &&
+    s.items.length > 0 &&
+    s.items.every((i) => i.status === "done" || i.status === "cancelled");
+  if (
+    !kernelLook &&
+    !cycleZeroSkipLook &&
+    surfaceLookGateBlocks(s, notes, { hasLookMd, couldNotLook: lookCouldNot, infraFailed })
+  ) {
     const lookFix = infraFailed
       ? "look infrastructure failed — reuse the session browser lease; do not ship a surface claim from source"
       : "look the surface";
@@ -1220,11 +1246,11 @@ async function finishCycle(s: CycleState, rt: CycleRuntime, accepted: CheckRun |
       const synth = /^(Direct execute|Keep the promises still broken|Go deeper)\b/i.test(
         rec?.title ?? "",
       );
+      // Substance landed: the no-progress wall counts "shipped nothing", not
+      // "the title was Direct execute". Synth mill still caps via synthStreak.
+      s.directExecuteStreak = 0;
       if (synth) s.synthStreak += 1;
-      else {
-        s.directExecuteStreak = 0;
-        s.synthStreak = 0;
-      }
+      else s.synthStreak = 0;
     }
     // Bash Chrome outlives the cycle; reap after commit, never during a Reviewer look.
     safe(() => reapSessionBrowsers(s.sessionId, { workspace: rt.workspace }), {
@@ -1569,9 +1595,39 @@ function promiseNamedInOperator(p: CyclePromise, operator: string[]): boolean {
 function unnamedBrokenOrUnknownPromises(s: CycleState, plan: ParsedPlan): CyclePromise[] {
   if (isFalsy(process.env.FORGE_ULW_PROMISE_FULFILL)) return [];
   return (s.promises ?? []).filter((p) => {
+    if (p.state === "limited") return false;
     if (p.state !== "broken" && p.state !== "unknown") return false;
     return !promiseNamedInOperator(p, plan.operator);
   });
+}
+
+function itemsFromScout(scout: ScoutResult | undefined): CyclePlanItem[] {
+  if (!scout) return [];
+  const parsed = scout.raw ? parsePlanArtifact(scout.raw) : null;
+  if (parsed?.verdict === "continue" && parsed.items.length) return parsed.items.slice(0, 5);
+  const considered = scout.parsed?.considered ?? [];
+  const candidates = considered.filter((c) => !isLeaveItEntry(c));
+  return candidates.slice(0, 3).map((c, i) => ({
+    id: `i${i + 1}`,
+    title: c.split(/\s+(?:—|–)\s+/)[0]?.trim().slice(0, 200) || c.slice(0, 200),
+    files: [],
+    serves: "a scouted gap the Planner named before the budget ended",
+    redNow: c.slice(0, 300),
+    proof: "a reproducible observation of the scouted gap, plus the project gate",
+    status: "open" as const,
+  }));
+}
+
+function uniqueLines(have: string[], add: string[]): string[] {
+  const out = [...have];
+  const seen = new Set(out.map((l) => l.toLowerCase()));
+  for (const l of add) {
+    const k = l.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(l);
+  }
+  return out;
 }
 
 function classHoldMessage(s: CycleState): string {
@@ -1583,7 +1639,7 @@ function classHoldMessage(s: CycleState): string {
 function architectureClassItem(cls: string): CyclePlanItem {
   return {
     id: "i0",
-    title: architectureHoldMessage(cls),
+    title: `Collapse \`${cls}\` into one decision`,
     files: [],
     serves: "the architecture class the last two shipped reviews named",
     redNow: "the class recurred and the plan did not address or leave it",

@@ -289,6 +289,50 @@ export function appendProjectMemory(
   return rec;
 }
 
+/**
+ * Replace every active row whose text starts with `prefix` (e.g. `Promise:`,
+ * `Identity:`) with `rows`. Dogfood MEMORY.md grew a second Identity and
+ * sibling Promise rows because append-only never replaced.
+ */
+export function replacePrefixedProjectMemory(
+  workspace: string,
+  prefix: string,
+  rows: string[],
+  kind: ProjectMemoryKind = "fact",
+): void {
+  const pre = String(prefix || "").trim();
+  if (!pre) return;
+  const store = loadProjectMemory(workspace);
+  const needle = pre.toLowerCase();
+  const at = nowIso();
+  let archived = 0;
+  for (const r of store.records) {
+    if (r.status !== "active") continue;
+    if (!r.text.toLowerCase().startsWith(needle)) continue;
+    r.status = "archived";
+    r.archivedReason = "superseded";
+    r.archivedAt = at;
+    archived += 1;
+  }
+  const seen = new Set<string>();
+  for (const raw of rows) {
+    const text = String(raw || "").trim().slice(0, MAX_TEXT);
+    if (!text) continue;
+    const k = text.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    store.records.push({
+      id: makeId(),
+      at,
+      kind,
+      text,
+      source: "agent",
+      status: "active",
+    });
+  }
+  if (archived || seen.size) saveStore(store);
+}
+
 /** Archive (soft-delete) by id or exact text match. */
 export function archiveProjectMemory(
   workspace: string,

@@ -7,6 +7,7 @@ import {
   runRoleTurnAgain,
   twoTurnEnabled,
   plannerPlanTurns,
+  reviewerDocumentTurns,
   reviewerLookTurns,
 } from "../src/harness/cycle/roles.js";
 import type { CycleRole, CycleRuntime, RoleRunOptions, RoleRunResult } from "../src/harness/cycle/orchestrator.js";
@@ -182,11 +183,13 @@ describe("two-turn role runner", () => {
     delete process.env.FORGE_ULW_REVIEWER_LOOK_TURNS;
     assert.equal(plannerPlanTurns(), 12);
     assert.equal(reviewerLookTurns(), 25);
+    assert.equal(reviewerDocumentTurns(), 25);
     process.env.FORGE_ULW_PLANNER_PLAN_TURNS = "20";
     process.env.FORGE_ULW_REVIEWER_LOOK_TURNS = "7";
     try {
       assert.equal(plannerPlanTurns(), 20);
       assert.equal(reviewerLookTurns(), 7);
+      assert.equal(reviewerDocumentTurns(), 7, "document retry follows the look budget unless overridden");
     } finally {
       delete process.env.FORGE_ULW_PLANNER_PLAN_TURNS;
       delete process.env.FORGE_ULW_REVIEWER_LOOK_TURNS;

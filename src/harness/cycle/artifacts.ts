@@ -115,25 +115,41 @@ const SECTION_RE =
 
 const LEAVE_IT_RE = /^\*{0,2}leave\s+it\b/i;
 
+export function isLeaveItEntry(text: string): boolean {
+  return LEAVE_IT_RE.test(String(text || "").trim());
+}
+
+/** Lease/platform limits a scout saw — not a broken product, not a hole to keep-promise. */
+const LIMITED_SEEN_RE =
+  /-10004|EPERM|LS\s*115|CLKActive|LibraryFaces|actool|Playwright MCP never initialized|GPU unusable|Chrome for Testing died/i;
+
+function promiseLooksLimited(seen: string | undefined): boolean {
+  return Boolean(seen && LIMITED_SEEN_RE.test(seen));
+}
+
 /**
- * `<promise> — kept | broken | absent | unknown — <where seen>`; `(kept)` at the end
+ * `<promise> — kept | broken | absent | unknown | limited — <where seen>`; `(kept)` at the end
  * is the short form. A line with no state is not a promise row — the
- * harness does not guess which way the Planner meant it.
+ * harness does not guess which way the Planner meant it. An `unknown` whose
+ * evidence is a lease/platform limit (TCC, EPERM, Playwright-down) is stored
+ * as `limited` so keep-promise does not re-litigate it.
  */
 function parsePromiseLines(lines: string[] | undefined): CyclePromise[] {
   const out: CyclePromise[] = [];
   for (const b of bullets(lines)) {
-    const m = b.match(/^(.*?)\s+(?:—|–|-|\|)\s*\*{0,2}(kept|broken|absent|unknown)\*{0,2}\b\s*(?:[—–:|-]\s*)?(.*)$/i);
+    const m = b.match(/^(.*?)\s+(?:—|–|-|\|)\s*\*{0,2}(kept|broken|absent|unknown|limited)\*{0,2}\b\s*(?:[—–:|-]\s*)?(.*)$/i);
     if (m) {
       const seen = (m[3] || "").trim();
+      let state = m[2].toLowerCase() as CyclePromise["state"];
+      if (state === "unknown" && promiseLooksLimited(seen)) state = "limited";
       out.push({
         text: m[1].trim().slice(0, 240),
-        state: m[2].toLowerCase() as CyclePromise["state"],
+        state,
         ...(seen ? { seen: seen.slice(0, 240) } : {}),
       });
       continue;
     }
-    const p = b.match(/^(.*?)\s*\(\s*(kept|broken|absent|unknown)\s*\)\s*$/i);
+    const p = b.match(/^(.*?)\s*\(\s*(kept|broken|absent|unknown|limited)\s*\)\s*$/i);
     if (p) out.push({ text: p[1].trim().slice(0, 240), state: p[2].toLowerCase() as CyclePromise["state"] });
   }
   return out;
@@ -315,7 +331,32 @@ export function explainPlanParseFailure(text: string): string {
   return problems.join("; ");
 }
 
+/**
+ * Parse a plan, then salvage a labelled plan buried after a budget prefix
+ * or from the last `# Cycle N plan` / `Verdict: continue` heading.
+ */
 export function parsePlanArtifact(text: string): ParsedPlan | null {
+  const direct = parsePlanArtifactFromSections(text);
+  if (direct) return direct;
+  const stripped = stripRoleBudgetPrefix(text);
+  if (stripped !== text) {
+    const again = parsePlanArtifactFromSections(stripped);
+    if (again) return again;
+  }
+  const heading = stripped.search(/^#\s+Cycle\s+\d+\s+plan\b/im);
+  if (heading >= 0) {
+    const fromH = parsePlanArtifactFromSections(stripped.slice(heading));
+    if (fromH) return fromH;
+  }
+  const slice = lastVerdictSlice(stripped);
+  if (slice) {
+    const fromV = parsePlanArtifactFromSections(slice);
+    if (fromV) return fromV;
+  }
+  return null;
+}
+
+function parsePlanArtifactFromSections(text: string): ParsedPlan | null {
   const sections = splitSections(text);
   if (!sections.has("verdict") && !sections.has("items")) return null;
   const { verdict, note } = parsePlanVerdict(firstLine(sections.get("verdict")));
@@ -385,6 +426,18 @@ export function lookCouldNotLook(looked: string): boolean {
 /** Chrome/Godot/MCP died or the look-turn budget ran out before a sitting. */
 export function lookInfraFailed(looked: string): boolean {
   return LOOK_INFRA_RE.test(String(looked || ""));
+}
+
+/**
+ * A crate/API/self-test look still used the product when the GUI lease died.
+ * The project gate (`npm test` / `cargo test`) is not a look — the harness
+ * already ran it.
+ */
+const KERNEL_LOOK_RE =
+  /\bwalk\s*\(|--self-test|SMOKE_[A-Z0-9_]+_OK|Game::|\bsimctl\b/i;
+
+export function lookHasKernelEvidence(looked: string): boolean {
+  return KERNEL_LOOK_RE.test(String(looked || ""));
 }
 
 /** The Reviewer's turn-1 document: what it ran or opened before the diff. Null when there is no Looked: line. */
@@ -522,10 +575,17 @@ function hayMentionsClass(hay: string, cls: string): boolean {
   return ` ${normalizeArchHay(hay)} `.includes(` ${n} `);
 }
 
-/** True when an item title/serves names the class, or Considered: leave-it does. */
+/**
+ * True when an item title/serves names the class, or the plan left it:
+ * a `leave it` bullet that names the class, or Out of scope naming it.
+ * Dogfood: 魔塔 cycle 4 parked `routing.test.ts` under Out of scope; requiring
+ * the same leave-it line to mention the class discarded a real pause plan.
+ */
 export function planAddressesArchitectureClass(plan: ParsedPlan, cls: string): boolean {
   if (planCollapsesArchitectureClass(plan, cls)) return true;
-  return plan.considered.some((c) => LEAVE_IT_RE.test(c) && hayMentionsClass(c, cls));
+  if (plan.considered.some((c) => isLeaveItEntry(c) && hayMentionsClass(c, cls))) return true;
+  if (plan.outOfScope.some((c) => hayMentionsClass(c, cls))) return true;
+  return false;
 }
 
 /** An item (not merely leave-it) names the class. */
@@ -534,7 +594,7 @@ export function planCollapsesArchitectureClass(plan: ParsedPlan, cls: string): b
 }
 
 export function architectureHoldMessage(cls: string): string {
-  return `the last two shipped reviews named the architecture class \`${cls}\`; a continue plan must include an item whose title/serves mentions that class, or \`leave it\` that class in Considered:`;
+  return `the last two shipped reviews named the architecture class \`${cls}\`; a continue plan must include an item whose title/serves mentions that class, or leave it that class in Considered: or Out of scope:`;
 }
 
 /** The Planner's turn-1 document. Null only when none of its sections is there. */
@@ -551,6 +611,7 @@ export function parseScoutArtifact(text: string): ParsedScout | null {
 
 /** Why a review did not parse, for the Reviewer's retry. Empty when it parses. */
 export function explainReviewParseFailure(text: string): string {
+  if (parseReviewArtifact(text)) return "";
   const sections = splitSections(text);
   if (!sections.has("verdict")) {
     return "no Verdict: line (need `ship` | `ship-with-revisions` | `blocked`)";
@@ -560,15 +621,62 @@ export function explainReviewParseFailure(text: string): string {
   return "";
 }
 
+function stripMarkdownTicks(raw: string): string {
+  return raw
+    .replace(/^\*+|\*+$/g, "")
+    .replace(/^_+|_+$/g, "")
+    .replace(/\.+$/g, "")
+    .trim();
+}
+
 function parseReviewVerdict(raw: string | undefined): ReviewVerdict | null {
-  const t = (raw || "").trim().toLowerCase();
+  const t = stripMarkdownTicks((raw || "").trim().toLowerCase());
   if (/^ship-with-revisions\b/.test(t) || /^ship with revisions\b/.test(t)) return "ship-with-revisions";
   if (/^ship\b/.test(t)) return "ship";
   if (/^blocked\b/.test(t)) return "blocked";
   return null;
 }
 
+/** `[Forge] maxTurns (12) reached — releasing.` prefixes a labelled document the role already wrote. */
+function stripRoleBudgetPrefix(text: string): string {
+  return String(text || "")
+    .replace(/^\s*\[Forge\][^\n]*maxTurns?\s*\(\d+\)[^\n]*\n+/i, "")
+    .replace(/^\s*\[Forge\][^\n]*reached[^\n]*\n+/i, "");
+}
+
+function lastVerdictSlice(text: string): string | null {
+  const re = /(?:^|\n)(?:#{1,6}\s*)?\*{0,2}Verdict\*{0,2}\s*[:.]/gi;
+  let last = -1;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) last = m.index + (m[0].startsWith("\n") ? 1 : 0);
+  if (last < 0) return null;
+  return text.slice(last);
+}
+
+/**
+ * Parse a review, then salvage a labelled `Verdict:` buried after a budget
+ * dump or in the last 40 lines. Does not invent a verdict from `Goal achieved.`
+ * or `Plan complete.` — those are executor closers.
+ */
 export function parseReviewArtifact(text: string): CycleReviewNotes | null {
+  const direct = parseReviewArtifactFromSections(text);
+  if (direct) return direct;
+  const stripped = stripRoleBudgetPrefix(text);
+  if (stripped !== text) {
+    const again = parseReviewArtifactFromSections(stripped);
+    if (again) return again;
+  }
+  const slice = lastVerdictSlice(stripped);
+  if (slice && slice !== stripped) {
+    const fromSlice = parseReviewArtifactFromSections(slice);
+    if (fromSlice) return fromSlice;
+  }
+  const last = stripped.split("\n").slice(-40).join("\n");
+  if (last.trim() && last !== stripped) return parseReviewArtifactFromSections(last);
+  return null;
+}
+
+function parseReviewArtifactFromSections(text: string): CycleReviewNotes | null {
   const sections = splitSections(text);
   const verdict = parseReviewVerdict(firstLine(sections.get("verdict")));
   if (!verdict) return null;
@@ -600,7 +708,7 @@ export function scoutArtifactContract(cycle: number): string {
     `Identity: <one paragraph: who uses this product, for what job>`,
     `Looked: <what you ran or opened as its user and what you saw — or: could not run — <why>>`,
     `Promises:`,
-    `- <what the product promises: README, --help, tests as spec, the identity> — kept | broken | absent | unknown — <where seen, or what remains unverified and why>`,
+    `- <what the product promises: README, --help, tests as spec, the identity> — kept | broken | absent | unknown | limited — <where seen, or what remains unverified and why>`,
     `Considered:`,
     `- <evidenced candidate or consequential investigation> — <benefit, risk and cost>`,
     `- <another credible alternative, if any> — <trade-off>`,

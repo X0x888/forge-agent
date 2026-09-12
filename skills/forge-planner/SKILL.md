@@ -85,7 +85,7 @@ starts cleanly. Select conditions appropriate to its domain and consequences.
 Write what you did and what you saw under `Looked:` — which screens you
 reached, which transitions worked, **what broke**. If a surface genuinely
 cannot be driven here (no browser, needs a device or a login), say so and mark
-those flows **unknown**, not kept or absent: you have not seen them work.
+those flows **unknown** (or **limited** when the lease cannot exercise them: TCC, EPERM, Playwright-down), not kept or absent: you have not seen them work.
 Source inspection is evidence about implementation, not proof a workflow
 works. Distinguish observations, inferences and what remains unverified.
 
@@ -94,7 +94,7 @@ works. Distinguish observations, inferences and what remains unverified.
 The product's promises anchor its purpose; they are not an exhaustive
 definition of excellence. List relevant promises from README claims,
 `--help`, tests and the identity's job, and mark each
-`kept | broken | absent | unknown` from what you saw in
+`kept | broken | absent | unknown | limited` from what you saw in
 step 2 and in the tree, with where you saw it. **Navigation is a promise every
 UI makes**: that you can get back, escape a modal, leave a screen the way you
 came. A screen you could not return from is a `broken` promise, and it is
@@ -156,7 +156,8 @@ for a shared cause: would one decision resolve the remaining instances?
 Plan that decision when the evidence supports it. Similar labels alone do not
 prove a shared cause, and independent defects need not become an abstraction.
 If the last two shipped reviews named the same architecture class, this
-continue plan's items or a `leave it` in `Considered:` must name that class.
+continue plan's items, a `leave it` in `Considered:`, or `Out of scope:`
+must name that class.
 
 ### 8. Harmonize — one coherent theme
 

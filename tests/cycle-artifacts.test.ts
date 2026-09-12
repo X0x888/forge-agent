@@ -9,6 +9,7 @@ import {
   extractSerendipityLines,
   isSurfaceSit,
   lookCouldNotLook,
+  lookHasKernelEvidence,
   lookInfraFailed,
   architectureClassMustCollapse,
   parseLookArtifact,
@@ -272,7 +273,7 @@ describe("scout artifact parser", () => {
   it("a document with none of the scout sections does not parse; the contract names them", () => {
     assert.equal(parseScoutArtifact("I looked around and it seems fine."), null);
     const c = scoutArtifactContract(3);
-    for (const label of ["# Cycle 3 scout", "Identity:", "Looked:", "Promises:", "kept | broken | absent", "Considered:", "leave it"]) {
+    for (const label of ["# Cycle 3 scout", "Identity:", "Looked:", "Promises:", "kept | broken | absent | unknown | limited", "Considered:", "leave it"]) {
       assert.ok(c.includes(label), label);
     }
   });
@@ -397,6 +398,24 @@ describe("architecture class tokens", () => {
     const slice = continuePlan({});
     assert.ok(slice);
     assert.equal(planAddressesArchitectureClass(slice, cls!), false);
+    const split = parsePlanArtifact(
+      `# Cycle 3 plan — pause verbs\nVerdict: continue\nLooked: ran it\nConsidered:\n- leave it — keeps MEMORY's Steam promise broken\n- Extract the copied walk() in \`routing.test.ts\` / save.test.ts — leave that class\nDirection: pause\nWorth the cycle: x\nItems:\n1. keyboard pause — files: a.ts — serves: first minute — red now: click-only — proof: npm test\nOut of scope:\n- Copied walk() in \`routing.test.ts\` — named class, left\n`,
+    );
+    assert.ok(split);
+    assert.equal(
+      planAddressesArchitectureClass(split, "routing.test.ts"),
+      true,
+      "Out of scope that names the class addresses it",
+    );
+    const loose = parsePlanArtifact(
+      `# Cycle 3 plan — pause verbs\nVerdict: continue\nLooked: ran it\nConsidered:\n- leave it — pin is Operator\n- Extract the copied walk() in \`routing.test.ts\` — messy, maybe later\nDirection: pause\nWorth the cycle: x\nItems:\n1. keyboard pause — files: a.ts — serves: first minute — red now: click-only — proof: npm test\nOut of scope:\n- Steamworks\n`,
+    );
+    assert.ok(loose);
+    assert.equal(
+      planAddressesArchitectureClass(loose, "routing.test.ts"),
+      false,
+      "leave-it on another bullet plus the class in a later Considered is not leaving that class",
+    );
   });
 
   it("three shipped reviews naming the same class must collapse, not leave-it", () => {
@@ -423,6 +442,19 @@ describe("look infra vs could-not-look", () => {
     assert.equal(lookInfraFailed("Godot quit unexpectedly after Vulkan init"), true);
     assert.equal(lookCouldNotLook("could not run — Playwright MCP never initialized"), true);
     assert.equal(lookCouldNotLook("opened popup.html and tapped Stay"), false);
+    assert.equal(lookHasKernelEvidence("walk() tape + npm test 62/62"), true);
+    assert.equal(lookHasKernelEvidence("npm test 62/62"), false, "the project gate is not a look");
+    assert.equal(lookHasKernelEvidence("cargo test --offline"), false);
+    assert.equal(lookHasKernelEvidence("opened leftover door"), false);
+  });
+
+  it("an unknown promise whose evidence is a lease limit is stored as limited", () => {
+    const s = parseScoutArtifact(
+      `# Cycle 1 scout\nIdentity: a\nLooked: could not click\nPromises:\n- Wear the moth on the face — unknown — System Events -10004; CLKActive []\n- First climb — kept — walked it\n- Lantern tap — unknown — could not click the glass\nConsidered:\n- leave it — pin is Operator\n`,
+    );
+    assert.equal(s?.promises[0]?.state, "limited");
+    assert.equal(s?.promises[1]?.state, "kept");
+    assert.equal(s?.promises[2]?.state, "unknown", "could not click is not itself a lease limit");
   });
 });
 
@@ -446,6 +478,7 @@ describe("review artifact parser", () => {
 
   it("a review without a verdict does not parse; Looked: is optional", () => {
     assert.equal(parseReviewArtifact("looks fine to me"), null);
+    assert.equal(parseReviewArtifact("looks fine to me\n**Goal achieved.**"), null);
     const r = parseReviewArtifact("Verdict: ship");
     assert.equal(r?.verdict, "ship");
     assert.equal(r?.looked, undefined);
@@ -456,6 +489,11 @@ describe("review artifact parser", () => {
 
   it("ship and blocked verdicts parse; the contract names the sections", () => {
     assert.equal(parseReviewArtifact("Verdict: ship")?.verdict, "ship");
+    assert.equal(parseReviewArtifact("Verdict: **ship.**")?.verdict, "ship");
+    assert.equal(
+      parseReviewArtifact("[Forge] maxTurns (80) reached — releasing.\n\n# Cycle 11 review\nVerdict: ship — both items landed")?.verdict,
+      "ship",
+    );
     assert.equal(parseReviewArtifact("Verdict: blocked — secret missing")?.verdict, "blocked");
     const c = reviewArtifactContract(2);
     for (const label of ["Verdict:", "Looked:", "Fulfillment:", "Revisions:", "Must-fix:", "Architecture:", "Worth:"]) {

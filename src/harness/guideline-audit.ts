@@ -606,7 +606,8 @@ export function findStaleGuidelinePaths(
     if (seen.has(raw)) continue;
     seen.add(raw);
     if (/[*{}<>$~]/.test(raw)) continue;
-    if (/^(?:https?:|node_modules\/|dist\/|\.tmp\/|~\/)/i.test(raw)) continue;
+    if (/^(?:https?:|node_modules\/|dist\/|\.tmp\/|~\/|windows\/)/i.test(raw)) continue;
+    if (/^[A-Z][A-Z0-9_]{2,}$/.test(raw)) continue;
     if (/^[a-z]+\.[a-z]+$/i.test(raw)) continue;
     const abs = path.resolve(root, raw);
     if (!abs.startsWith(path.resolve(root))) continue;

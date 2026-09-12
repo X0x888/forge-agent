@@ -127,6 +127,15 @@ describe("guideline fact checks", () => {
     assert.deepEqual(stale, ["src/gone.ts"]);
   });
 
+  it("does not flag dump roots or URLs as stale project paths", () => {
+    const root = mkProject({ "src/a.ts": "x" });
+    const stale = findStaleGuidelinePaths(
+      "see `windows/data/Res/foo.fsp` and `src/gone.ts` and `https://qqhx.qq.com/x.md`",
+      root,
+    );
+    assert.deepEqual(stale, ["src/gone.ts"]);
+  });
+
   it("extracts commands from inline code and shell fences, not from symbols", () => {
     const text =
       "Run `npm test` then `./scripts/check.sh --fast`. The `ForgeConfig` type and `src/x.ts` are not commands.\n" +

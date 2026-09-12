@@ -32,6 +32,11 @@ export function reviewerLookTurns(): number {
   return envPositiveInt("FORGE_ULW_REVIEWER_LOOK_TURNS", 0) || 25;
 }
 
+/** Turn budget for a Reviewer document retry — not the Planner's plan-turn cap. */
+export function reviewerDocumentTurns(): number {
+  return envPositiveInt("FORGE_ULW_REVIEWER_DOCUMENT_TURNS", 0) || reviewerLookTurns();
+}
+
 export interface TwoTurnOptions {
   cycle: number;
   /** Turn 1: the product, no history. */
