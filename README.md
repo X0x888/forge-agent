@@ -215,15 +215,15 @@ Auto-arm from prose (default on): prompts like `don't stop until tests pass` or 
 
 ### 3. Ultrawork — the plan-cycle driver (`/ulw`)
 
-Max-autonomy mode. The unit of work is a **cycle**: a fresh-context **Planner** subagent researches the product (identity, category, whole tree) and writes `plan.md`; the session model **executes** the plan's items for as many waves as it takes; a fresh-context **Reviewer** subagent reads the cycle diff as a reviewer and as an architect and **revises in place**; the harness runs the declared verify command itself and **commits** on green; then it re-plans. The Planner writing `Verdict: fulfilled` ends the run.
+Max-autonomy mode. The unit of work is a **cycle**: a fresh-context **Planner** subagent researches the product (identity, category, whole tree) and writes `plan.md`; the session model **executes** the plan's items for as many waves as it takes; a fresh-context **Reviewer** subagent reads the cycle diff as a reviewer and as an architect and writes the review (Must-fix is the revision channel); the harness runs the declared verify command itself and **commits** on green; then it re-plans. `Verdict: fulfilled` releases **only an explicit mandate**, and only after `Looked:` (or a prior commit) with unnamed broken/unknown promises on `Operator:`. A no-mandate run continues until `/cycle 0`, `max_cycles`, Planner `blocked`, or the no-progress wall.
 
 Three prompts, one procedure:
 
 | Case | Prompt | Ends when |
 |------|--------|-----------|
-| clear goal | `/ulw add --version with a test` | the Planner judges it fulfilled (usually after cycle 1) |
-| direction | `/ulw polish the first-run experience` | fulfilled, `/cycle 0`, or `/max-cycles N` |
-| no prompt | `/ulw` | the Planner derives the direction from the product itself |
+| clear goal | `/ulw add --version with a test` | mandate `fulfilled` (after `Looked:` or a prior commit; unnamed broken/unknown promises on `Operator:`) |
+| direction | `/ulw polish the first-run experience` | mandate `fulfilled`, `/cycle 0`, `max_cycles`, Planner `blocked`, or the no-progress wall |
+| no prompt | `/ulw` | `/cycle 0`, `max_cycles`, Planner `blocked`, or the no-progress wall — not `fulfilled` |
 
 The mandate is **attention**, not a spec and not a quality ceiling. A sloppy prompt does not license sloppy work; a specific request is still that request, done like a veteran. The Planner translates after using the product (`Direction:` is its sentence). There is no mandate rewriter.
 

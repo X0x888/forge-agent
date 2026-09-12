@@ -152,7 +152,7 @@ describe("checkpoint compact", () => {
     const kick = [
       "[Forge ULW cycle driver] armed — plan-cycle mode.",
       "Mandate: comprehensively evaluate this tool and then improve the ui and ux of it.",
-      "Budget: unlimited cycles until the Planner judges the mandate fulfilled, or /cycle 0.",
+      "Budget: unlimited cycles until a mandate fulfilled, Planner blocked, /cycle 0, max_cycles, or the no-progress wall. Fulfilled releases only an explicit mandate.",
       "A fresh-context Planner is writing cycle 1's plan now " + "x".repeat(400),
     ].join("\n");
     const clipped = clipUserMandate(kick);

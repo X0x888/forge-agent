@@ -16,6 +16,8 @@ import {
   runSpend,
 } from "../src/harness/cycle/briefs.js";
 import { newCycleState, type CycleState } from "../src/harness/cycle/state.js";
+import { ulwKickoffMessage } from "../src/harness/cycle/index.js";
+import { renderHarnessAdmission } from "../src/harness/context-admit.js";
 import { McpManager, setActiveMcpManager } from "../src/mcp/manager.js";
 
 /** A run two cycles in: one committed, one blocked, with everything the briefs can carry. */
@@ -305,6 +307,55 @@ describe("Reviewer look brief (turn 1)", () => {
   });
 });
 
+const LIFECYCLE_LINE =
+  "until a mandate fulfilled, Planner blocked, /cycle 0, max_cycles, or the no-progress wall. Fulfilled releases only an explicit mandate.";
+
+describe("unlimited ULW lifecycle copy", () => {
+  function assertMatchesDriver(text: string, label: string) {
+    assert.doesNotMatch(text, /in good shape/, `${label} must not end a no-mandate run on "in good shape"`);
+    assert.match(text, /no-progress/, `${label} must name the no-progress wall`);
+    assert.match(text, /blocked/, `${label} must name Planner blocked`);
+    assert.match(text, /explicit mandate/, `${label} must say fulfilled releases only an explicit mandate`);
+    assert.ok(text.includes(LIFECYCLE_LINE), `${label} must match planNextCycle's release conditions`);
+  }
+
+  it("kickoff unlimited budget matches planNextCycle", () => {
+    const kick = ulwKickoffMessage(newCycleState({ sessionId: "life-kick", mandate: null }));
+    assert.match(kick, /^\[Forge ULW cycle driver\] armed/);
+    assert.ok(kick.includes(`Budget: unlimited cycles ${LIFECYCLE_LINE}`));
+    assertMatchesDriver(kick, "kickoff");
+    const capped = ulwKickoffMessage(newCycleState({ sessionId: "life-cap", mandate: null, maxCycles: 3 }));
+    assert.match(capped, /Budget: 3 cycle\(s\)\./);
+    assert.doesNotMatch(capped, /in good shape/);
+  });
+
+  it("admit unlimited line matches planNextCycle (a revert of the admit string is red)", () => {
+    const admit = renderHarnessAdmission({
+      ulwEnabled: true,
+      cycle: 1,
+      phase: "execute",
+      wave: 0,
+      maxCycles: null,
+      itemsOpen: 0,
+      itemsTotal: 0,
+      planTitle: "",
+      cycleZeroRequested: false,
+      mandate: "",
+      goalActive: false,
+      goalObjective: "",
+      goalPaused: false,
+      openTodos: 0,
+      permissionMode: "default",
+    });
+    assert.match(admit, /^\[Forge harness — mid-conversation update\]/);
+    assert.ok(
+      admit.includes(`Unlimited cycles ${LIFECYCLE_LINE}`),
+      "admit unlimited line must be the planNextCycle lifecycle, not 'in good shape'",
+    );
+    assertMatchesDriver(admit, "admit");
+  });
+});
+
 describe("Reviewer review brief (turn 2)", () => {
   const input = () => ({
     state: runState(),
@@ -352,6 +403,19 @@ describe("Reviewer review brief (turn 2)", () => {
       assert.match(b, /not against whether the diff matches the mandate's adjectives/);
       assert.doesNotMatch(b, /test-only change with no production body|stop planning invisible cycles|first minute, first day/);
     }
+  });
+
+  it("turn 2 is the document: Must-fix revises the tree, not write access", () => {
+    const b = buildReviewerReviewBrief(input());
+    assert.doesNotMatch(b, /write access/i);
+    assert.doesNotMatch(b, /revise in place/i);
+    assert.match(b, /You do not edit this turn; Must-fix is how the tree changes/);
+    const look = buildReviewerLookBrief({
+      state: runState(),
+      workspace: "/w",
+      direction: "stars",
+    });
+    assert.ok(/do not edit/i.test(look));
   });
 });
 

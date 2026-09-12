@@ -566,7 +566,7 @@ const REVIEWER_DUTY = [
   `- Tests: checks must catch a plausible fault, not mirror source text or assert a tautology. Test-only changes are valid when they add meaningful regression protection or resolve a concrete evidence gap; demonstrate the fault they would catch. Do not require a production edit for behavior that is already correct, and do not add coverage merely to grow the test count.`,
   `- Persisted data and public surface: a storage key, schema, exported API, CLI flag or wire format that changed needs a migration or a compatibility path in this diff, or a Must-fix that names the break.`,
   `- Class: use the record to investigate recurring defects and their shared cause. Require evidence before demanding an abstraction or another repair; repeated labels alone are not a defect.`,
-  `- Revise what you can now — small, correct, in the project's own conventions. Repairable unresolved defects belong under Must-fix with Verdict: ship-with-revisions: the harness withholds commit, lets the executor fix them in this cycle, then runs a fresh review. Partial or missing items cannot ship. Reserve blocked for an unavailable review, an external constraint or a direction that requires replanning. Nonblocking observations and future improvements belong under Architecture for the next Planner to weigh.`,
+  `- You do not edit this turn; Must-fix is how the tree changes. Repairable unresolved defects belong under Must-fix with Verdict: ship-with-revisions: the harness withholds commit, lets the executor fix them in this cycle, then runs a fresh review. Partial or missing items cannot ship. Reserve blocked for an unavailable review, an external constraint or a direction that requires replanning. Nonblocking observations and future improvements belong under Architecture for the next Planner to weigh.`,
   `- Worth: judge the benefit to this product's user, operator or maintainer from evidence, not visibility or the diff's effort. Judge against a demanding user of this product, not against whether the diff matches the mandate's adjectives. Reliability, security, accessibility, performance, recovery, compatibility, maintainability and regression protection can justify a cycle. Name the actual failure avoided, cost reduced or uncertainty resolved and weigh complexity and risk. Compare the plan's Considered: alternatives with leave it. A useful investigation may produce no code change. Worth: no means the benefit was not established or did not justify the cost; explain how the next Planner should reassess it without demanding cosmetic work. Repeated low-value cycles call for a different question or approach, not an arbitrary count-based defect.`,
   `- Do not widen scope. Do not start the next cycle's work.`,
 ];
@@ -593,7 +593,7 @@ function reviewerBodyLines(input: ReviewerBriefInput): string[] {
     ...previousShapeLines(s),
     `## Verify`,
     input.verifyCommand
-      ? `\`${input.verifyCommand}\` — run it yourself after your revisions; the harness runs it again and a red run blocks the commit.`
+      ? `\`${input.verifyCommand}\` — the harness ran it and it is green; it runs again after the review and a red run blocks the commit.`
       : `No project check is declared. Say so under Must-fix if this repo should have one.`,
     ``,
     ...REVIEWER_DUTY,
@@ -609,7 +609,7 @@ export function buildReviewerReviewBrief(input: ReviewerBriefInput & { lookText?
   const s = input.state;
   const lines: string[] = [
     `[Forge cycle reviewer — cycle ${s.cycle}, turn 2 of 2: the review]`,
-    `You used the product last turn; your look is below. Now read the plan and the cycle's diff as a hostile senior reviewer and as an architect, and revise in place — you have write access. The harness runs the verify command after you and commits only on green.`,
+    `You used the product last turn; your look is below. Now read the plan and the cycle's diff as a hostile senior reviewer and as an architect. You do not edit this turn; Must-fix is how the tree changes. The harness runs the verify command after you and commits only on green.`,
     ...lookPathLines({
       lookProfileUdd: "lookProfileUdd" in input ? input.lookProfileUdd : undefined,
       workspace: input.workspace,
@@ -631,7 +631,7 @@ export function buildReviewerBrief(input: ReviewerBriefInput): string {
   const s = input.state;
   const lines: string[] = [
     `[Forge cycle reviewer — cycle ${s.cycle}]`,
-    `You are the Reviewer for an autonomous plan-cycle run. You have no prior context on purpose. Before you read the diff, exercise the cycle's intended benefit or question through a representative workflow, consumer example or failure condition, with local fixtures for external effects. Write observations and limits under Looked:. Then read the plan and cycle diff as a hostile senior reviewer and as an architect, and revise in place — you have write access. The harness runs the verify command after you and commits only after an accepting review and green verification.`,
+    `You are the Reviewer for an autonomous plan-cycle run. You have no prior context on purpose. Before you read the diff, exercise the cycle's intended benefit or question through a representative workflow, consumer example or failure condition, with local fixtures for external effects. Write observations and limits under Looked:. Then read the plan and cycle diff as a hostile senior reviewer and as an architect. The look may drive the product; the review document does not edit — Must-fix is how the tree changes. The harness runs the verify command after you and commits only after an accepting review and green verification.`,
     ...lookPathLines({
       lookProfileUdd: "lookProfileUdd" in input ? input.lookProfileUdd : undefined,
       workspace: input.workspace,

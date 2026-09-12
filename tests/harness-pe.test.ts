@@ -145,6 +145,10 @@ describe("context admit (OpenCode-inspired)", () => {
     assert.match(msg1!, /Forge harness — mid-conversation/);
     assert.match(msg1!, /cycle=1 phase=execute/);
     assert.match(msg1!, /improve the code/);
+    assert.doesNotMatch(msg1!, /in good shape/);
+    assert.match(msg1!, /explicit mandate/);
+    assert.match(msg1!, /no-progress/);
+    assert.match(msg1!, /blocked/);
 
     // Unchanged → null
     assert.equal(admitHarnessIfChanged(sid, snap1), null);
