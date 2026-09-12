@@ -122,6 +122,13 @@ export function formatUlwStatus(s: CycleState | null | undefined): string {
     if (open.length > 6) lines.push(`    … +${open.length - 6} more`);
   }
   if (s.verifyCommand) lines.push(`  Verify: ${s.verifyCommand}`);
+  if (s.directExecuteStreak > 0) {
+    lines.push(`  Synthesized streak: ${s.directExecuteStreak} (no-progress wall at 3)`);
+  }
+  const lastCycle = s.cycles[s.cycles.length - 1];
+  if (lastCycle?.plannerStatus && lastCycle.plannerStatus !== "planned") {
+    lines.push(`  Planner: ${lastCycle.plannerStatus}`);
+  }
   if (s.lastReview) {
     lines.push(
       `  Last review: ${s.lastReview.verdict}${s.lastReview.mustFix.length ? ` · must-fix ${s.lastReview.mustFix.length}` : ""}`,

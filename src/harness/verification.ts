@@ -239,6 +239,26 @@ export function classifyVerificationRun(opts: {
   return { ran: true, passed, isolate, fullSuite };
 }
 
+/** `godot --headless --script …` is the product check for a Godot tree, not an isolate. */
+export function isGodotProductCheck(command: string): boolean {
+  const c = String(command || "").replace(/\s+/g, " ").trim();
+  return /\bgodot\b/i.test(c) && /(?:--headless|--script)\b/.test(c);
+}
+
+/** `cmd1 && cmd2` / `cmd1; cmd2` segments. */
+export function splitCheckSegments(command: string): string[] {
+  return String(command || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(/\s*(?:&&|;)\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function isSetupSegment(seg: string): boolean {
+  return /^(?:cd|echo|true|false|export|mkdir)\b/.test(seg);
+}
+
 /** `npm test` / `npm run test|ci|check` / unittest discover / bare pytest. */
 export function isFullSuiteCommand(
   command: string,
@@ -246,7 +266,21 @@ export function isFullSuiteCommand(
 ): boolean {
   const c = String(command || "").replace(/\s+/g, " ").trim();
   if (!c) return false;
-  if (isIsolateTestCommand(c)) return false;
+  const parts = splitCheckSegments(c);
+  if (parts.length > 1) {
+    return parts.some((p) => !isSetupSegment(p) && isFullSuiteSegment(p, preferredCheckCommands));
+  }
+  return isFullSuiteSegment(c, preferredCheckCommands);
+}
+
+function isFullSuiteSegment(
+  command: string,
+  preferredCheckCommands?: string[],
+): boolean {
+  const c = String(command || "").replace(/\s+/g, " ").trim();
+  if (!c) return false;
+  if (isGodotProductCheck(c)) return true;
+  if (isIsolateSegment(c)) return false;
   if (/\b(?:npm|pnpm|yarn|bun)\s+run\s+(?:ci|check)\b/.test(c)) return true;
   if (/\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b/.test(c)) {
     if (/tests\/[^\s"'\\]+\.test\./i.test(c)) return false;
@@ -274,14 +308,14 @@ export function isFullSuiteCommand(
     const want = String(p || "").replace(/\s+/g, " ").trim();
     if (!want) continue;
     if (c === want || c.endsWith(` && ${want}`) || c.endsWith(`; ${want}`)) {
-      return !isIsolateTestCommand(want);
+      return !isIsolateSegment(want);
     }
     // Declared check runs with extra segments (`./build.sh && app --self-test; echo`).
     if (
       /^(?:\.\/|scripts?\/|bin\/|tools?\/)[\w./-]+/.test(want) &&
       new RegExp(`(?:^|[;&|]\\s*)${escapeRegExpLocal(want)}(?:\\s|$)`).test(c)
     ) {
-      return !isIsolateTestCommand(want);
+      return !isIsolateSegment(want);
     }
   }
   return false;
@@ -294,10 +328,27 @@ function escapeRegExpLocal(s: string): string {
 /**
  * Targeted file/method check — ran, not wave proof=✓.
  * python -m unittest …TestCase.test_* and node --test tests/foo.test.ts.
+ * A compound (`cargo test -p foo && godot --headless --script smoke.gd`) is
+ * an isolate only when every check-like segment is; a product suite in any
+ * segment keeps the whole command as the gate.
  */
 export function isIsolateTestCommand(command: string): boolean {
   const c = String(command || "").replace(/\s+/g, " ").trim();
   if (!c) return false;
+  const parts = splitCheckSegments(c);
+  if (parts.length > 1) {
+    const checks = parts.filter((p) => !isSetupSegment(p));
+    if (!checks.length) return false;
+    if (checks.some((p) => isGodotProductCheck(p) || isFullSuiteSegment(p))) return false;
+    return checks.every((p) => isIsolateSegment(p));
+  }
+  return isIsolateSegment(c);
+}
+
+function isIsolateSegment(command: string): boolean {
+  const c = String(command || "").replace(/\s+/g, " ").trim();
+  if (!c) return false;
+  if (isGodotProductCheck(c)) return false;
   // tsc / typecheck — ran, not wave proof=✓ (same class as file/method isolates).
   if (isTypecheckCommand(c)) return true;
   if (/\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b/.test(c)) return false;

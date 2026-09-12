@@ -128,6 +128,8 @@ export interface CycleRecord {
   serendipity?: string[];
   plannerTokens?: number;
   reviewerTokens?: number;
+  /** How the plan was admitted — status/report distinguish scout-ok / synthesized. */
+  plannerStatus?: "planned" | "scout-admitted" | "synthesized";
 }
 
 export interface CycleReviewNotes {

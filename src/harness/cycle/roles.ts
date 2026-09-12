@@ -44,6 +44,8 @@ export interface TwoTurnOptions {
   secondMaxTurns?: number;
   /** Turn 2 is report-only — emit the document, do not re-enter exploration. */
   secondDocumentOnly?: boolean;
+  /** If turn 1 already is a parseable plan, skip the starving document turn. */
+  skipSecondIf?: (firstText: string) => boolean;
 }
 
 export interface TwoTurnResult {
@@ -59,7 +61,7 @@ export interface TwoTurnResult {
 /** Strip the subagent result header so the artifact is the document alone. */
 export function roleBody(text: string): string {
   const t = String(text || "");
-  const idx = t.search(/^\s*(?:#\s*Cycle\s+\d+\s+(?:plan|review|scout|look)\b|Verdict\s*:|Identity\s*:|Looked\s*:)/im);
+  const idx = t.search(/^\s*(?:#\s*Cycle\s+\d+\s+(?:plan|review|scout|look)\b|Verdict\s*[:.]|Identity\s*[:.]|Looked\s*[:.])/im);
   return idx > 0 ? t.slice(idx).replace(/^\s+/, "") : t;
 }
 
@@ -95,6 +97,9 @@ export async function runRoleTwoTurn(
     ...(opts.firstMaxTurns ? { maxTurns: opts.firstMaxTurns } : {}),
   });
   const firstText = roleBody(first.text);
+  if (first.sessionId && opts.skipSecondIf?.(firstText)) {
+    return { first, second: first, mode: "two-turn", sessionId: first.sessionId };
+  }
   if (!first.sessionId) {
     // The runtime did not keep the session (a fake, an older loop): one
     // message carries both, with whatever turn 1 saw.

@@ -90,6 +90,18 @@ describe("two-turn role runner", () => {
     assert.notEqual(calls[0].opts.documentOnly, true, "the scout turn still explores");
   });
 
+  it("skipSecondIf admits a scout that is already the plan", async () => {
+    const scout = "# Cycle 3 scout\nVerdict: continue\nLooked: x";
+    const { rt, calls } = fakeRt([{ text: scout }]);
+    const r = await runRoleTwoTurn(rt, "planner", {
+      ...opts,
+      skipSecondIf: (t) => /Verdict:\s*continue/.test(t),
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(r.second.text, scout);
+    assert.equal(r.mode, "two-turn");
+  });
+
   it("a runtime that does not keep sessions gets one more call with the single brief and turn 1's text", async () => {
     const { rt, calls } = fakeRt([{ text: "# Cycle 3 scout\nLooked: x" }, {}], { keepsSessions: false });
     const r = await runRoleTwoTurn(rt, "planner", opts);

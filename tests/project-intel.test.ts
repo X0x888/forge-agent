@@ -10,6 +10,7 @@ import {
   clearProjectIntelCache,
   detectPackageManager,
   detectProjectIntel,
+  harvestGuidelineChecks,
   formatProjectIntelForPrompt,
   wrongPackageManagerTip,
   missingScriptTip,
@@ -347,6 +348,31 @@ describe("detectProjectIntel", () => {
     write(py, "pytest.ini", "[pytest]\n");
     const p = detectProjectIntel(py);
     assert.ok(p.checkCommands.includes("pytest"));
+  });
+
+  it("harvests AGENTS.md Commands, including a mixed cargo + godot gate ahead of cargo test", () => {
+    const d = tmpDir("forge-intel-agents-");
+    write(d, "Cargo.toml", '[package]\nname = "r"\nversion = "0.1.0"\n');
+    write(
+      d,
+      "AGENTS.md",
+      [
+        "# Game",
+        "",
+        "## Commands",
+        "",
+        "```bash",
+        "cargo test -p game_core --offline",
+        "godot --path godot --headless --script res://scripts/smoke.gd",
+        "```",
+        "",
+      ].join("\n"),
+    );
+    clearProjectIntelCache();
+    const harvested = harvestGuidelineChecks(d);
+    assert.ok(harvested.some((c) => /godot/.test(c)));
+    const intel = detectProjectIntel(d);
+    assert.match(intel.checkCommands[0] ?? "", /cargo test -p.*&&.*godot/);
   });
 
   it("formatProjectIntelForPrompt is empty when blank", () => {

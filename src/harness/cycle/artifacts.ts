@@ -111,7 +111,7 @@ export interface ParsedScout {
 }
 
 const SECTION_RE =
-  /^\s*(?:#{1,6}\s*)?\*{0,2}(Verdict|Identity|Direction|Looked|Considered|Worth the cycle|Promises|Verify|Items|Out of scope|Guidelines|Operator|Title|Fulfillment|Revisions|Must-fix|Architecture|Worth|Notes|Summary)\*{0,2}\s*:\s*(.*)$/i;
+  /^\s*(?:#{1,6}\s*)?\*{0,2}(Verdict|Identity|Direction|Looked|Considered|Worth the cycle|Promises|Verify|Items|Out of scope|Guidelines|Operator|Title|Fulfillment|Revisions|Must-fix|Architecture|Worth|Notes|Summary)\*{0,2}\s*[:.]\s*(.*)$/i;
 
 const LEAVE_IT_RE = /^\*{0,2}leave\s+it\b/i;
 
@@ -147,7 +147,9 @@ function splitSections(text: string): Map<string, string[]> {
     const m = line.match(SECTION_RE);
     if (m) {
       current = m[1].toLowerCase().replace(/\s+/g, "-");
-      const rest = (m[2] || "").trim();
+      // `**Verdict.** continue` leaves `** continue` after the label; `**Items.**`
+      // leaves a lone `**`. Strip leftover bold markers so the remainder is the value.
+      const rest = (m[2] || "").replace(/^\*+\s*|\s*\*+$/g, "").trim();
       const arr = out.get(current) ?? [];
       if (rest) arr.push(rest);
       out.set(current, arr);
@@ -199,7 +201,7 @@ function titleOf(text: string, sections: Map<string, string[]>): string {
   if (explicit) return explicit.slice(0, 120);
   const h1 = text.match(/^\s*#\s+(.+)$/m)?.[1]?.trim();
   if (h1) {
-    const stripped = h1.replace(/^cycle\s+\d+\s+(?:plan|review)\s*(?:[—–:-]\s*)?/i, "").trim();
+    const stripped = h1.replace(/^cycle\s+\d+\s+(?:plan|review|scout|look)\s*(?:[—–:-]\s*)?/i, "").trim();
     if (stripped) return stripped.slice(0, 120);
   }
   return "";
@@ -368,7 +370,7 @@ const LOOK_NEGATED_OPEN_RE =
   /could not run|never(?:\s+\w+){0,3}\s+opened|did(?: not|n't) open(?: popup)?|could not open|playwright mcp never(?: initialized)?/gi;
 /** Opening evidence after stripping fail phrases. Bare "lease" is the brief hint, not a look. */
 const LOOK_DID_OPEN_RE =
-  /\b(?:clicked|clicking|click|loaded|loading|load|opened|opening|navigated|unpacked)\b|file:\/\/|bash chrome/i;
+  /\b(?:clicked|clicking|click|loaded|loading|load|opened|opening|navigated|unpacked)\b|file:\/\/|bash chrome|SMOKE_[A-Z0-9_]+_OK|\bgodot\b[^\n]*--headless|headless smoke/i;
 const LOOK_INFRA_RE =
   /maxTurns?\s*\(\d+\)\s*reached|look turn ended before|turn budget ended before|Playwright MCP was down.{0,80}(?:never|could not)|Chrome for Testing died|GPU unusable|godot(?:\.app)? (?:quit unexpectedly|crashed)|Vulkan[^\n]{0,40}hang/i;
 
@@ -398,7 +400,8 @@ export function parseLookArtifact(text: string): { looked: string; couldNotLook:
  */
 const SURFACE_SIT_RE =
   /\b(?:popup|chrome|browser|sit|door|gallery)\b|first[- ]hour|file:\/\//i;
-const CLI_OR_RPC_PROOF_RE = /npm\s+test|json-rpc/i;
+const CLI_OR_RPC_PROOF_RE =
+  /npm\s+test|json-rpc|godot\b[^\n]*--headless|headless smoke|SMOKE_[A-Z0-9_]+_OK/i;
 
 export function isSurfaceSit(items: readonly CyclePlanItem[]): boolean {
   if (!items.length) return false;
@@ -544,6 +547,17 @@ export function parseScoutArtifact(text: string): ParsedScout | null {
     promises: parsePromiseLines(sections.get("promises")),
     considered: bullets(sections.get("considered")),
   };
+}
+
+/** Why a review did not parse, for the Reviewer's retry. Empty when it parses. */
+export function explainReviewParseFailure(text: string): string {
+  const sections = splitSections(text);
+  if (!sections.has("verdict")) {
+    return "no Verdict: line (need `ship` | `ship-with-revisions` | `blocked`)";
+  }
+  const verdict = parseReviewVerdict(firstLine(sections.get("verdict")));
+  if (!verdict) return "Verdict: is not ship, ship-with-revisions, or blocked";
+  return "";
 }
 
 function parseReviewVerdict(raw: string | undefined): ReviewVerdict | null {

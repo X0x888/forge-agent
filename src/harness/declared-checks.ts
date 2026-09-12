@@ -23,7 +23,7 @@ const INLINE_CODE_RE = /`([^`\n]{2,220})`/g;
 
 /** Heads that run something — must still carry a check keyword. */
 const CHECK_HEAD_RE =
-  /^(?:npm|pnpm|yarn|bun|deno|node|tsx|npx|python3?|py\.test|pytest|cargo|go|mvn|gradlew?|\.\/gradlew|make|mix|composer|turbo|nx|tsc|eslint|dotnet|swift|xcodebuild|zig|flutter|dart|bundle|rake|just|task|stack|cabal|sbt|lein|ctest|cmake|forge|jest|vitest|mocha|ava|phpunit|rspec|mypy|pyright|ruff|biome|elm-test|bash|sh|zsh)$/i;
+  /^(?:npm|pnpm|yarn|bun|deno|node|tsx|npx|python3?|py\.test|pytest|cargo|go|mvn|gradlew?|\.\/gradlew|make|mix|composer|turbo|nx|tsc|eslint|dotnet|swift|xcodebuild|zig|flutter|dart|godot|bundle|rake|just|task|stack|cabal|sbt|lein|ctest|cmake|forge|jest|vitest|mocha|ava|phpunit|rspec|mypy|pyright|ruff|biome|elm-test|bash|sh|zsh)$/i;
 const CHECK_KEYWORD_RE =
   /\b(?:test|tests|spec|check|checks|verify|lint|typecheck|type-check|build|ci|smoke|self-?test|clippy|vet|unittest|nextest)\b|--self-?test\b|\.(?:test|spec)\.[cm]?[jt]sx?\b/i;
 /** With an allow-listed runner head, a target that *contains* a check word (`make selfcheck`, `just verify-all`). */

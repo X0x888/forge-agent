@@ -1050,6 +1050,11 @@ describe("cycle orchestrator", () => {
     // `none — why` falls back to the suite; no stack table → no gate.
     assert.equal(resolveVerifyCommand({ verifyNone: "no runner" }, checks).command, "npm test");
     assert.equal(resolveVerifyCommand({ verifyNone: "no runner" }, []).command, undefined);
+    const godotGate =
+      "cargo test -p game_core --offline && godot --path godot --headless --script res://scripts/smoke.gd";
+    const mixed = resolveVerifyCommand({ verifyCommand: godotGate }, ["cargo test", godotGate]);
+    assert.equal(mixed.command, godotGate, "a crate isolate plus product smoke stays the gate");
+    assert.equal(mixed.note, undefined);
     assert.equal(resolveVerifyCommand({}, checks).command, "npm test");
   });
 
@@ -1294,13 +1299,30 @@ describe("cycle orchestrator — two turns per role", () => {
     assert.equal(out?.planAdmitted, true);
     const s = loadCycleState(sid)!;
     assert.equal(s.phase, "execute");
-    assert.match(s.planTitle ?? "", /Direct execute/);
+    assert.match(s.planTitle ?? "", /Keep the promise/);
     assert.equal(s.directExecuteStreak, 1);
     // the scout's identity/promises inform the synthesized cycle
     assert.equal(s.identity, "a CLI for tests, scouted");
+    assert.ok(s.items.some((i) => /README: a first-run card/.test(i.title)));
     assert.ok(fs.existsSync(path.join(cycleArtifactsDir(sid, 1), "scout.md")));
     assert.ok(fs.existsSync(path.join(cycleArtifactsDir(sid, 1), "plan.failed.md")));
     assert.equal(calls.filter((c) => c.startsWith("cleanup:")).length, 1);
+  });
+
+  it("a scout that already is a continue plan is admitted without a starving plan turn", async () => {
+    const sid = "orch2-scout-plan";
+    const { rt, calls } = fakeRuntime(cwd, { twoTurn: true, planner: [PLAN_OK(1)] });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: "port original play", cwd });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.equal(out?.planAdmitted, true);
+    assert.equal(out?.released, false);
+    assert.equal(calls.filter((c) => c === "role:planner#1").length, 1);
+    assert.equal(calls.filter((c) => c === "role:planner#2").length, 0, "plan turn skipped");
+    const s = loadCycleState(sid)!;
+    assert.match(s.planTitle ?? "", /theme 1/);
+    assert.equal(s.cycles[0]?.plannerStatus, "scout-admitted");
+    assert.equal(s.directExecuteStreak, 0);
   });
 
   it("a review turn without its own Looked: takes the look's; a mandate `fulfilled` still releases", async () => {
@@ -1502,6 +1524,25 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     assert.equal(reviewTurns[1]?.documentOnly, true, "the review document is report-only");
   });
 
+  it("an unparseable review is retried once on the kept session", async () => {
+    const sid = "orch2-review-retry";
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      verifyCommand: "npm test",
+      maxCycles: 1,
+      items: [{ title: "ship the widget", proof: "npm test" }],
+    });
+    const { rt, calls } = fakeRuntime(cwd, {
+      twoTurn: true,
+      reviewer: [LOOK(1), "prose, not a review", REVIEW_OK],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r?.committed?.sha, "the retry parsed and the cycle shipped");
+    assert.equal(calls.filter((c) => c === "role:reviewer#1").length, 1);
+    assert.equal(calls.filter((c) => c === "role:reviewer#2").length, 2, "look then review then retry");
+  });
+
   it("/cycle 0 during the next Planner does not write the next scout.md", async () => {
     const sid = "orch2-cycle0-no-scout";
     armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test" });
@@ -1621,7 +1662,7 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     assert.equal(out.endReason, "fulfilled");
   });
 
-  it("architecture recurrence: a continue plan that ignores the chew/Stay pile is retried then direct-executed with Must-fix", async () => {
+  it("architecture recurrence: a continue plan that ignores the chew/Stay pile is retried then synthesized with leave-it", async () => {
     process.env.FORGE_ULW_TWO_TURN = "0";
     const sid = "orch3-class-hold";
     armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "x" }] });
@@ -1653,8 +1694,12 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     assert.equal(out?.planAdmitted, true);
     const s = loadCycleState(sid)!;
     assert.match(s.planTitle ?? "", /Direct execute/);
-    assert.ok(s.cycles[s.cycle - 1]?.mustFix?.some((m) => /chew stay pile/i.test(m)));
-    assert.ok(s.items.some((i) => /chew stay pile/i.test(i.title)));
+    assert.ok(
+      s.items.every((i) => !/the last two shipped reviews named/i.test(i.title)),
+      "class hold is a Considered leave-it, not item 0",
+    );
+    const planMd = fs.readFileSync(path.join(cycleArtifactsDir(sid, s.cycle), "plan.md"), "utf8");
+    assert.match(planMd, /leave it chew stay pile/i);
   });
 
   it("architecture recurrence: addressing the class, or leave-it, admits; FORGE_ULW_CLASS_HOLD=0 skips the hold", async () => {
@@ -1756,8 +1801,12 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     assert.equal(out?.planAdmitted, true);
     const s = loadCycleState(sid)!;
     assert.match(s.planTitle ?? "", /Go deeper|Keep the promise/);
-    assert.ok(s.items.some((i) => /chew stay pile/i.test(i.title)), "synthesized continue still carries the class");
-    assert.ok(s.cycles[s.cycle - 1]?.mustFix?.some((m) => /chew stay pile/i.test(m)));
+    assert.ok(
+      s.items.every((i) => !/the last two shipped reviews named/i.test(i.title)),
+      "class hold is a Considered leave-it, not item 0",
+    );
+    const planMd = fs.readFileSync(path.join(cycleArtifactsDir(sid, s.cycle), "plan.md"), "utf8");
+    assert.match(planMd, /leave it chew stay pile/i, "synthesized continue still names the class");
   });
 
   it("class hold does not trap: /cycle 0 after a closed cycle still releases", async () => {

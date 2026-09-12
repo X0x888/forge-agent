@@ -309,6 +309,16 @@ function recordLines(input: PlannerPlanInput): string[] {
       lines.push(``, `## The last Reviewer's shape notes`);
       for (const a of last.architecture.slice(0, 6)) lines.push(`- ${clipBlock(a, 300).replace(/\n/g, " ")}`);
     }
+    const unkept = (s.promises ?? []).filter((p) => p.state !== "kept");
+    if (unkept.length) {
+      lines.push(
+        ``,
+        `## Promises still unkept (default next job if the mandate is still open — shrinking Identity does not retire these)`,
+      );
+      for (const p of unkept.slice(0, 8)) {
+        lines.push(`- ${p.state}: ${p.text}${p.seen ? ` — ${p.seen}` : ""}`);
+      }
+    }
     const recurring = recurringArchitectureClass(s.cycles);
     if (recurring) {
       lines.push(

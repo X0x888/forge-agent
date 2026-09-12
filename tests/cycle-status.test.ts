@@ -68,6 +68,15 @@ describe("/cycle status", () => {
     delete s.promises;
     assert.doesNotMatch(formatUlwStatus(s), /Promises:/);
   });
+
+  it("shows a synthesized streak and a scout-admitted planner", () => {
+    const s = state();
+    s.directExecuteStreak = 2;
+    s.cycles[1].plannerStatus = "scout-admitted";
+    const text = formatUlwStatus(s);
+    assert.match(text, /Synthesized streak: 2/);
+    assert.match(text, /Planner: scout-admitted/);
+  });
 });
 
 describe("cycleReportFacts", () => {

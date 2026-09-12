@@ -38,6 +38,7 @@ import {
   registerSpawnedResources,
   rootSessionIdFromMeta,
 } from "../browser-lease.js";
+import { isGitCommitCommand, ulwGitCommitDenied } from "../../harness/cycle/commit-lock.js";
 
 const execAsync = promisify(exec);
 
@@ -329,6 +330,10 @@ export async function toolBash(
       output: `HARD DENY [${protectedRead.rule}]: ${protectedRead.reason}`,
       isError: true,
     };
+  }
+  const ulwCommit = ulwGitCommitDenied(ctx.sessionId || ctx.session?.meta.id);
+  if (ulwCommit && isGitCommitCommand(command)) {
+    return { output: ulwCommit, isError: true };
   }
   const timeoutRes = resolveTimeoutMs(
     args.timeout_ms,

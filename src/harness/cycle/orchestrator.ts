@@ -26,6 +26,7 @@ import { appendRoleRunLine } from "../../session/subagent-usage.js";
 import {
   architectureHoldMessage,
   explainPlanParseFailure,
+  explainReviewParseFailure,
   extractDisputeLines,
   extractSerendipityLines,
   isSurfaceSit,
@@ -40,6 +41,7 @@ import {
   planCollapsesArchitectureClass,
   recurringArchitectureClass,
   architectureClassMustCollapse,
+  reviewArtifactContract,
   type ParsedPlan,
   type ParsedScout,
 } from "./artifacts.js";
@@ -306,6 +308,7 @@ function planRecord(
   planPath: string,
   plannerTokens: number,
   scout?: ScoutResult,
+  plannerStatus?: CycleRecord["plannerStatus"],
 ): CycleRecord {
   return {
     n: s.cycle,
@@ -324,6 +327,7 @@ function planRecord(
     verifyCommand: s.verifyCommand,
     mustFix: [],
     plannerTokens,
+    ...(plannerStatus ? { plannerStatus } : {}),
   };
 }
 
@@ -337,7 +341,7 @@ async function runPlanner(
   s: CycleState,
   rt: CycleRuntime,
 ): Promise<
-  | { plan: ParsedPlan; raw: string; tokens: number; scout?: ScoutResult }
+  | { plan: ParsedPlan; raw: string; tokens: number; scout?: ScoutResult; plannerStatus?: CycleRecord["plannerStatus"] }
   | { error: string; raw: string; tokens: number; scout?: ScoutResult; mustFix?: string[] }
 > {
   const lastPlanAt = currentCycleRecord(s)?.startedAt ?? s.startedAt;
@@ -387,6 +391,10 @@ async function runPlanner(
     // The plan turn is prose: the scouting is done, so it emits the plan and
     // does not re-enter reading (that is how cycle 3 burned 60 turns and died).
     secondDocumentOnly: true,
+    skipSecondIf: (scoutText) => {
+      const p = parsePlanArtifact(scoutText);
+      return Boolean(p && p.verdict === "continue" && !continueArchitectureHold(s, p));
+    },
   });
   let tokens = roleTokens(tt);
   adoptLiveControls(s);
@@ -410,6 +418,17 @@ async function runPlanner(
   }
   let plan = parsePlanArtifact(raw);
   let hold = continueArchitectureHold(s, plan);
+  const tryScoutAsPlan = (): boolean => {
+    const fromScout = parsePlanArtifact(scoutRaw);
+    if (!fromScout || continueArchitectureHold(s, fromScout)) return false;
+    plan = fromScout;
+    raw = scoutRaw;
+    hold = "";
+    return true;
+  };
+  if ((!plan || hold) && tryScoutAsPlan()) {
+    /* scout already carried the contract */
+  }
   if (!plan || hold) {
     // One retry, with what was missing named (presence and shape, never intent).
     const why =
@@ -428,6 +447,9 @@ async function runPlanner(
     if (againRaw.trim()) raw = againRaw;
     plan = parsePlanArtifact(againRaw);
     hold = continueArchitectureHold(s, plan);
+    if ((!plan || hold) && tryScoutAsPlan()) {
+      /* retry missed; scout still parses */
+    }
     if (hold) {
       await persistAndCleanupRole(s.sessionId, "planner", rt, tt, again);
       return { error: hold, raw, tokens, scout, mustFix: [hold] };
@@ -444,7 +466,10 @@ async function runPlanner(
       ...(clsHold ? { mustFix: [clsHold] } : {}),
     };
   }
-  return { plan, raw, tokens, scout };
+  const fromScout = parsePlanArtifact(scoutRaw);
+  const plannerStatus: CycleRecord["plannerStatus"] =
+    fromScout && fromScout.verdict === plan.verdict && fromScout.title === plan.title ? "scout-admitted" : "planned";
+  return { plan, raw, tokens, scout, plannerStatus };
 }
 
 /** The no-progress wall: consecutive synthesized cycles that never commit. */
@@ -473,6 +498,7 @@ function synthesizeWorkPlan(
   const promises = s.promises ?? scout?.parsed?.promises ?? [];
   const unkept = (opts?.targets?.length ? opts.targets : promises.filter((p) => p.state !== "kept"));
   const considered = scout?.parsed?.considered ?? [];
+  let consideredOut = [...considered];
   const looked = scout?.parsed?.looked ?? "";
 
   let title: string;
@@ -532,17 +558,28 @@ function synthesizeWorkPlan(
     const preview: ParsedPlan = {
       title,
       verdict: "continue",
-      considered,
+      considered: consideredOut,
       promises,
       items,
       outOfScope: [],
       operator: [],
     };
-    if (!planAddressesArchitectureClass(preview, cls)) {
-      items = [architectureClassItem(cls), ...items];
-      if (!mustFix.includes(hold)) mustFix.push(hold);
+    if (architectureClassMustCollapse(s.cycles, cls)) {
+      if (!planCollapsesArchitectureClass(preview, cls)) {
+        items = [architectureClassItem(cls), ...items];
+        if (!mustFix.includes(hold)) mustFix.push(hold);
+      }
+    } else if (!planAddressesArchitectureClass(preview, cls)) {
+      consideredOut = [
+        ...consideredOut,
+        `leave it ${cls} — last shipped reviews bound this class; do not re-run it as the cycle`,
+      ];
     }
   }
+
+  const scoutPlan = scout?.raw ? parsePlanArtifact(scout.raw) : undefined;
+  const verifyCommand =
+    scoutPlan?.verifyCommand ?? s.verifyCommand ?? s.declaredChecks[0] ?? undefined;
 
   const worthClaim = "Further investigation can reveal a consequential gap the scout did not establish; any edit must be justified by what is observed, its benefit, and its cost.";
   const raw = [
@@ -550,10 +587,10 @@ function synthesizeWorkPlan(
     `Verdict: continue`,
     s.identity ? `Identity: ${s.identity}` : "",
     looked ? `Looked: ${looked}` : "",
-    considered.length ? `Considered:\n${considered.map((c) => `- ${c}`).join("\n")}` : "",
+    consideredOut.length ? `Considered:\n${consideredOut.map((c) => `- ${c}`).join("\n")}` : "",
     `Direction: ${direction}`,
     `Worth the cycle: ${worthClaim}`,
-    s.verifyCommand ? `Verify: \`${s.verifyCommand}\`` : "",
+    verifyCommand ? `Verify: \`${verifyCommand}\`` : "",
     `Items:`,
     ...items.map((it, i) => `${i + 1}. ${it.title}${it.files.length ? ` — files: ${it.files.join(", ")}` : ""} — serves: ${it.serves ?? ""} — red now: ${it.redNow ?? ""} — proof: ${it.proof ?? ""}`),
     promises.length ? `Promises:\n${promises.map((p) => `- ${p.text} — ${p.state}${p.seen ? ` — ${p.seen}` : ""}`).join("\n")}` : "",
@@ -567,10 +604,10 @@ function synthesizeWorkPlan(
     identity: s.identity,
     direction,
     looked: looked || undefined,
-    considered,
+    considered: consideredOut,
     worthClaim,
     promises,
-    verifyCommand: undefined,
+    verifyCommand,
     items,
     outOfScope: [],
     operator: [],
@@ -644,10 +681,15 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
         `ULW released — ${s.synthStreak} synthesized cycle(s) already ran; the Planner must produce a parseable plan. Re-arm with /ulw or give a mandate.`,
       );
     }
-    rt.log?.(`ULW planner did not converge for cycle ${n}; synthesizing a direct-execute cycle (streak ${s.directExecuteStreak + 1}/${noProgressCap()})`);
-    const synth = synthesizeWorkPlan(s, scout, "no-plan", { mustFix: out.mustFix });
+    const unkept = (s.promises ?? scout?.parsed?.promises ?? []).some((p) => p.state !== "kept");
+    const inventory = s.promises ?? scout?.parsed?.promises ?? [];
+    const kind = unkept ? "keep-promise" : inventory.length ? "go-deeper" : "no-plan";
+    rt.log?.(
+      `ULW planner did not converge for cycle ${n}; synthesizing a ${kind} cycle (streak ${s.directExecuteStreak + 1}/${noProgressCap()})`,
+    );
+    const synth = synthesizeWorkPlan(s, scout, kind, { mustFix: out.mustFix });
     s.directExecuteStreak += 1;
-    const admitted = await admitPlan(s, rt, synth.plan, synth.raw, out.tokens, scout, reviewForExecutor);
+    const admitted = await admitPlan(s, rt, synth.plan, synth.raw, out.tokens, scout, reviewForExecutor, "synthesized");
     stampSynthMustFix(s, synth.mustFix);
     return admitted;
   }
@@ -744,12 +786,12 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
     rt.log?.(`ULW Planner declared ${s.mandate != null ? "mandate" : "no-mandate"} fulfilled; ${whySynth} — synthesizing a ${kind} cycle (streak ${s.directExecuteStreak + 1}/${noProgressCap()})`);
     const synth = synthesizeWorkPlan(s, scout, kind, outstanding.length ? { targets: outstanding } : undefined);
     s.directExecuteStreak += 1;
-    const admitted = await admitPlan(s, rt, synth.plan, synth.raw, tokens, scout, reviewForExecutor);
+    const admitted = await admitPlan(s, rt, synth.plan, synth.raw, tokens, scout, reviewForExecutor, "synthesized");
     stampSynthMustFix(s, synth.mustFix);
     return admitted;
   }
 
-  return admitPlan(s, rt, plan, raw, tokens, scout, reviewForExecutor);
+  return admitPlan(s, rt, plan, raw, tokens, scout, reviewForExecutor, "plan" in out ? out.plannerStatus : "planned");
 }
 
 /**
@@ -764,6 +806,7 @@ async function admitPlan(
   tokens: number,
   scout: ScoutResult | undefined,
   reviewForExecutor: ReviewNotesForExecutor | undefined,
+  plannerStatus?: CycleRecord["plannerStatus"],
 ): Promise<CycleStopOutcome> {
   s.cycle += 1;
   s.phase = "execute";
@@ -799,7 +842,7 @@ async function admitPlan(
   if (gate.note) rt.log?.(`ULW cycle ${s.cycle} verify: ${gate.note}`);
   s.cycleStartHead = safe(() => rt.gitHead(), null);
   const planPath = writeArtifact(s.sessionId, s.cycle, "plan.md", raw);
-  s.cycles.push(planRecord(s, plan, planPath, tokens, scout));
+  s.cycles.push(planRecord(s, plan, planPath, tokens, scout, plannerStatus));
   saveCycleState(s);
   safe(() => rt.seedTodos(s.items), undefined);
   safe(
@@ -986,8 +1029,7 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     firstMaxTurns: reviewerLookTurns(),
     secondDocumentOnly: true,
   });
-  await persistAndCleanupRole(s.sessionId, "reviewer", rt, tt);
-  const res = tt.second;
+  let res = tt.second;
   if (record) record.reviewerTokens = (record.reviewerTokens ?? 0) + roleTokens(tt);
   const lookRaw = tt.first ? roleBody(tt.first.text) : "";
   let lookLooked: string | undefined;
@@ -1000,9 +1042,29 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     lookCouldNot = !lookParsed || lookParsed.couldNotLook;
     if (record) record.lookPath = lookPath;
   }
-  const raw = roleBody(res.text);
-  const completed = res.ok && res.status === "completed";
+  let raw = roleBody(res.text);
+  let completed = res.ok && res.status === "completed";
   let parsed = completed ? parseReviewArtifact(raw) : null;
+  let reviewRetry: RoleRunResult | undefined;
+  if (!parsed && tt.mode === "two-turn" && tt.sessionId) {
+    const why = explainReviewParseFailure(raw) || "no Verdict: ship | ship-with-revisions | blocked";
+    const note = `[Forge] Your previous review did not parse: ${why}. Write the review again and end with the contract exactly:\n${reviewArtifactContract(s.cycle)}`;
+    const again = await runRoleTurnAgain(rt, "reviewer", tt.sessionId, note, {
+      cycle: s.cycle,
+      maxTurns: plannerPlanTurns(),
+      documentOnly: true,
+    });
+    reviewRetry = again;
+    if (record) record.reviewerTokens = (record.reviewerTokens ?? 0) + again.promptTokens + again.completionTokens;
+    const againRaw = roleBody(again.text);
+    if (againRaw.trim()) {
+      raw = againRaw;
+      res = again;
+      completed = again.ok && again.status === "completed";
+      parsed = completed ? parseReviewArtifact(raw) : null;
+    }
+  }
+  await persistAndCleanupRole(s.sessionId, "reviewer", rt, tt, reviewRetry);
   // No parseable review is a review that did not happen: fail closed (no
   // commit); the work stays in the tree and the next Planner sees why.
   let notes: CycleReviewNotes = parsed ?? {

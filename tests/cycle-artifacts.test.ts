@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   architectureClassTokens,
   explainPlanParseFailure,
+  explainReviewParseFailure,
   extractDisputeLines,
   extractLabelledLines,
   extractSerendipityLines,
@@ -154,6 +155,30 @@ describe("plan artifact parser", () => {
     assert.equal(explainPlanParseFailure(MINIMAL()), "");
   });
 
+  it("accepts **Verdict.** (period after the label) the way models often bold the contract", () => {
+    const p = parsePlanArtifact(
+      [
+        `# Cycle 15 scout`,
+        `**Verdict.** continue — restow the title door`,
+        `**Identity.** a player of the extract-port`,
+        `**Looked.** smoke EXIT:0 SMOKE_FUSE_OK`,
+        `**Considered.**`,
+        `- leave it tick_bombs — already bound`,
+        `- restow stock Start — first session`,
+        `**Direction.** restow Start from a scripted handler`,
+        `**Worth the cycle.** the first session is the title`,
+        `**Verify.** \`cargo test -p game_core --offline && godot --path godot --headless --script res://scripts/smoke.gd\``,
+        `**Items.**`,
+        `1. Restow the title door — files: godot/scripts/main.gd — serves: sit down without a toolbar — red now: stock StartButton — proof: smoke calls _on_start`,
+      ].join("\n"),
+    );
+    assert.ok(p);
+    assert.equal(p.verdict, "continue");
+    assert.match(p.title, /restow the title door/i);
+    assert.equal(p.items.length, 1);
+    assert.match(p.verifyCommand ?? "", /godot/);
+  });
+
   it("item lines keep unlabelled trailing segments in the title, and prose after a prose label stays with that label", () => {
     const it1 = parsePlanItemLine("Wire the settle listener — so background checks count — files: src/agent/loop.ts", 0);
     assert.equal(it1.title, "Wire the settle listener — so background checks count");
@@ -284,6 +309,7 @@ describe("look artifact parser", () => {
     pin("never opened the popup", true);
     pin("did not open popup; MCP timed out", true);
     pin("loaded the unpacked extension and clicked the icon", false);
+    pin("headless smoke EXIT:0 SMOKE_FUSE_OK", false);
     pin(
       "Playwright MCP never initialized; opened leftover via bash Chrome — dock is empty",
       false,
@@ -328,6 +354,16 @@ describe("surface sit classifier", () => {
     assert.equal(isSurfaceSit([item({ title: "Stay dock leftover", proof: "open leftover door" })]), true);
     assert.equal(isSurfaceSit([item({ title: "the first-hour popup", proof: "click the icon" })]), true);
     assert.equal(isSurfaceSit([item({ title: "ship the widget", proof: "npm test" })]), false);
+    assert.equal(
+      isSurfaceSit([
+        item({
+          title: "sit down at the title door",
+          proof: "godot --path godot --headless --script res://scripts/smoke.gd",
+        }),
+      ]),
+      false,
+      "headless product smoke is a CLI proof, not a browser sit",
+    );
   });
 });
 
@@ -413,6 +449,9 @@ describe("review artifact parser", () => {
     const r = parseReviewArtifact("Verdict: ship");
     assert.equal(r?.verdict, "ship");
     assert.equal(r?.looked, undefined);
+    assert.match(explainReviewParseFailure("looks fine to me"), /no Verdict:/);
+    assert.match(explainReviewParseFailure("Verdict: maybe"), /not ship/);
+    assert.equal(explainReviewParseFailure("Verdict: ship"), "");
   });
 
   it("ship and blocked verdicts parse; the contract names the sections", () => {

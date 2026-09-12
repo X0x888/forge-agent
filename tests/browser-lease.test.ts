@@ -58,6 +58,10 @@ describe("browser-lease", () => {
   it("classifies Godot open as a GUI lease and ignores stock Chrome", () => {
     assert.deepEqual(guiLeaseFromCommand("open -a Godot"), { app: "Godot" });
     assert.deepEqual(guiLeaseFromCommand("Godot --path . --quit-after 4"), { app: "Godot" });
+    assert.deepEqual(
+      guiLeaseFromCommand("godot --path godot --headless --script res://scripts/smoke.gd"),
+      { app: "Godot" },
+    );
     assert.equal(guiLeaseFromCommand("open -a Safari"), undefined);
     assert.equal(guiLeaseFromCommand("Google Chrome --user-data-dir=/tmp/x"), undefined);
   });

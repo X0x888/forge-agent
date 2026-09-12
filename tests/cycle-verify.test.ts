@@ -4,7 +4,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { judgeAgainstBaseline, runCheckCommand } from "../src/harness/cycle/verify.js";
-import { extractFailingTests, isIsolateTestCommand } from "../src/harness/verification.js";
+import {
+  extractFailingTests,
+  isFullSuiteCommand,
+  isGodotProductCheck,
+  isIsolateTestCommand,
+} from "../src/harness/verification.js";
 
 describe("isIsolateTestCommand — vitest / jest / mocha", () => {
   it("named files or a name filter are isolates; the bare runner is the suite", () => {
@@ -15,6 +20,16 @@ describe("isIsolateTestCommand — vitest / jest / mocha", () => {
     assert.equal(isIsolateTestCommand("cd extension && npx vitest run"), false);
     assert.equal(isIsolateTestCommand("npx jest --coverage"), false);
     assert.equal(isIsolateTestCommand("cd extension && npm test"), false);
+  });
+
+  it("cargo -p isolate plus godot headless smoke is the product gate, not an isolate", () => {
+    const compound =
+      "cargo test -p game_core --offline && godot --path godot --headless --script res://scripts/smoke.gd";
+    assert.equal(isIsolateTestCommand("cargo test -p game_core --offline"), true);
+    assert.equal(isGodotProductCheck("godot --path godot --headless --script res://scripts/smoke.gd"), true);
+    assert.equal(isIsolateTestCommand(compound), false);
+    assert.equal(isFullSuiteCommand(compound), true);
+    assert.equal(isFullSuiteCommand("godot --path godot --headless --script res://scripts/smoke.gd"), true);
   });
 });
 

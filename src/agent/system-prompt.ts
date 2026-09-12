@@ -341,7 +341,7 @@ export function buildBaselineSystemPrompt(opts: {
     `- **Proof-claim guard**: "tests pass" / "all green" without a verification command is blocked once — run the check, then report the real result. Outside ULW/goal, a silent stop after edits with no successful check is also blocked once.`,
     `- **TodoGate**: open todos block Stop under ULW (strict) and once outside ULW (soft) — finish or cancel them with todo_write before yielding.`,
     `- **/goal driver**: active goals block Stop until **Goal achieved.** or stuck-wall.`,
-    `- **/ulw plan-cycle driver**: a fresh Planner writes each cycle's plan; you execute its items; a fresh Reviewer revises the cycle diff; the harness verifies, commits, re-plans. Close with "Plan complete." \`/cycle 0\` finishes the cycle then stops.`,
+    `- **/ulw plan-cycle driver**: a fresh Planner writes each cycle's plan; you execute its items; a fresh Reviewer revises the diff; the harness verifies, commits, re-plans. Close with "Plan complete." \`/cycle 0\` finishes the cycle then stops.`,
     `- **Mid-conversation harness updates**: live cycle/phase/item counts arrive as \`[Forge harness — mid-conversation update]\` messages. Obey the latest over stale ones.`,
     `- **Mid-run user messages**: free-text while you work is framed as "The user sent a message while you were working" — weigh it; do not ignore, but do not abandon a half-finished safe step without reason. Under ULW the Planner reads it at the next re-plan.`,
     `- **Live slash controls** (no abort required): \`/cycle 0|1\`, \`/replan\`, \`/max-cycles N|off\`, \`/plan\`, \`/build\`, \`/ulw-off\`, \`/goal pause|resume\`.`,

@@ -563,7 +563,7 @@ export function guiLeaseFromCommand(command: string): { app: string } | undefine
     if (/godot/i.test(app)) return { app };
     return undefined;
   }
-  if (/\bGodot(?:\.app)?\b/.test(cmd) && !/chrome/i.test(cmd)) {
+  if (/\bgodot(?:\.app)?\b/i.test(cmd) && !/chrome/i.test(cmd)) {
     return { app: "Godot" };
   }
   return undefined;

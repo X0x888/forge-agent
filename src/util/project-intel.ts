@@ -329,6 +329,43 @@ function nodeCheckCommands(
   return out;
 }
 
+/**
+ * Commands fences in AGENTS.md / CLAUDE.md — the product's own gate, which
+ * the stack table misses on mixed trees (Godot + a Cargo notebook).
+ */
+export function harvestGuidelineChecks(cwd: string): string[] {
+  const root = path.resolve(cwd || process.cwd());
+  const names = ["AGENTS.md", "CLAUDE.md", "Claude.md"];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const name of names) {
+    if (!exists(root, name)) continue;
+    let raw = "";
+    try {
+      raw = fs.readFileSync(path.join(root, name), "utf8");
+    } catch {
+      continue;
+    }
+    const cmdsIdx = raw.search(/^#{1,3}\s+Commands\b/m);
+    if (cmdsIdx >= 0) raw = raw.slice(cmdsIdx);
+    const fence = raw.match(/```(?:bash|sh|zsh|shell)?\r?\n([\s\S]*?)```/);
+    if (!fence) continue;
+    for (const line of fence[1].split("\n")) {
+      const t = line.trim();
+      if (!t || t.startsWith("#")) continue;
+      if (/^(?:npm install|pip install|cargo install|cd |export |source |git )/.test(t)) continue;
+      if (!/\b(?:test|check|lint|typecheck|verify|smoke|godot|pytest|cargo test)\b/i.test(t)) {
+        continue;
+      }
+      if (seen.has(t)) continue;
+      seen.add(t);
+      out.push(t);
+    }
+    if (out.length) break;
+  }
+  return out.slice(0, 6);
+}
+
 function otherEcosystemCommands(cwd: string, kinds: string[]): string[] {
   const out: string[] = [];
   const has = (k: string) => kinds.includes(k);
@@ -614,6 +651,12 @@ function detectProjectIntelUncached(root: string): ProjectIntel {
     seen.add(c);
     checkCommands.push(c);
   };
+
+  const harvested = harvestGuidelineChecks(root);
+  if (harvested.length >= 2) {
+    push(harvested.slice(0, 2).join(" && "));
+  }
+  for (const c of harvested) push(c);
 
   if (pm && (kinds.includes("node") || exists(root, "package.json"))) {
     for (const c of nodeCheckCommands(root, pm)) push(c);
