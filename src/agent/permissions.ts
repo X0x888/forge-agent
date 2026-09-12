@@ -273,7 +273,9 @@ export class PermissionGate {
     // 1. Hard deny ALWAYS (bash + file tools — YOLO cannot dump auth.json)
     const hard = hardSafetyCheck(toolName, toolInput, workspace);
     if (!hard.ok) {
-      console.error(chalk.red(`\n✖ HARD DENY [${hard.rule}]: ${hard.reason}\n`));
+      if (hard.rule !== "read-protected-path") {
+        console.error(chalk.red(`\n✖ HARD DENY [${hard.rule}]: ${hard.reason}\n`));
+      }
       logSandboxEvent({
         type: "hard_deny",
         rule: hard.rule,

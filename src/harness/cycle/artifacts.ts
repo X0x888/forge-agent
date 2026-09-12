@@ -369,6 +369,8 @@ const LOOK_NEGATED_OPEN_RE =
 /** Opening evidence after stripping fail phrases. Bare "lease" is the brief hint, not a look. */
 const LOOK_DID_OPEN_RE =
   /\b(?:clicked|clicking|click|loaded|loading|load|opened|opening|navigated|unpacked)\b|file:\/\/|bash chrome/i;
+const LOOK_INFRA_RE =
+  /maxTurns?\s*\(\d+\)\s*reached|look turn ended before|turn budget ended before|Playwright MCP was down.{0,80}(?:never|could not)|Chrome for Testing died|GPU unusable|godot(?:\.app)? (?:quit unexpectedly|crashed)|Vulkan[^\n]{0,40}hang/i;
 
 /** True when Looked: reports a failed look and does not also describe opening the product. */
 export function lookCouldNotLook(looked: string): boolean {
@@ -376,6 +378,11 @@ export function lookCouldNotLook(looked: string): boolean {
   if (!t || !LOOK_COULD_NOT_RE.test(t)) return false;
   const rest = t.replace(LOOK_NEGATED_OPEN_RE, " ");
   return !LOOK_DID_OPEN_RE.test(rest);
+}
+
+/** Chrome/Godot/MCP died or the look-turn budget ran out before a sitting. */
+export function lookInfraFailed(looked: string): boolean {
+  return LOOK_INFRA_RE.test(String(looked || ""));
 }
 
 /** The Reviewer's turn-1 document: what it ran or opened before the diff. Null when there is no Looked: line. */
@@ -469,9 +476,41 @@ export function recurringArchitectureClass(
   const a = architectureClassTokens(shipped[shipped.length - 2].architecture ?? []);
   const b = new Set(architectureClassTokens(shipped[shipped.length - 1].architecture ?? []));
   const shared = a.filter((t) => b.has(t));
-  if (!shared.length) return undefined;
-  shared.sort((x, y) => archTokenRank(x) - archTokenRank(y) || y.length - x.length);
-  return shared[0];
+  if (shared.length) {
+    shared.sort((x, y) => archTokenRank(x) - archTokenRank(y) || y.length - x.length);
+    return shared[0];
+  }
+  // Same class named in three shipped reviews anywhere in the run — not only
+  // the last two consecutive (HUD clip at cycles 3, 11, 16).
+  const counts = new Map<string, number>();
+  for (const c of shipped) {
+    for (const t of new Set(architectureClassTokens(c.architecture ?? []))) {
+      counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+  }
+  const triples = [...counts.entries()].filter(([, n]) => n >= 3).map(([t]) => t);
+  if (!triples.length) return undefined;
+  triples.sort((x, y) => archTokenRank(x) - archTokenRank(y) || y.length - x.length);
+  return triples[0];
+}
+
+/**
+ * When a class has shipped three times, leave-it in Considered: is not enough —
+ * the plan must carry an item that names the class (collapse) or not touch the
+ * files those reviews already named.
+ */
+export function architectureClassMustCollapse(
+  cycles: ReadonlyArray<Pick<CycleRecord, "commitSha" | "architecture" | "commitFiles">>,
+  cls: string,
+): boolean {
+  const shipped = cycles.filter((c) => c.commitSha && (c.architecture?.length ?? 0) > 0);
+  let n = 0;
+  for (const c of shipped) {
+    if (architectureClassTokens(c.architecture ?? []).some((t) => t === cls || hayMentionsClass(t, cls))) {
+      n += 1;
+    }
+  }
+  return n >= 3;
 }
 
 function hayMentionsClass(hay: string, cls: string): boolean {
@@ -482,8 +521,13 @@ function hayMentionsClass(hay: string, cls: string): boolean {
 
 /** True when an item title/serves names the class, or Considered: leave-it does. */
 export function planAddressesArchitectureClass(plan: ParsedPlan, cls: string): boolean {
-  if (plan.items.some((i) => hayMentionsClass(`${i.title} ${i.serves ?? ""}`, cls))) return true;
+  if (planCollapsesArchitectureClass(plan, cls)) return true;
   return plan.considered.some((c) => LEAVE_IT_RE.test(c) && hayMentionsClass(c, cls));
+}
+
+/** An item (not merely leave-it) names the class. */
+export function planCollapsesArchitectureClass(plan: ParsedPlan, cls: string): boolean {
+  return plan.items.some((i) => hayMentionsClass(`${i.title} ${i.serves ?? ""}`, cls));
 }
 
 export function architectureHoldMessage(cls: string): string {

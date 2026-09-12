@@ -27,6 +27,7 @@ import {
   grokConvIdHeaders,
 } from "../session/prompt-cache.js";
 import { jsonStringifyUtf8 } from "../util/json-utf8.js";
+import { providerFetch } from "./http-agent.js";
 
 /**
  * Merge a streamed tool-name delta into the accumulator.
@@ -151,7 +152,7 @@ export class OpenAICompatProvider implements LLMProvider {
       { maxWallMs: providerMaxWallMs() },
     );
     try {
-      const resp = await fetch(`${this.baseUrl}/chat/completions`, {
+      const resp = await providerFetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
         headers: this.headers(req),
         body: jsonStringifyUtf8(body),
@@ -213,7 +214,7 @@ export class OpenAICompatProvider implements LLMProvider {
     );
     let resp: Response;
     try {
-      resp = await fetch(`${this.baseUrl}/chat/completions`, {
+      resp = await providerFetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
         headers: this.headers(req),
         body: jsonStringifyUtf8(body),

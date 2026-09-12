@@ -13,7 +13,8 @@ import { PermissionGate } from "../src/agent/permissions.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { loadConfig, applySafeProjectOverlay } from "../src/config/load.js";
 import { assertReadablePath, assertWritablePath } from "../src/agent/tools/path-util.js";
-import { isProtectedReadPath, isProtectedWritePath } from "../src/agent/protected-paths.js";
+import { isProtectedReadPath, isProtectedWritePath, protectedReadReason } from "../src/agent/protected-paths.js";
+import { forgeHome } from "../src/util/fs.js";
 import { executeTool } from "../src/agent/tools/index.js";
 
 describe("Bar A: hard-deny variants", () => {
@@ -586,6 +587,7 @@ describe("Bar A: protected paths + symlink write", () => {
     assert.equal(isProtectedReadPath(path.join("/tmp/proj", ".git", "hooks", "pre-commit")), false);
     assert.equal(isProtectedReadPath(path.join("/tmp/proj", ".env")), false);
     assert.equal(isProtectedReadPath(path.join("/tmp/proj", "id_rsa")), true);
+    assert.match(protectedReadReason(forgeHome()), /sessions\/, logs\/, or tmp\//);
   });
 
   it("hardSafetyCheck blocks write to .git/hooks", () => {

@@ -162,7 +162,7 @@ Both roles run through `runSubagent` with a `role` (`src/agent/subagent.ts`):
 | Role | Tools | Isolation | Skills inlined | Turns | Config |
 |------|-------|-----------|----------------|-------|--------|
 | Planner | runs, never edits: full `bash` + `web_search` / `web_fetch` / MCP (browser via playwright) + `spawn_subagent` explore; the file-editing tools are removed (`denyEdits`) | none | `forge-planner`, `forge-veteran`, `forge-rootcause` | scout (`FORGE_ULW_PLANNER_MAX_TURNS`, 60) then plan (`FORGE_ULW_PLANNER_PLAN_TURNS`, 12) on the same kept session | `[ulw] planner_model`, `planner_effort` |
-| Reviewer | full write, no spawn | none (revises the live tree) | `forge-reviewer`, `forge-veteran`, `forge-rootcause` | look (`FORGE_ULW_REVIEWER_LOOK_TURNS`, 15) then review (`FORGE_ULW_REVIEWER_MAX_TURNS`, 80) on the same kept session | `[ulw] reviewer_model`, `reviewer_effort` |
+| Reviewer | full write, no spawn | none (revises the live tree) | `forge-reviewer`, `forge-veteran`, `forge-rootcause` | look (`FORGE_ULW_REVIEWER_LOOK_TURNS`, 25) then review (`FORGE_ULW_REVIEWER_MAX_TURNS`, 80) on the same kept session | `[ulw] reviewer_model`, `reviewer_effort` |
 
 Both roles run through `runRoleTwoTurn` (`src/harness/cycle/roles.ts`): turn 1 with `keepSession`, turn 2 resuming the child (`resumeSessionId`), the session removed when the document is in hand. The role that used the product is the one that writes the document. A parse retry re-enters turn 2 only.
 
@@ -196,7 +196,7 @@ fix_rounds = 3
 stuck_threshold = 4
 ```
 
-Env: `FORGE_ULW=0` (driver off), `FORGE_ULW_AUTO_COMMIT=0`, `FORGE_ULW_VERIFY_TIMEOUT_MS` (20 min), `FORGE_ULW_FIX_ROUNDS`, `FORGE_ULW_STUCK_THRESHOLD`, `FORGE_ULW_NO_PROGRESS_CAP` (3 — the synthesized-cycle wall), `FORGE_ULW_PLANNER_MAX_TURNS`, `FORGE_ULW_PLANNER_PLAN_TURNS` (12), `FORGE_ULW_REVIEWER_LOOK_TURNS` (15), `FORGE_ULW_REVIEWER_MAX_TURNS`, `FORGE_ULW_TWO_TURN=0` (one brief per role), `FORGE_ULW_PROMISE_FULFILL=0` (mandate `fulfilled` ignores unnamed broken/unknown promises), `FORGE_ULW_CLASS_HOLD=0` (architecture recurrence off), `FORGE_ULW_MAX_CONTINUES`.
+Env: `FORGE_ULW=0` (driver off), `FORGE_ULW_AUTO_COMMIT=0`, `FORGE_ULW_VERIFY_TIMEOUT_MS` (20 min), `FORGE_ULW_FIX_ROUNDS`, `FORGE_ULW_STUCK_THRESHOLD`, `FORGE_ULW_NO_PROGRESS_CAP` (3 — the synthesized-cycle wall), `FORGE_ULW_SYNTH_CAP` (2 — committed synthesized cycles still cap), `FORGE_ULW_PLANNER_MAX_TURNS`, `FORGE_ULW_PLANNER_PLAN_TURNS` (12), `FORGE_ULW_REVIEWER_LOOK_TURNS` (25), `FORGE_ULW_REVIEWER_MAX_TURNS`, `FORGE_ULW_TWO_TURN=0` (one brief per role), `FORGE_ULW_PROMISE_FULFILL=0` (mandate `fulfilled` ignores unnamed broken/unknown promises), `FORGE_ULW_CLASS_HOLD=0` (architecture recurrence off), `FORGE_ULW_MAX_CONTINUES`.
 
 ## Why this shape
 

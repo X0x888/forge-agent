@@ -93,7 +93,11 @@ describe("status watch hardening", () => {
         fetchPlan: true,
         config: cfg,
       });
-      await new Promise((r) => setTimeout(r, 1300));
+      // 250ms interval × 400ms probe: two serialized ticks need ~800ms when
+      // the event loop is idle. The full suite (and live-dogfood `ps`) can
+      // delay the first timer, so wait long enough that a second probe still
+      // happens without relaxing the overlap assertion.
+      await new Promise((r) => setTimeout(r, 2500));
       assert.equal(
         process.listenerCount("SIGINT"),
         sigintBaseline,

@@ -243,10 +243,18 @@ export function applyCursorReconnectAction(
 function messageText(msg: ChatRequest["messages"][number]): string {
   if (typeof msg.content === "string") return msg.content;
   if (Array.isArray(msg.content)) {
-    return msg.content
+    const text = msg.content
       .map((p) => (p.type === "text" ? p.text : ""))
       .filter(Boolean)
       .join("\n");
+    const nImg = msg.content.filter((p) => p.type === "image_url").length;
+    if (nImg > 0) {
+      const note =
+        `[Forge: this provider dropped ${nImg} image attachment(s) — Cursor has no multimodal parts. ` +
+        `Describe the look from files or Playwright; do not assume the pixels were seen.]`;
+      return [text, note].filter(Boolean).join("\n");
+    }
+    return text;
   }
   return msg.content ?? "";
 }

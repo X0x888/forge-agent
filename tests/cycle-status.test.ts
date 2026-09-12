@@ -53,6 +53,16 @@ describe("/cycle status", () => {
     assert.match(text, /c2 · Stars stay tappable · 0\/1 · 0w · open/);
   });
 
+  it("green vs baseline names the inherited reds instead of a bare tick", () => {
+    const s = state();
+    s.cycles[0].verifyInherited = 12;
+    const text = formatUlwStatus(s);
+    assert.match(text, /verify ✓ vs baseline \(12 pre-existing still red\)/);
+    assert.doesNotMatch(text, /verify ✓ · abc1234/);
+    const facts = cycleReportFacts(s);
+    assert.match(facts.verified[0] ?? "", /green vs baseline \(12 pre-existing still red\)/);
+  });
+
   it("omits the promises line when none were recorded", () => {
     const s = state();
     delete s.promises;

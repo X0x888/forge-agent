@@ -17,6 +17,8 @@
  * because forge-prove says run, read, then claim. The single-brief builders
  * remain as the fallback when two turns are off or unavailable.
  */
+import fs from "node:fs";
+import path from "node:path";
 import { playwrightLookStatus } from "../../mcp/manager.js";
 import {
   planArtifactContract,
@@ -30,15 +32,29 @@ import type { CycleRecord, CycleState, ReviewVerdict } from "./state.js";
 export const LOOK_PATH_DOWN_LINE =
   "Look path: playwright down — use bash/browser lease; do not spend the scout waiting on MCP.";
 
-function lookPathLines(): string[] {
+function lookPathLines(opts?: { lookProfileUdd?: string; workspace?: string }): string[] {
   const st = playwrightLookStatus();
-  if (st === "down") return [LOOK_PATH_DOWN_LINE];
-  if (st === "connecting") {
-    return [
-      "Look path: playwright connecting — use bash/browser lease; do not spend the scout waiting on MCP.",
-    ];
+  const lines: string[] = [];
+  if (st === "ready") {
+    lines.push("Look path: playwright ready — call_mcp playwright; do not bash-spawn Chrome.");
+  } else if (st === "connecting") {
+    lines.push(
+      "Look path: playwright connecting — if call_mcp is not yet listed, use the leased profile below once; do not mkdir a new /tmp UDD.",
+    );
+  } else if (st === "down") {
+    lines.push(LOOK_PATH_DOWN_LINE);
   }
-  return [];
+  if (opts?.lookProfileUdd) {
+    lines.push(
+      `Leased browser profile (reuse this --user-data-dir; do not mkdir a new /tmp UDD): ${opts.lookProfileUdd}`,
+    );
+  }
+  if (opts?.workspace && fs.existsSync(path.join(opts.workspace, "project.godot"))) {
+    lines.push(
+      "Godot look: `godot --display-driver headless --rendering-method gl_compatibility --write-movie <look-dir> --quit-after N --path .` (windowed; do not `open -a Godot` or Vulkan-first). Kill the process when the movie is written.",
+    );
+  }
+  return lines;
 }
 
 export interface PlannerBriefInput {
@@ -49,6 +65,7 @@ export interface PlannerBriefInput {
   guidelineSurvey: string;
   projectChecks: string[];
   userMessages: string[];
+  lookProfileUdd?: string;
 }
 
 /** Turn 1 of the Planner: the product, the tree, the procedure — no record. */
@@ -57,6 +74,7 @@ export interface PlannerScoutInput {
   workspace: string;
   gitStatus: string;
   projectChecks: string[];
+  lookProfileUdd?: string;
 }
 
 /** What the run has cost so far, from the record — a boss knows the budget. */
@@ -233,7 +251,10 @@ export function buildPlannerScoutBrief(input: PlannerScoutInput): string {
   const lines: string[] = [
     `[Forge cycle planner — cycle ${next}, turn 1 of 2: the scout]`,
     `You are the Planner for an autonomous plan-cycle run. You have no prior context on purpose: use the product, judge it against its own promises, weigh what could be done. You do not implement. The record of what this run has already shipped arrives in your next turn — do not guess at it; every cycle starts from the product.`,
-    ...lookPathLines(),
+    ...lookPathLines({
+      lookProfileUdd: "lookProfileUdd" in input ? input.lookProfileUdd : undefined,
+      workspace: input.workspace,
+    }),
     ``,
     `## Workspace`,
     input.workspace,
@@ -345,7 +366,10 @@ export function buildPlannerPlanBrief(input: PlannerPlanInput): string {
   const lines: string[] = [
     `[Forge cycle planner — cycle ${next}, turn 2 of 2: the plan]`,
     `Your scout is below, then the record of this run. Strike what is done, find the class if there is one, harmonize one theme, price it against leave it, write the plan. You do not implement.`,
-    ...lookPathLines(),
+    ...lookPathLines({
+      lookProfileUdd: "lookProfileUdd" in input ? input.lookProfileUdd : undefined,
+      workspace: input.workspace,
+    }),
     ``,
     `## Workspace`,
     input.workspace,
@@ -390,7 +414,10 @@ export function buildPlannerBrief(input: PlannerPlanInput): string {
   const lines: string[] = [
     `[Forge cycle planner — cycle ${next}]`,
     `You are the Planner for an autonomous plan-cycle run. You have no prior context on purpose: read, research, judge, write the plan. You do not implement. This is one turn: do steps 1–6 with the product before you read the record further down, then steps 7–11.`,
-    ...lookPathLines(),
+    ...lookPathLines({
+      lookProfileUdd: "lookProfileUdd" in input ? input.lookProfileUdd : undefined,
+      workspace: input.workspace,
+    }),
     ``,
     `## Workspace`,
     input.workspace,
@@ -454,6 +481,7 @@ export interface ReviewerBriefInput {
   changedFiles: string[];
   verifyCommand?: string;
   executorCloser: string;
+  lookProfileUdd?: string;
 }
 
 /** Turn 1 of the Reviewer: the product on the tree as the cycle left it — no diff. */
@@ -465,6 +493,7 @@ export interface ReviewerLookInput {
   /** The plan's Looked: what the Planner saw before the cycle. */
   plannerLooked?: string;
   verifyCommand?: string;
+  lookProfileUdd?: string;
 }
 
 /**
@@ -477,7 +506,10 @@ export function buildReviewerLookBrief(input: ReviewerLookInput): string {
   const lines: string[] = [
     `[Forge cycle reviewer — cycle ${s.cycle}, turn 1 of 2: the look]`,
     `You are the Reviewer for an autonomous plan-cycle run. You have no prior context on purpose. Before you read the diff — that comes next turn — exercise the job or condition the cycle intended to improve through the product's public boundary. Use complete workflows, consumer examples, representative inputs, failure or recovery conditions as appropriate to this project. Use local fixtures for external effects. Do not edit in this turn. Write what you did, what you observed and what remains unverified.`,
-    ...lookPathLines(),
+    ...lookPathLines({
+      lookProfileUdd: "lookProfileUdd" in input ? input.lookProfileUdd : undefined,
+      workspace: input.workspace,
+    }),
     ``,
     `## Workspace`,
     input.workspace,
@@ -568,7 +600,10 @@ export function buildReviewerReviewBrief(input: ReviewerBriefInput & { lookText?
   const lines: string[] = [
     `[Forge cycle reviewer — cycle ${s.cycle}, turn 2 of 2: the review]`,
     `You used the product last turn; your look is below. Now read the plan and the cycle's diff as a hostile senior reviewer and as an architect, and revise in place — you have write access. The harness runs the verify command after you and commits only on green.`,
-    ...lookPathLines(),
+    ...lookPathLines({
+      lookProfileUdd: "lookProfileUdd" in input ? input.lookProfileUdd : undefined,
+      workspace: input.workspace,
+    }),
     ``,
     `## Workspace`,
     input.workspace,
@@ -587,7 +622,10 @@ export function buildReviewerBrief(input: ReviewerBriefInput): string {
   const lines: string[] = [
     `[Forge cycle reviewer — cycle ${s.cycle}]`,
     `You are the Reviewer for an autonomous plan-cycle run. You have no prior context on purpose. Before you read the diff, exercise the cycle's intended benefit or question through a representative workflow, consumer example or failure condition, with local fixtures for external effects. Write observations and limits under Looked:. Then read the plan and cycle diff as a hostile senior reviewer and as an architect, and revise in place — you have write access. The harness runs the verify command after you and commits only after an accepting review and green verification.`,
-    ...lookPathLines(),
+    ...lookPathLines({
+      lookProfileUdd: "lookProfileUdd" in input ? input.lookProfileUdd : undefined,
+      workspace: input.workspace,
+    }),
     ``,
     `## Workspace`,
     input.workspace,

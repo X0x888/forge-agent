@@ -537,6 +537,22 @@ describe("cursor conversation replay", () => {
     assert.match(got.userText, /mid-conversation/);
   });
 
+  it("names dropped image_url parts so a look does not pretend Cursor saw the pixels", () => {
+    const got = prepareCursorConversation([
+      { role: "system", content: "sys" },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Looked: leftover door" },
+          { type: "image_url", image_url: { url: "data:image/png;base64,abc" } },
+        ],
+      },
+    ]);
+    assert.match(got.userText, /Looked: leftover door/);
+    assert.match(got.userText, /dropped 1 image attachment/);
+    assert.match(got.userText, /Cursor has no multimodal parts/);
+  });
+
   it("merges a post-turn admit into the action, not a user-only history row", () => {
     const got = prepareCursorConversation([
       { role: "user", content: "first" },

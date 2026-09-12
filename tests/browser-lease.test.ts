@@ -7,8 +7,11 @@ import { spawn } from "node:child_process";
 import {
   browserLeaseFromCommand,
   defaultBrowserUdd,
+  ensureSessionLookProfile,
+  guiLeaseFromCommand,
   isReapableBrowserUdd,
   registerBrowserLease,
+  registerSpawnedResources,
   reapSessionBrowsers,
   sessionBrowserOwnedPaths,
 } from "../src/agent/browser-lease.js";
@@ -52,6 +55,22 @@ function readLeases(home: string, sessionId: string): Array<{ id: string; udd: s
 }
 
 describe("browser-lease", () => {
+  it("classifies Godot open as a GUI lease and ignores stock Chrome", () => {
+    assert.deepEqual(guiLeaseFromCommand("open -a Godot"), { app: "Godot" });
+    assert.deepEqual(guiLeaseFromCommand("Godot --path . --quit-after 4"), { app: "Godot" });
+    assert.equal(guiLeaseFromCommand("open -a Safari"), undefined);
+    assert.equal(guiLeaseFromCommand("Google Chrome --user-data-dir=/tmp/x"), undefined);
+  });
+
+  it("ensureSessionLookProfile writes a harness UDD under the session", () => {
+    withForgeHome((home) => {
+      const udd = ensureSessionLookProfile("looksess");
+      assert.equal(udd, path.join(home, "sessions", "looksess", "browsers", "look"));
+      assert.equal(fs.existsSync(udd), true);
+      assert.equal(readLeases(home, "looksess").length, 1);
+    });
+  });
+
   it("parses Chrome for Testing spawn commands and ignores stock Chrome", () => {
     const parsed = browserLeaseFromCommand(
       'Google Chrome for Testing --user-data-dir=/tmp/hashpet-c17-profile-p9555 --remote-debugging-port=9555',
@@ -310,6 +329,93 @@ describe("browser-lease", () => {
       fs.rmSync(home, { recursive: true, force: true });
       fs.rmSync(ws, { recursive: true, force: true });
     }
+  });
+
+  it("registerSpawnedResources leases Godot on the root session", () => {
+    withForgeHome((home) => {
+      registerSpawnedResources({
+        command: "open -a Godot --path /tmp/game",
+        sessionId: "child-godot",
+        rootSessionId: "root-godot",
+        pid: 4242,
+      });
+      const file = path.join(home, "sessions", "root-godot", "browsers.json");
+      const raw = JSON.parse(fs.readFileSync(file, "utf8")) as {
+        leases: Array<{ kind?: string; ownerSessionId?: string; bundleId?: string }>;
+      };
+      assert.equal(raw.leases.length, 1);
+      assert.equal(raw.leases[0]!.kind, "gui");
+      assert.equal(raw.leases[0]!.bundleId, "Godot");
+      assert.equal(raw.leases[0]!.ownerSessionId, "child-godot");
+    });
+  });
+
+  it(
+    "reap keeps a zombie row when the pid ignores SIGTERM",
+    { skip: process.platform === "win32" },
+    async () => {
+      await new Promise<void>((resolve, reject) => {
+        withForgeHome((home) => {
+          const child = spawn(
+            process.execPath,
+            ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+            { stdio: "ignore", detached: true },
+          );
+          child.unref();
+          const pid = child.pid;
+          if (!pid) {
+            reject(new Error("no pid"));
+            return;
+          }
+          const udd = path.join(home, "sessions", "z1", "browsers", "look");
+          fs.mkdirSync(udd, { recursive: true });
+          fs.writeFileSync(path.join(udd, "marker"), "x");
+          registerBrowserLease({ sessionId: "z1", udd, pid });
+          try {
+            reapSessionBrowsers("z1");
+            const file = path.join(home, "sessions", "z1", "browsers.json");
+            const raw = JSON.parse(fs.readFileSync(file, "utf8")) as {
+              leases: Array<{ state?: string; pid?: number }>;
+            };
+            assert.equal(raw.leases.length, 1, "alive pid must not wipe the store");
+            assert.equal(raw.leases[0]!.state, "zombie");
+          } finally {
+            try {
+              process.kill(pid, "SIGKILL");
+            } catch {
+              /* */
+            }
+          }
+          resolve();
+        });
+      });
+    },
+  );
+
+  it("leases /tmp/hearth-* and nested /tmp/mom-c20/cdp-profile8", () => {
+    withForgeHome((home) => {
+      const hearth = `/tmp/hearth-blease-${process.pid}`;
+      const nested = `/tmp/mom-c20-${process.pid}/cdp-profile8`;
+      assert.equal(isReapableBrowserUdd(hearth), true);
+      assert.equal(isReapableBrowserUdd(nested), true);
+      fs.mkdirSync(hearth, { recursive: true });
+      fs.mkdirSync(nested, { recursive: true });
+      try {
+        const a = registerBrowserLease({ sessionId: "h1", udd: hearth });
+        const b = registerBrowserLease({ sessionId: "h1", udd: nested });
+        assert.notEqual(a.id, "skipped");
+        assert.notEqual(b.id, "skipped");
+        assert.equal(readLeases(home, "h1").length, 2);
+        const r = reapSessionBrowsers("h1");
+        assert.ok(r.removed.some((p) => path.resolve(p) === path.resolve(hearth)));
+        assert.ok(r.removed.some((p) => path.resolve(p) === path.resolve(nested)));
+        assert.equal(fs.existsSync(hearth), false);
+        assert.equal(fs.existsSync(nested), false);
+      } finally {
+        fs.rmSync(hearth, { recursive: true, force: true });
+        fs.rmSync(nested, { recursive: true, force: true });
+      }
+    });
   });
 
   it("reapSessionBrowsers wipes workspace chrome-* dirs unless chromeLooks is false", () => {

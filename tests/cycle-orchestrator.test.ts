@@ -64,6 +64,7 @@ function fakeRuntime(cwd: string, o: FakeOpts = {}) {
   const planner = [...(o.planner ?? [])];
   const reviewer = [...(o.reviewer ?? [])];
   const checks = [...(o.checkPasses ?? [])];
+  const runOpts: Array<{ role: CycleRole; documentOnly?: boolean; maxTurns?: number }> = [];
   let commits = 0;
   let sessions = 0;
   const rt: CycleRuntime = {
@@ -71,6 +72,7 @@ function fakeRuntime(cwd: string, o: FakeOpts = {}) {
     async runRole(role: CycleRole, brief, opts) {
       const turn = opts.resumeSessionId ? 2 : opts.keepSession ? 1 : 0;
       calls.push(turn ? `role:${role}#${turn}` : `role:${role}`);
+      runOpts.push({ role, documentOnly: opts.documentOnly, maxTurns: opts.maxTurns });
       briefs.push({ role, turn, brief });
       const text = role === "planner" ? planner.shift() : reviewer.shift();
       return {
@@ -132,7 +134,7 @@ function fakeRuntime(cwd: string, o: FakeOpts = {}) {
     guidelineSurvey: () => "AGENTS.md fresh",
     projectChecks: () => ["npm test"],
   };
-  return { rt, calls, todos, admitted, briefs, remembered };
+  return { rt, calls, todos, admitted, briefs, remembered, runOpts };
 }
 
 const facts = (o: Partial<StopFacts> = {}): StopFacts => ({
@@ -1333,6 +1335,7 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     delete process.env.FORGE_ULW_LOOK_GATE;
     delete process.env.FORGE_ULW_PROMISE_FULFILL;
     delete process.env.FORGE_ULW_CLASS_HOLD;
+    delete process.env.FORGE_ULW_SYNTH_CAP;
   });
 
   it("a mandate `fulfilled` releases — a real ask that is met is a real answer", async () => {
@@ -1407,6 +1410,30 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     assert.match(out.reason, /not making progress|shipped nothing/);
   });
 
+  it("committed synthesized cycles still cap at FORGE_ULW_SYNTH_CAP", async () => {
+    process.env.FORGE_ULW_TWO_TURN = "0";
+    process.env.FORGE_ULW_SYNTH_CAP = "2";
+    const sid = "orch3-synth-cap";
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: null, cwd });
+    const { rt } = fakeRuntime(cwd, {
+      planner: ["prose", "still prose", "more", "still more", "third", "still third"],
+      reviewer: [REVIEW_OK, REVIEW_OK],
+    });
+    const first = await ensureCyclePlanned(sid, rt);
+    assert.equal(first?.planAdmitted, true);
+    assert.match(loadCycleState(sid)!.planTitle ?? "", /Direct execute/);
+    const r1 = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r1?.committed?.sha, "first synthesized cycle may still commit");
+    assert.equal(r1?.released, false, "two committed synths are allowed");
+    assert.equal(loadCycleState(sid)!.synthStreak, 1);
+    assert.equal(loadCycleState(sid)!.cycle, 2);
+    const r2 = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r2?.released, "a third synthesized cycle is the cap, even when the first two committed");
+    assert.equal(r2.endReason, "no-progress");
+    assert.match(r2.reason ?? "", /synthesized cycle/);
+  });
+
   it("a committed cycle resets the no-progress streak", async () => {
     const sid = "orch3-wall-reset";
     armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "ship" }] });
@@ -1448,6 +1475,50 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
       fs.readFileSync(path.join(cycleArtifactsDir(sid, 1), "review.md"), "utf8"),
       /Verdict: blocked\nMust-fix:\n- look the surface/,
     );
+  });
+
+  it("a surface-claim ship whose look died on maxTurns is look-infra, not look-the-surface", async () => {
+    const sid = "orch2-look-gate-infra";
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      verifyCommand: "npm test",
+      maxCycles: 1,
+      items: [{ title: "Stay dock leftover", proof: "open leftover door" }],
+    });
+    const { rt, runOpts } = fakeRuntime(cwd, {
+      twoTurn: true,
+      reviewer: [
+        `# Cycle 1 look\nLooked: [Forge] maxTurns (15) reached — releasing.`,
+        REVIEW_OK,
+      ],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r?.committed?.sha, undefined);
+    assert.equal(loadCycleState(sid)!.lastReview?.mustFix[0], "look infrastructure failed — reuse the session browser lease; do not ship a surface claim from source");
+    const reviewTurns = runOpts.filter((o) => o.role === "reviewer");
+    assert.equal(reviewTurns[0]?.documentOnly, undefined, "the look may drive the product");
+    assert.equal(reviewTurns[0]?.maxTurns, 25);
+    assert.equal(reviewTurns[1]?.documentOnly, true, "the review document is report-only");
+  });
+
+  it("/cycle 0 during the next Planner does not write the next scout.md", async () => {
+    const sid = "orch2-cycle0-no-scout";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test" });
+    const { rt } = fakeRuntime(cwd, {
+      twoTurn: true,
+      reviewer: [LOOK(1), REVIEW_OK],
+      planner: [SCOUT(2), PLAN_OK(2)],
+    });
+    const orig = rt.runRole.bind(rt);
+    rt.runRole = async (role, brief, opts) => {
+      if (role === "planner") setCycleFlag(sid, 0);
+      return orig(role, brief, opts);
+    };
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r?.released);
+    assert.equal(r.endReason, "cycle-zero");
+    assert.equal(fs.existsSync(path.join(cycleArtifactsDir(sid, 2), "scout.md")), false);
   });
 
   it("a CLI cycle whose proof is npm test may still ship when the look could not run", async () => {

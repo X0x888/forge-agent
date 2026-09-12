@@ -173,6 +173,13 @@ export function isProtectedReadTarget(absolutePath: string): boolean {
 
 export function protectedReadReason(absolutePath: string): string {
   const p = normalizeFsPath(absolutePath);
+  const forge = forgeHome().replace(/\\/g, "/");
+  if (p === forge) {
+    return (
+      "Refusing to search ~/.forge (auth.json lives here). " +
+      "Use sessions/, logs/, or tmp/ — tokens must not enter the model."
+    );
+  }
   if (
     p.includes("/.forge/") ||
     p.endsWith("/.forge") ||

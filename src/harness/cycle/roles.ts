@@ -29,7 +29,7 @@ export function plannerPlanTurns(): number {
 
 /** Turn budget for the Reviewer's look turn: build, run, open, write what was seen. */
 export function reviewerLookTurns(): number {
-  return envPositiveInt("FORGE_ULW_REVIEWER_LOOK_TURNS", 0) || 15;
+  return envPositiveInt("FORGE_ULW_REVIEWER_LOOK_TURNS", 0) || 25;
 }
 
 export interface TwoTurnOptions {

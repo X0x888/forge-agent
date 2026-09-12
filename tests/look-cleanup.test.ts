@@ -55,6 +55,13 @@ describe("look-cleanup", () => {
     );
     assert.equal(
       isAgentBrowserCommand(
+        "/Chromium --user-data-dir=/tmp/mom-c20/cdp-profile8",
+        owned,
+      ),
+      true,
+    );
+    assert.equal(
+      isAgentBrowserCommand(
         "/Chromium --user-data-dir=/Users/x/.forge/sessions/planner-c34/chrome-fresh3",
         owned,
       ),

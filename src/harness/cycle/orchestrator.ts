@@ -9,7 +9,11 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { reapSessionBrowsers } from "../../agent/browser-lease.js";
+import {
+  ensureSessionLookProfile,
+  reapSessionBrowsers,
+} from "../../agent/browser-lease.js";
+import { loadSession } from "../../session/session.js";
 import { janitorBackgroundTasks } from "../../agent/tools/background-tasks.js";
 import { getActiveMcpManager, MCP_PREWARM_ADMIT_WAIT_MS } from "../../mcp/manager.js";
 import { isFalsy } from "../../util/bool.js";
@@ -30,9 +34,12 @@ import {
   parsePlanArtifact,
   parseReviewArtifact,
   parseScoutArtifact,
+  lookInfraFailed,
   planAddressesArchitectureClass,
   planArtifactContract,
+  planCollapsesArchitectureClass,
   recurringArchitectureClass,
+  architectureClassMustCollapse,
   type ParsedPlan,
   type ParsedScout,
 } from "./artifacts.js";
@@ -198,6 +205,7 @@ function release(s: CycleState, reason: CycleEndReason, line: string): CycleStop
   s.phase = "released";
   s.endReason = reason;
   saveCycleState(s);
+  reapRunResources(s);
   return {
     allowStop: true,
     released: true,
@@ -206,6 +214,16 @@ function release(s: CycleState, reason: CycleEndReason, line: string): CycleStop
     waveStamped: false,
     phase: s.phase,
   };
+}
+
+function reapRunResources(s: CycleState): void {
+  let workspace: string | undefined;
+  try {
+    workspace = loadSession(s.sessionId)?.meta.cwd;
+  } catch {
+    /* */
+  }
+  safe(() => reapSessionBrowsers(s.sessionId, { workspace }), { killed: 0, removed: [] });
 }
 
 function closedCycleHow(s: CycleState): string {
@@ -223,6 +241,7 @@ function ifUserDisarmed(s: CycleState): CycleStopOutcome | null {
   adoptLiveControls(s);
   if (cycleActive(s)) return null;
   saveCycleState(s);
+  reapRunResources(s);
   const reason = s.endReason ?? "disarmed";
   return {
     allowStop: true,
@@ -355,7 +374,13 @@ async function runPlanner(
   };
   const tt = await runRoleTwoTurn(rt, "planner", {
     cycle: next,
-    firstBrief: buildPlannerScoutBrief({ state: s, workspace: rt.workspace, gitStatus, projectChecks }),
+    firstBrief: buildPlannerScoutBrief({
+      state: s,
+      workspace: rt.workspace,
+      gitStatus,
+      projectChecks,
+      lookProfileUdd: sessionLookProfile(s.sessionId, rt.workspace),
+    }),
     secondBrief: (scoutText) => buildPlannerPlanBrief({ ...planInput, scoutText }),
     singleBrief: (scoutText) => buildPlannerBrief({ ...planInput, ...(scoutText.trim() ? { scoutText } : {}) }),
     secondMaxTurns: plannerPlanTurns(),
@@ -364,6 +389,11 @@ async function runPlanner(
     secondDocumentOnly: true,
   });
   let tokens = roleTokens(tt);
+  adoptLiveControls(s);
+  if (s.cycleZeroRequested && currentCycleAlreadyClosed(s)) {
+    await persistAndCleanupRole(s.sessionId, "planner", rt, tt);
+    return { error: "cycle-zero", raw: "", tokens };
+  }
   let scout: ScoutResult | undefined;
   const scoutRaw = tt.first ? roleBody(tt.first.text) : "";
   if (scoutRaw.trim()) {
@@ -420,6 +450,11 @@ async function runPlanner(
 /** The no-progress wall: consecutive synthesized cycles that never commit. */
 function noProgressCap(): number {
   return envPositiveInt("FORGE_ULW_NO_PROGRESS_CAP", 0) || 3;
+}
+
+/** Consecutive synthesized cycles, even ones that committed. Default 2. */
+function synthCap(): number {
+  return envPositiveInt("FORGE_ULW_SYNTH_CAP", 0) || 2;
 }
 
 /**
@@ -564,7 +599,16 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
   const reviewForExecutor = reviewNotesForExecutor(s);
   const out = await runPlanner(s, rt);
   const stop = stopBeforeAdmittingNextPlan(s);
-  if (stop) return stop;
+  if (stop) {
+    if ("scout" in out && out.scout?.path) {
+      try {
+        fs.rmSync(out.scout.path);
+      } catch {
+        /* */
+      }
+    }
+    return stop;
+  }
   const scout = out.scout;
   // Identity and promises are the Planner's inventory of the product; persist
   // them from the plan or the scout whichever we got, for every outcome.
@@ -593,6 +637,13 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
         `ULW released — ${s.directExecuteStreak} synthesized cycle(s) in a row shipped nothing (last: the Planner could not produce a plan). The run is not making progress; re-arm with /ulw or give a mandate.`,
       );
     }
+    if (s.synthStreak >= synthCap()) {
+      return release(
+        s,
+        "no-progress",
+        `ULW released — ${s.synthStreak} synthesized cycle(s) already ran; the Planner must produce a parseable plan. Re-arm with /ulw or give a mandate.`,
+      );
+    }
     rt.log?.(`ULW planner did not converge for cycle ${n}; synthesizing a direct-execute cycle (streak ${s.directExecuteStreak + 1}/${noProgressCap()})`);
     const synth = synthesizeWorkPlan(s, scout, "no-plan", { mustFix: out.mustFix });
     s.directExecuteStreak += 1;
@@ -602,6 +653,7 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
   }
 
   const { plan, raw, tokens } = out;
+  s.synthStreak = 0;
   if (plan.direction) s.direction = plan.direction;
 
   if (plan.verdict === "blocked") {
@@ -670,6 +722,13 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
         s,
         "no-progress",
         `ULW released — ${s.directExecuteStreak} deeper cycle(s) in a row shipped nothing after the Planner declared the product done. Nothing more is landing; re-arm with /ulw or give a mandate to aim it.`,
+      );
+    }
+    if (s.synthStreak >= synthCap()) {
+      return release(
+        s,
+        "no-progress",
+        `ULW released — ${s.synthStreak} synthesized cycle(s) already ran; the Planner must produce a parseable plan. Re-arm with /ulw or give a mandate.`,
       );
     }
     const unkept = (s.promises ?? []).some((p) => p.state !== "kept");
@@ -920,10 +979,12 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
       direction: record?.direction ?? s.direction,
       plannerLooked: record?.looked,
       verifyCommand: s.verifyCommand,
+      lookProfileUdd: sessionLookProfile(s.sessionId, rt.workspace),
     }),
     secondBrief: (lookText) => buildReviewerReviewBrief({ ...reviewInput, lookText }),
     singleBrief: () => buildReviewerBrief(reviewInput),
     firstMaxTurns: reviewerLookTurns(),
+    secondDocumentOnly: true,
   });
   await persistAndCleanupRole(s.sessionId, "reviewer", rt, tt);
   const res = tt.second;
@@ -958,11 +1019,15 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
   if (!notes.looked && lookLooked) notes.looked = lookLooked;
   // A surface-claim ship whose look never opened the product is the same
   // incomplete review as an unparseable body — no commit.
-  if (surfaceLookGateBlocks(s, notes, { hasLookMd, couldNotLook: lookCouldNot })) {
+  const infraFailed = lookInfraFailed(lookLooked ?? notes.looked ?? "");
+  if (surfaceLookGateBlocks(s, notes, { hasLookMd, couldNotLook: lookCouldNot, infraFailed })) {
+    const lookFix = infraFailed
+      ? "look infrastructure failed — reuse the session browser lease; do not ship a surface claim from source"
+      : "look the surface";
     notes = {
       ...notes,
       verdict: "blocked",
-      mustFix: ["look the surface", ...notes.mustFix.filter((m) => !/^look the surface$/i.test(m))],
+      mustFix: [lookFix, ...notes.mustFix.filter((m) => !/^look the surface$/i.test(m) && !/^look infrastructure failed/i.test(m))],
     };
     parsed = null;
     rt.log?.(`ULW cycle ${s.cycle} look gate: surface ship without a look — blocked`);
@@ -1088,7 +1153,17 @@ async function finishCycle(s: CycleState, rt: CycleRuntime, accepted: CheckRun |
     rt.log?.(`ULW cycle ${s.cycle} committed ${ac.sha ?? ""} — ${ac.subject}`);
     // Docs-only commits are not progress: a rename mill of READMEs would
     // otherwise reset the no-progress wall forever. Source/product files do.
-    if (ac.commitKind !== "docs") s.directExecuteStreak = 0;
+    if (ac.commitKind !== "docs") {
+      const rec = currentCycleRecord(s);
+      const synth = /^(Direct execute|Keep the promises still broken|Go deeper)\b/i.test(
+        rec?.title ?? "",
+      );
+      if (synth) s.synthStreak += 1;
+      else {
+        s.directExecuteStreak = 0;
+        s.synthStreak = 0;
+      }
+    }
     // Bash Chrome outlives the cycle; reap after commit, never during a Reviewer look.
     safe(() => reapSessionBrowsers(s.sessionId, { workspace: rt.workspace }), {
       killed: 0,
@@ -1341,7 +1416,7 @@ export async function ensureCyclePlanned(
 function surfaceLookGateBlocks(
   s: CycleState,
   notes: CycleReviewNotes,
-  look: { hasLookMd: boolean; couldNotLook: boolean },
+  look: { hasLookMd: boolean; couldNotLook: boolean; infraFailed?: boolean },
 ): boolean {
   if (isFalsy(process.env.FORGE_ULW_LOOK_GATE)) return false;
   if (notes.verdict !== "ship") return false;
@@ -1353,7 +1428,9 @@ function surfaceLookGateBlocks(
     : notes.looked
       ? lookCouldNotLook(notes.looked)
       : true;
-  return !hasLook || couldNot;
+  // maxTurns / Godot crash / CFT died is not "opened the product" — block even
+  // when Looked: does not match the could-not-look phrases.
+  return !hasLook || couldNot || Boolean(look.infraFailed);
 }
 
 /** Fail-open: never hold the Planner on a 120s MCP init. */
@@ -1458,7 +1535,12 @@ function continueArchitectureHold(s: CycleState, plan: ParsedPlan | null): strin
   if (!hold) return "";
   if (!plan || plan.verdict !== "continue") return "";
   const cls = recurringArchitectureClass(s.cycles);
-  if (!cls || planAddressesArchitectureClass(plan, cls)) return "";
+  if (!cls) return "";
+  if (architectureClassMustCollapse(s.cycles, cls)) {
+    if (planCollapsesArchitectureClass(plan, cls)) return "";
+    return `the run is patching symptoms of \`${cls}\` (named in three shipped reviews); plan the collapse as an item — Considered: leave it is not enough`;
+  }
+  if (planAddressesArchitectureClass(plan, cls)) return "";
   return hold;
 }
 
@@ -1476,6 +1558,13 @@ function surfaceSitBlocksCommit(
 ): boolean {
   if (!isSurfaceSit(s.items)) return false;
   return !post;
+}
+
+function sessionLookProfile(sessionId: string, workspace: string): string {
+  return safe(
+    () => ensureSessionLookProfile(sessionId, { workspace, rootSessionId: sessionId }),
+    path.join(process.env.FORGE_HOME || "", "sessions", sessionId, "browsers", "look"),
+  );
 }
 
 async function persistAndCleanupRole(

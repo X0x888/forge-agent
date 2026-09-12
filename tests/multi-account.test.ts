@@ -590,6 +590,18 @@ describe("smart account switching", () => {
     assert.equal(getActiveAccount("xai")?.id, a.accountId);
   });
 
+  it("maybeProactiveSwitch does not stampede a pinned session off 98% usage", () => {
+    const a = upsertApiKey("xai", "sk-pin-a", "pin-a");
+    upsertApiKey("xai", "sk-pin-b", "pin-b", { forceNew: true });
+    setAutoSwitchSettings({ autoSwitch: true, switchThresholdPercent: 90 });
+    setActiveAccount(a.accountId);
+    recordAccountPlan(a.accountId, { percent: 98, remaining: 1 });
+    const r = maybeProactiveSwitch("xai", { pinnedAccountId: a.accountId });
+    assert.equal(r.switched, false);
+    assert.match(r.reason || "", /session pin holds/);
+    assert.equal(getActiveAccount("xai")?.id, a.accountId);
+  });
+
   it("does not treat SuperGrok remaining=0 residue as empty when weekly % is low", () => {
     const healthy = upsertApiKey("xai", "sk-healthy", "chestnut");
     const full = upsertApiKey("xai", "sk-full", "sning", { forceNew: true });

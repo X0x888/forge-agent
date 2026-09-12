@@ -2294,7 +2294,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       }
       try {
         if (accountSwitchCount < maxAccountSwitches) {
-          const proactive = maybeProactiveSwitch(String(config.provider));
+          const proactive = maybeProactiveSwitch(String(config.provider), {
+            pinnedAccountId: session.meta.accountId,
+          });
           if (proactive.switched && proactive.account?.accessToken) {
             accountSwitchCount += 1;
             recordSessionAccountSwitch(session, proactive);
@@ -4652,7 +4654,11 @@ async function prepareToolResultInner(
   // Hard safety — never skipped by YOLO / bypassPermissions
   const hard = hardSafetyCheck(name, toolInput, workspace);
   if (!hard.ok) {
-    log.error(`HARD DENY [${hard.rule}]: ${hard.reason}`);
+    if (hard.rule === "read-protected-path") {
+      log.warn(`HARD DENY [${hard.rule}]: ${hard.reason}`);
+    } else {
+      log.error(`HARD DENY [${hard.rule}]: ${hard.reason}`);
+    }
     await hooks.run("PermissionDenied", {
       ...baseHookCtx(session, config),
       toolName: name,

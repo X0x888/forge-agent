@@ -17,20 +17,31 @@ import {
   writeJsonFile,
 } from "../util/fs.js";
 import {
+  _listProcessesForTests,
   bindSessionBrowserReaper,
   extractRemoteDebuggingPort,
   extractUserDataDir,
+  isAgentBrowserCommand,
   killOrphanAgentBrowsers,
   removeChromeLookDirs,
 } from "../util/look-cleanup.js";
+import { escalateKillPid, pidAlive } from "../util/process-tree.js";
 
 export interface BrowserLease {
   id: string;
   pid?: number;
+  pgid?: number;
   udd: string;
   port?: number;
   cmd?: string;
   createdAt: string;
+  /** Root session that owns the registry (child leases live here, not on the child dir). */
+  rootSessionId?: string;
+  /** Child / role session that spawned this, when different from the root. */
+  ownerSessionId?: string;
+  kind?: "browser" | "gui" | "tmpdir";
+  bundleId?: string;
+  state?: "live" | "zombie";
 }
 
 interface BrowserLeaseFile {
@@ -39,9 +50,8 @@ interface BrowserLeaseFile {
 
 const SESSION_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const CHROME_SCRATCH_DIR_RE = /^chrome-(look|cft|fresh|desk|phone)[^/]*$/i;
-const TMP_BASENAME_RE = /^(hashpet-|mom-|maze-|arts-)/i;
-const DEFAULT_SESSION_MAX = 2;
-const DEFAULT_MACHINE_MAX = 6;
+const DEFAULT_SESSION_MAX = 3;
+const DEFAULT_MACHINE_MAX = 16;
 
 function emptyStore(): BrowserLeaseFile {
   return { leases: [] };
@@ -129,6 +139,22 @@ function scrubStore(raw: BrowserLeaseFile): BrowserLeaseFile {
     if (typeof row.cmd === "string" && row.cmd.trim()) {
       lease.cmd = row.cmd.trim().slice(0, 800);
     }
+    if (typeof row.pgid === "number" && Number.isInteger(row.pgid) && row.pgid > 1) {
+      lease.pgid = row.pgid;
+    }
+    if (typeof row.rootSessionId === "string" && SESSION_SLUG_RE.test(row.rootSessionId)) {
+      lease.rootSessionId = row.rootSessionId;
+    }
+    if (typeof row.ownerSessionId === "string" && SESSION_SLUG_RE.test(row.ownerSessionId)) {
+      lease.ownerSessionId = row.ownerSessionId;
+    }
+    if (row.kind === "browser" || row.kind === "gui" || row.kind === "tmpdir") {
+      lease.kind = row.kind;
+    }
+    if (typeof row.bundleId === "string" && row.bundleId.trim()) {
+      lease.bundleId = row.bundleId.trim().slice(0, 120);
+    }
+    if (row.state === "live" || row.state === "zombie") lease.state = row.state;
     leases.push(lease);
   }
   return { leases };
@@ -178,7 +204,8 @@ export function browserLeaseFromCommand(
 }
 
 /**
- * Only profiles we created: forge-home session/tmp trees, /tmp hashpet|mom-|maze-|arts-,
+ * Only profiles we created: forge-home session/tmp trees, any `/tmp/<subdir>`
+ * (nested included — `/tmp/mom-c20/cdp-profile8`, `/tmp/hearth-*`),
  * or workspace .forge/chrome-(look|cft|fresh|desk|phone)*. Never $HOME or stock Chrome.
  */
 export function isReapableBrowserUdd(udd: string, workspace?: string): boolean {
@@ -208,8 +235,9 @@ export function isReapableBrowserUdd(udd: string, workspace?: string): boolean {
     if (parts[0] === "tmp" && parts.length >= 2) return true;
     return false;
   }
-  if (/^(\/private)?\/tmp\//i.test(n) && TMP_BASENAME_RE.test(path.basename(n))) {
-    return path.basename(n) !== "tmp";
+  if (/^(\/private)?\/tmp\//i.test(n)) {
+    const rel = n.replace(/^(\/private)?\/tmp\//i, "");
+    return Boolean(rel) && rel !== n && !rel.startsWith("..");
   }
   if (workspace) {
     const scratch = realPathOrResolve(path.join(path.resolve(workspace), ".forge"));
@@ -245,18 +273,68 @@ function reapOneLease(
   sessionId: string,
   lease: BrowserLease,
   opts?: { workspace?: string; dropRecord?: boolean },
-): { killed: number; removed: string[] } {
-  const killed = isReapableBrowserUdd(lease.udd, opts?.workspace)
-    ? killOrphanAgentBrowsers(opts?.workspace, {
-        sessionId,
-        requirePath: [lease.udd],
-      })
-    : 0;
+): { killed: number; removed: string[]; alive: boolean } {
+  let killed = 0;
+  if (typeof lease.pgid === "number") killed += escalateKillPid(lease.pgid);
+  else if (typeof lease.pid === "number") killed += escalateKillPid(lease.pid);
+  if (isReapableBrowserUdd(lease.udd, opts?.workspace) || lease.kind === "gui") {
+    killed += killOrphanAgentBrowsers(opts?.workspace, {
+      sessionId,
+      requirePath: lease.udd ? [lease.udd] : undefined,
+      escalate: true,
+    });
+  }
+  if (lease.kind === "gui" && opts?.workspace) {
+    killed += killGuiMatchingWorkspace(lease, opts.workspace);
+  }
   const removed: string[] = [];
-  const gone = removeUddDir(lease.udd, opts?.workspace);
+  const gone = lease.udd ? removeUddDir(lease.udd, opts?.workspace) : undefined;
   if (gone) removed.push(gone);
-  if (opts?.dropRecord !== false) dropLeaseRecord(sessionId, lease.id);
-  return { killed, removed };
+  const alive =
+    (typeof lease.pid === "number" && pidAlive(lease.pid)) ||
+    (typeof lease.pgid === "number" && pidAlive(lease.pgid)) ||
+    (lease.udd ? fs.existsSync(lease.udd) && dirStillHeld(lease.udd) : false);
+  if (opts?.dropRecord !== false && !alive) dropLeaseRecord(sessionId, lease.id);
+  return { killed, removed, alive };
+}
+
+function dirStillHeld(udd: string): boolean {
+  try {
+    const st = fs.statSync(udd);
+    if (!st.isDirectory()) return false;
+  } catch {
+    return false;
+  }
+  // A UDD Chrome still has open is typically non-empty; empty marker dirs are gone.
+  try {
+    return fs.readdirSync(udd).length > 0 && chromeStillCites(udd);
+  } catch {
+    return false;
+  }
+}
+
+function chromeStillCites(udd: string): boolean {
+  for (const row of _listProcessesForTests()) {
+    if (isAgentBrowserCommand(row.cmd, [udd])) return true;
+  }
+  return false;
+}
+
+function killGuiMatchingWorkspace(lease: BrowserLease, workspace: string): number {
+  const ws = path.resolve(workspace);
+  if (ws.length < 8) return 0;
+  const blob = `${lease.cmd ?? ""} ${lease.bundleId ?? ""}`;
+  if (!/godot/i.test(blob) && lease.kind !== "gui") return 0;
+  let n = 0;
+  for (const row of _listProcessesForTests()) {
+    if (row.pid <= 1) continue;
+    if (!/Godot/i.test(row.cmd)) continue;
+    if (!row.cmd.includes(ws) && !/--write-movie|--quit-after|--path\s/i.test(row.cmd)) {
+      continue;
+    }
+    n += escalateKillPid(row.pid);
+  }
+  return n;
 }
 
 function listAllLeases(): Array<{ sessionId: string; lease: BrowserLease }> {
@@ -307,12 +385,18 @@ export function registerBrowserLease(opts: {
   udd: string;
   workspace?: string;
   pid?: number;
+  pgid?: number;
   port?: number;
   cmd?: string;
+  rootSessionId?: string;
+  kind?: BrowserLease["kind"];
+  bundleId?: string;
 }): BrowserLease {
-  const sessionId = safeSessionId(opts.sessionId);
+  const ownerId = safeSessionId(opts.sessionId);
+  const sessionId = safeSessionId(opts.rootSessionId || opts.sessionId);
   const udd = normalizeUdd(opts.udd);
-  if (!udd || !isReapableBrowserUdd(udd, opts.workspace)) {
+  const kind = opts.kind ?? "browser";
+  if (kind !== "gui" && (!udd || !isReapableBrowserUdd(udd, opts.workspace))) {
     return {
       id: "skipped",
       udd,
@@ -335,10 +419,15 @@ export function registerBrowserLease(opts: {
       id: newLeaseId(),
       udd,
       createdAt: nowIso(),
+      rootSessionId: sessionId,
     };
+    if (ownerId !== sessionId) created.ownerSessionId = ownerId;
     if (typeof opts.pid === "number" && opts.pid > 1) created.pid = opts.pid;
+    if (typeof opts.pgid === "number" && opts.pgid > 1) created.pgid = opts.pgid;
     if (typeof opts.port === "number" && opts.port > 0) created.port = opts.port;
     if (opts.cmd) created.cmd = opts.cmd.trim().slice(0, 800);
+    if (kind !== "browser") created.kind = kind;
+    if (opts.bundleId) created.bundleId = opts.bundleId.trim().slice(0, 120);
     data.leases.push(created);
     data.leases.sort((a, b) => createdAtMs(a) - createdAtMs(b));
     const max = sessionLeaseMax();
@@ -367,7 +456,7 @@ export function registerBrowserLease(opts: {
 
 export function reapSessionBrowsers(
   sessionId: string,
-  opts?: { workspace?: string; chromeLooks?: boolean },
+  opts?: { workspace?: string; chromeLooks?: boolean; ownerSessionId?: string },
 ): { killed: number; removed: string[] } {
   // Kill-switch: leave debug browsers (UDDs and lease records) alone.
   if (browserReapDisabled()) {
@@ -375,26 +464,41 @@ export function reapSessionBrowsers(
   }
   const sid = safeSessionId(sessionId);
   const data = readStore(sid);
+  const mine = opts?.ownerSessionId
+    ? data.leases.filter(
+        (l) => (l.ownerSessionId ?? sid) === safeSessionId(opts.ownerSessionId!),
+      )
+    : data.leases;
+  const keep = opts?.ownerSessionId
+    ? data.leases.filter(
+        (l) => (l.ownerSessionId ?? sid) !== safeSessionId(opts.ownerSessionId!),
+      )
+    : [];
   const requirePath = [
-    ...data.leases
-      .map((l) => l.udd)
-      .filter((u) => isReapableBrowserUdd(u, opts?.workspace)),
+    ...mine.map((l) => l.udd).filter((u) => isReapableBrowserUdd(u, opts?.workspace)),
     path.join(forgeHome(), "sessions", sid, "browsers"),
   ].filter((p) => p.length >= 8);
   let killed = 0;
-  if (!browserReapDisabled() && requirePath.length) {
+  if (requirePath.length) {
     killed += killOrphanAgentBrowsers(opts?.workspace, {
       sessionId: sid,
       requirePath,
+      escalate: true,
     });
   }
   const removed: string[] = [];
-  for (const lease of data.leases) {
-    const gone = removeUddDir(lease.udd, opts?.workspace);
-    if (gone) removed.push(gone);
+  const zombies: BrowserLease[] = [];
+  for (const lease of mine) {
+    const r = reapOneLease(sid, lease, {
+      dropRecord: false,
+      workspace: opts?.workspace,
+    });
+    killed += r.killed;
+    removed.push(...r.removed);
+    if (r.alive) zombies.push({ ...lease, state: "zombie" });
   }
   try {
-    writeStore(sid, emptyStore());
+    writeStore(sid, { leases: [...keep, ...zombies] });
   } catch {
     /* fail-open */
   }
@@ -413,3 +517,108 @@ export function reapSessionBrowsers(
 }
 
 bindSessionBrowserReaper(reapSessionBrowsers);
+
+/** Root session id: the parent of a subagent, else this session. */
+export function rootSessionIdFromMeta(meta: {
+  id?: string;
+  subagent?: { parentId?: string };
+}): string {
+  const parent = meta.subagent?.parentId;
+  if (parent && SESSION_SLUG_RE.test(parent)) return parent;
+  return safeSessionId(String(meta.id || "anon"));
+}
+
+/**
+ * Harness-owned look profile under the session. Planner/Reviewer reuse this
+ * UDD instead of mkdir /tmp/<project>-cN-*.
+ */
+export function ensureSessionLookProfile(
+  sessionId: string,
+  opts?: { workspace?: string; rootSessionId?: string },
+): string {
+  const root = safeSessionId(opts?.rootSessionId || sessionId);
+  const udd = path.join(forgeHome(), "sessions", root, "browsers", "look");
+  try {
+    fs.mkdirSync(udd, { recursive: true });
+  } catch {
+    /* */
+  }
+  registerBrowserLease({
+    sessionId,
+    rootSessionId: root,
+    udd,
+    workspace: opts?.workspace,
+    cmd: "harness-look-profile",
+    kind: "browser",
+  });
+  return udd;
+}
+
+/** Godot / `open -a Godot` — not Chrome, still a session-owned GUI. */
+export function guiLeaseFromCommand(command: string): { app: string } | undefined {
+  const cmd = String(command || "");
+  if (/\bopen\s+(?:-[a-zA-Z]+\s+)*-a\s+["']?([^"'\n]+?)["']?(?:\s|$)/i.test(cmd)) {
+    const m = cmd.match(/\bopen\s+(?:-[a-zA-Z]+\s+)*-a\s+["']?([^"'\n]+?)["']?(?:\s|$)/i);
+    const app = (m?.[1] || "").trim();
+    if (/godot/i.test(app)) return { app };
+    return undefined;
+  }
+  if (/\bGodot(?:\.app)?\b/.test(cmd) && !/chrome/i.test(cmd)) {
+    return { app: "Godot" };
+  }
+  return undefined;
+}
+
+/**
+ * Register every session-owned side effect visible on a bash command:
+ * Chrome UDD, Godot, and the harness look profile when the cmd cites it.
+ */
+export function registerSpawnedResources(opts: {
+  command: string;
+  sessionId: string;
+  workspace?: string;
+  pid?: number;
+  rootSessionId?: string;
+}): void {
+  const cmd = String(opts.command || "");
+  const parsed = browserLeaseFromCommand(cmd);
+  if (parsed) {
+    registerBrowserLease({
+      sessionId: opts.sessionId,
+      rootSessionId: opts.rootSessionId,
+      udd: parsed.udd,
+      workspace: opts.workspace,
+      pid: opts.pid,
+      pgid: opts.pid,
+      port: parsed.port,
+      cmd: cmd.slice(0, 800),
+      kind: "browser",
+    });
+  }
+  const gui = guiLeaseFromCommand(cmd);
+  if (gui) {
+    const marker = path.join(
+      forgeHome(),
+      "sessions",
+      safeSessionId(opts.rootSessionId || opts.sessionId),
+      "browsers",
+      `gui-${gui.app.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32) || "app"}`,
+    );
+    try {
+      fs.mkdirSync(marker, { recursive: true });
+    } catch {
+      /* */
+    }
+    registerBrowserLease({
+      sessionId: opts.sessionId,
+      rootSessionId: opts.rootSessionId,
+      udd: marker,
+      workspace: opts.workspace,
+      pid: opts.pid,
+      pgid: opts.pid,
+      cmd: cmd.slice(0, 800),
+      kind: "gui",
+      bundleId: gui.app,
+    });
+  }
+}

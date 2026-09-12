@@ -72,6 +72,10 @@ describe("resolveBashTimeoutMs cap", () => {
   });
 });
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 describe("process-tree kill", () => {
   it(
     "timeout reaps a SIGTERM-ignoring grandchild and settles",
@@ -92,23 +96,37 @@ setInterval(() => {}, 1000);
 `,
       );
       const t0 = Date.now();
-      const r = await executeTool(
+      // Long enough that node can boot wrap.mjs under a loaded suite; the
+      // assertion is "settles", not "times out in 2s".
+      const bashP = executeTool(
         "bash",
         JSON.stringify({
           command: `node ${JSON.stringify(wrapper)}`,
-          timeout_ms: 400,
+          timeout_ms: 6_000,
         }),
         { workspace: tmp, sandbox: "off", config: { sandbox: "off" } },
       );
+      let gpid = 0;
+      while (Date.now() - t0 < 5_000) {
+        try {
+          gpid = Number(fs.readFileSync(grand, "utf8").trim());
+          if (gpid > 0) break;
+        } catch {
+          /* wrapper has not spawned yet */
+        }
+        await sleep(50);
+      }
+      assert.ok(gpid > 0, "wrapper must record the grandchild pid before bash times out");
+      assert.equal(pidAlive(gpid), true, "grandchild is running when timeout is armed");
+      const r = await bashP;
       assert.equal(r.isError, true);
       assert.match(r.output, /timed out/i);
       assert.ok(
-        Date.now() - t0 < 8_000,
+        Date.now() - t0 < 15_000,
         `bash timeout must settle, took ${Date.now() - t0}ms`,
       );
-      await new Promise((res) => setTimeout(res, 2800));
-      const gpid = Number(fs.readFileSync(grand, "utf8").trim());
-      assert.ok(gpid > 0);
+      const deadBy = Date.now() + 4_000;
+      while (pidAlive(gpid) && Date.now() < deadBy) await sleep(50);
       assert.equal(pidAlive(gpid), false, "grandchild must die with the group");
       fs.rmSync(tmp, { recursive: true, force: true });
     },

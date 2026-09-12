@@ -7,12 +7,16 @@ import {
   extractLabelledLines,
   extractSerendipityLines,
   isSurfaceSit,
+  lookCouldNotLook,
+  lookInfraFailed,
+  architectureClassMustCollapse,
   parseLookArtifact,
   parsePlanArtifact,
   parsePlanItemLine,
   parseReviewArtifact,
   parseScoutArtifact,
   planAddressesArchitectureClass,
+  planCollapsesArchitectureClass,
   planArtifactContract,
   recurringArchitectureClass,
   reviewArtifactContract,
@@ -357,6 +361,32 @@ describe("architecture class tokens", () => {
     const slice = continuePlan({});
     assert.ok(slice);
     assert.equal(planAddressesArchitectureClass(slice, cls!), false);
+  });
+
+  it("three shipped reviews naming the same class must collapse, not leave-it", () => {
+    const note = ["HUD clip ate a required word"];
+    const cycles = [
+      { commitSha: "a", architecture: note, commitFiles: ["hud.ts"] },
+      { commitSha: "b", architecture: ["other"] },
+      { commitSha: "c", architecture: note, commitFiles: ["hud.ts"] },
+      { commitSha: "d", architecture: note, commitFiles: ["hud.ts"] },
+    ];
+    const cls = recurringArchitectureClass(cycles);
+    assert.ok(cls);
+    assert.equal(architectureClassMustCollapse(cycles, cls!), true);
+    const left = continuePlan({ leave: `${cls} is next year's work` });
+    assert.ok(left);
+    assert.equal(planAddressesArchitectureClass(left, cls!), true);
+    assert.equal(planCollapsesArchitectureClass(left, cls!), false);
+  });
+});
+
+describe("look infra vs could-not-look", () => {
+  it("maxTurns and Godot crash are infra; a failed sitting is could-not-look", () => {
+    assert.equal(lookInfraFailed("[Forge] maxTurns (15) reached — releasing."), true);
+    assert.equal(lookInfraFailed("Godot quit unexpectedly after Vulkan init"), true);
+    assert.equal(lookCouldNotLook("could not run — Playwright MCP never initialized"), true);
+    assert.equal(lookCouldNotLook("opened popup.html and tapped Stay"), false);
   });
 });
 

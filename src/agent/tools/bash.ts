@@ -35,28 +35,28 @@ import {
   wrongPackageManagerTip,
 } from "../../util/project-intel.js";
 import {
-  browserLeaseFromCommand,
-  registerBrowserLease,
+  registerSpawnedResources,
+  rootSessionIdFromMeta,
 } from "../browser-lease.js";
 
 const execAsync = promisify(exec);
 
-/** Chrome outlives the wrapper (CDP); lease before the wait so a hung look still reaps. */
+/** Chrome/Godot outlive the wrapper; lease before the wait so a hung look still reaps. */
 function maybeLeaseSpawnedBrowser(
   command: string,
   ctx: ToolContext,
   pid?: number,
 ): void {
   try {
-    const parsed = browserLeaseFromCommand(command);
-    if (!parsed) return;
-    registerBrowserLease({
-      sessionId: ctx.sessionId || ctx.session?.meta.id || "anon",
-      udd: parsed.udd,
+    const sessionId = ctx.sessionId || ctx.session?.meta.id || "anon";
+    registerSpawnedResources({
+      command,
+      sessionId,
       workspace: ctx.workspace,
       pid,
-      port: parsed.port,
-      cmd: command.slice(0, 800),
+      rootSessionId: ctx.session?.meta
+        ? rootSessionIdFromMeta(ctx.session.meta)
+        : undefined,
     });
   } catch {
     /* fail-open — a missed lease must not fail the tool */

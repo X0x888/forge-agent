@@ -398,7 +398,10 @@ function shortAccount(id: string, acc?: AccountCredential | null): string {
  * No-op when autoSwitch is off, only one account, usage unknown/stale/below
  * threshold, or every alternate is at/over the threshold (no healthier target).
  */
-export function maybeProactiveSwitch(provider: string): SwitchResult {
+export function maybeProactiveSwitch(
+  provider: string,
+  opts?: { pinnedAccountId?: string },
+): SwitchResult {
   if (isEnvAuthActive(provider)) {
     return { switched: false, reason: "env API key wins (no multi-account switch)" };
   }
@@ -408,6 +411,19 @@ export function maybeProactiveSwitch(provider: string): SwitchResult {
   }
   const current = getActiveAccount(provider);
   if (!current) return { switched: false, reason: "no active account" };
+  const pin = opts?.pinnedAccountId?.trim();
+  if (
+    pin &&
+    pin === current.id &&
+    accountUsableForPin(current) &&
+    !isAccountInCooldown(current)
+  ) {
+    return {
+      switched: false,
+      fromId: current.id,
+      reason: "session pin holds (proactive switch would stampede concurrent TUIs)",
+    };
+  }
 
   const alts = listEligibleAccounts(provider, { excludeId: current.id });
   if (alts.length === 0) {

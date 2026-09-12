@@ -14,10 +14,12 @@ import os from "node:os";
 import path from "node:path";
 import { isFalsy, isTruthy } from "./bool.js";
 import { forgeHome } from "./fs.js";
+import { pidAlive } from "./process-tree.js";
 import { createChildEnv } from "../agent/tools/env-policy.js";
 
 const CHROME_LOOK_DIR_RE = /^chrome-(look|cft|fresh|desk|phone)[^/]*$/i;
 const SESSION_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+/** Last-resort only: historical project prefixes. Nested `/tmp/mom-c20/x` counts. */
 const TMP_BASENAME_RE = /^(hashpet-|mom-|maze-|arts-)/i;
 
 export function playwrightOutputDir(): string {
@@ -94,7 +96,9 @@ export function isForbiddenBrowserKillPath(p: string): boolean {
 function isTmpAgentProfile(udd: string): boolean {
   const u = posixResolve(udd);
   if (!/^(\/private)?\/tmp\//i.test(u)) return false;
-  return TMP_BASENAME_RE.test(path.basename(u));
+  const rel = u.replace(/^(\/private)?\/tmp\//i, "");
+  if (!rel || rel === u) return false;
+  return rel.split("/").some((p) => TMP_BASENAME_RE.test(p));
 }
 
 /** Last-resort UDD match when ownedPaths is empty (process-exit leftovers). */
@@ -304,6 +308,9 @@ export function killOrphanAgentBrowsers(
     rows?: Array<{ pid: number; cmd: string }>;
     /** Lease reap: cmdline must also cite one of these paths (never a global pkill). */
     requirePath?: string[];
+    /** After TERM, wait and SIGKILL whoever is still alive (lease reap). */
+    escalate?: boolean;
+    escalateWaitMs?: number;
   },
 ): number {
   if (browserReapDisabled()) return 0;
@@ -317,7 +324,7 @@ export function killOrphanAgentBrowsers(
     ...requirePath,
   ].filter((p) => !isForbiddenBrowserKillPath(p));
   const self = process.pid;
-  let n = 0;
+  const hits: number[] = [];
   for (const row of opts?.rows ?? listProcesses()) {
     if (row.pid === self || row.pid <= 1) continue;
     if (!isAgentBrowserCommand(row.cmd, owned)) continue;
@@ -325,12 +332,30 @@ export function killOrphanAgentBrowsers(
       const udd = extractUserDataDir(row.cmd);
       if (!udd || !requirePath.some((p) => uddIsUnderOwned(udd, p))) continue;
     }
+    hits.push(row.pid);
+  }
+  let n = 0;
+  for (const pid of hits) {
     try {
-      process.kill(row.pid, "SIGTERM");
+      process.kill(pid, "SIGTERM");
       n += 1;
     } catch {
       /* already gone */
     }
+  }
+  if (opts?.escalate && hits.length) {
+    const waitMs = opts.escalateWaitMs ?? 800;
+    const t = setTimeout(() => {
+      for (const pid of hits) {
+        if (!pidAlive(pid)) continue;
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          /* gone */
+        }
+      }
+    }, waitMs);
+    t.unref?.();
   }
   return n;
 }

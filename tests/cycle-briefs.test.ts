@@ -1,5 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   buildPlannerBrief,
   buildPlannerPlanBrief,
@@ -275,10 +278,29 @@ describe("Reviewer look brief (turn 1)", () => {
       });
       assert.match(
         scout,
-        /Look path: playwright connecting — use bash\/browser lease; do not spend the scout waiting on MCP\./,
+        /Look path: playwright connecting — if call_mcp is not yet listed, use the leased profile below once; do not mkdir a new \/tmp UDD/,
       );
     } finally {
       setActiveMcpManager(null);
+    }
+  });
+
+  it("names the leased look profile and a Godot recipe when project.godot is present", () => {
+    const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-godot-brief-"));
+    fs.writeFileSync(path.join(ws, "project.godot"), "; godot\n");
+    try {
+      const scout = buildPlannerScoutBrief({
+        state: runState(),
+        workspace: ws,
+        gitStatus: "",
+        projectChecks: ["make test"],
+        lookProfileUdd: "/tmp/look-udd",
+      });
+      assert.match(scout, /Leased browser profile.*\/tmp\/look-udd/);
+      assert.match(scout, /Godot look:.*gl_compatibility.*--write-movie/);
+      assert.match(scout, /do not `open -a Godot`/);
+    } finally {
+      fs.rmSync(ws, { recursive: true, force: true });
     }
   });
 });

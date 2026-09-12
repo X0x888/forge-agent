@@ -138,7 +138,22 @@ export function retryEventReason(err: unknown): string {
     name === "TypeError" && !/^TypeError/i.test(msg)
       ? `TypeError: ${msg}`
       : msg;
-  return raw.replace(/\s+/g, " ").trim().slice(0, 120) || "transient error";
+  const cause = fetchErrorCause(err);
+  const line = cause ? `${raw} (${cause})` : raw;
+  return line.replace(/\s+/g, " ").trim().slice(0, 160) || "transient error";
+}
+
+/** undici/Node `error.cause` chain: ECONNRESET, UND_ERR_CONNECT_TIMEOUT, syscall. */
+export function fetchErrorCause(err: unknown): string {
+  const bits: string[] = [];
+  let cur: unknown = err;
+  for (let i = 0; i < 4 && cur && typeof cur === "object"; i++) {
+    const o = cur as { code?: unknown; errno?: unknown; syscall?: unknown; cause?: unknown };
+    if (typeof o.code === "string" && o.code && !bits.includes(o.code)) bits.push(o.code);
+    if (typeof o.syscall === "string" && o.syscall && !bits.includes(o.syscall)) bits.push(o.syscall);
+    cur = o.cause;
+  }
+  return bits.join("/");
 }
 
 /**

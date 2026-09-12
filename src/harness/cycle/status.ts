@@ -64,7 +64,15 @@ export function formatUlwCounts(s: CycleState | null | undefined): string {
 
 function cycleRow(c: CycleRecord): string {
   const verify =
-    c.verifyPassed === true ? "✓" : c.verifyPassed === false ? "✗" : c.verifyCommand ? "–" : "";
+    c.verifyPassed === true
+      ? c.verifyInherited
+        ? `✓ vs baseline (${c.verifyInherited} pre-existing still red)`
+        : "✓"
+      : c.verifyPassed === false
+        ? "✗"
+        : c.verifyCommand
+          ? "–"
+          : "";
   return [
     `  c${c.n}`,
     c.title ? c.title.slice(0, 48) : "(plan)",
@@ -160,7 +168,18 @@ export function cycleReportFacts(s: CycleState | null | undefined): {
     );
   const verified = s.cycles
     .filter((c) => c.verifyCommand)
-    .map((c) => `Cycle ${c.n}: \`${c.verifyCommand}\` ${c.verifyPassed ? "green" : c.verifyPassed === false ? "RED" : "not run"}`);
+    .map(
+      (c) =>
+        `Cycle ${c.n}: \`${c.verifyCommand}\` ${
+          c.verifyPassed
+            ? c.verifyInherited
+              ? `green vs baseline (${c.verifyInherited} pre-existing still red)`
+              : "green"
+            : c.verifyPassed === false
+              ? "RED"
+              : "not run"
+        }`,
+    );
   const notDone: string[] = [];
   for (const i of openItems(s)) notDone.push(`${i.title} (cycle ${s.cycle}, open)`);
   const last = s.cycles[s.cycles.length - 1];

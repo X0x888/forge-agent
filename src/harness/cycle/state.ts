@@ -185,6 +185,12 @@ export interface CycleState {
    * model cannot manufacture by declaring the product done.
    */
   directExecuteStreak: number;
+  /**
+   * Consecutive harness-synthesized cycles, including ones that committed.
+   * Reset when a parseable Planner plan is admitted. Caps the first-hour mill
+   * that used to reset the no-progress wall on every synth commit.
+   */
+  synthStreak: number;
   blocks: number;
   lastBlockEditCount: number;
   lastDiffFp: string | null;
@@ -265,6 +271,7 @@ export function newCycleState(opts: {
     fixRounds: 0,
     stuckBlocks: 0,
     directExecuteStreak: 0,
+    synthStreak: 0,
     blocks: 0,
     lastBlockEditCount: 0,
     lastDiffFp: null,
@@ -331,6 +338,7 @@ function normalizeState(raw: Partial<CycleState>, sessionId: string): CycleState
   if (typeof s.fixRounds !== "number") s.fixRounds = 0;
   if (typeof s.stuckBlocks !== "number") s.stuckBlocks = 0;
   if (typeof s.directExecuteStreak !== "number") s.directExecuteStreak = 0;
+  if (typeof s.synthStreak !== "number") s.synthStreak = 0;
   if (typeof s.blocks !== "number") s.blocks = 0;
   if (typeof s.lastBlockEditCount !== "number") s.lastBlockEditCount = 0;
   if (typeof s.reportEpoch !== "number" || !Number.isFinite(s.reportEpoch) || s.reportEpoch < 1) {

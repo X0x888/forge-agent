@@ -8,6 +8,7 @@ import {
   formatProviderError,
   formatProviderErrorText,
 } from "../src/providers/errors.js";
+import { retryEventReason } from "../src/util/retry.js";
 
 describe("formatProviderError", () => {
   it("formats 401 with login tips", () => {
@@ -101,6 +102,10 @@ describe("formatProviderError", () => {
   });
 
   it("formats network / timeout plain errors", () => {
+    const caused = Object.assign(new Error("fetch failed"), {
+      cause: { code: "ECONNRESET", syscall: "read" },
+    });
+    assert.match(retryEventReason(caused), /fetch failed \(ECONNRESET\/read\)/);
     const net = formatProviderError(new Error("fetch failed"));
     assert.equal(net.code, "network");
     const term = formatProviderError(new Error("terminated"));

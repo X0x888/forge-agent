@@ -1429,10 +1429,20 @@ export async function cleanupSubagentSession(id: string): Promise<void> {
 async function cleanupChildSession(id: string): Promise<void> {
   try {
     let workspace: string | undefined;
+    let rootId: string | undefined;
     try {
-      workspace = loadSession(id)?.meta.cwd;
+      const meta = loadSession(id)?.meta;
+      workspace = meta?.cwd;
+      rootId = meta?.subagent?.parentId;
     } catch {
       /* sidecar optional */
+    }
+    if (rootId && rootId !== id) {
+      reapSessionBrowsers(rootId, {
+        workspace,
+        chromeLooks: false,
+        ownerSessionId: id,
+      });
     }
     reapSessionBrowsers(id, { workspace, chromeLooks: false });
   } catch {

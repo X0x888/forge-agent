@@ -169,7 +169,7 @@ describe("two-turn role runner", () => {
     delete process.env.FORGE_ULW_PLANNER_PLAN_TURNS;
     delete process.env.FORGE_ULW_REVIEWER_LOOK_TURNS;
     assert.equal(plannerPlanTurns(), 12);
-    assert.equal(reviewerLookTurns(), 15);
+    assert.equal(reviewerLookTurns(), 25);
     process.env.FORGE_ULW_PLANNER_PLAN_TURNS = "20";
     process.env.FORGE_ULW_REVIEWER_LOOK_TURNS = "7";
     try {
