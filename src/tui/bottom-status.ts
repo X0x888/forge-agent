@@ -429,6 +429,11 @@ export interface BottomStatusDock {
   resume: () => void;
   /** Recompute + paint from current ctx (sync; uses last known plan) */
   refresh: () => void;
+  /**
+   * Re-stamp the last painted line (DECSC). Editor keystrokes must not
+   * re-run git / token estimate / ulw.json — that is why typing lagged.
+   */
+  restore: () => void;
   /** Fetch plan (network, cached) then paint — safe to call often */
   refreshPlan: () => Promise<void>;
   /** Inject a plan from outside (e.g. /status already fetched) */
@@ -641,6 +646,17 @@ export function createBottomStatusDock(
 
     refresh() {
       doPaint();
+    },
+
+    restore() {
+      if (!enabled || !running || pauseDepth > 0) return;
+      rows = Math.max(4, process.stdout.rows || 24);
+      const cols = Math.max(20, process.stdout.columns || 80);
+      if (!lastPaint || cols !== lastCols || rows !== lastRows) {
+        doPaint();
+        return;
+      }
+      paintLine(lastPaint);
     },
 
     async refreshPlan() {

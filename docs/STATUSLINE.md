@@ -62,7 +62,7 @@ HUD/`forge status` project labels append detected **package manager** + cheapest
 | **`live ›` prompt** | Entire busy turn | Phase + elapsed + work (`tool bash`, `wait retry…`); identity/ctx/ULW only when the dock is off |
 | **Live control ACK** | After mid-run `/cycle` etc. | One-line `live ✓ /cycle 0` + re-prompt |
 | **Turn footer** | After every agent turn | Turn tokens/cost, **budget %** (when `/budget` or `--max-cost` armed), last✓ / next check; ctx/todos only when the dock is off |
-| **Mouse** | TTY REPL (`FORGE_MOUSE=0` off) | Click in the prompt to place the caret (CJK-safe). Click dock `stop` = Ctrl+C abort; `resume` = `/retry`; model / ULW / auth chips open the existing slash. Shift-click is ignored (terminal selection). Wheel is native scrollback. |
+| **Mouse** | TTY REPL, **off** unless `FORGE_MOUSE=1` | Default: native drag-select / copy-on-select. With `FORGE_MOUSE=1`: click in the prompt to place the caret (CJK-safe); click dock `stop` = Ctrl+C abort; `resume` = `/retry`; model / ULW / auth chips open the existing slash. Shift-click is ignored (terminal selection). Wheel is native scrollback. |
 | **`/status`** | On demand (also mid-run) | Full 2-line HUD + session detail + bg task list |
 
 ### Optional external pane

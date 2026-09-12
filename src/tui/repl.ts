@@ -278,7 +278,7 @@ export async function runRepl(opts: {
     history: savedHistory,
     historySize: 300,
     completer: makeCompleter(() => config),
-    onPaint: () => bottomDockRef?.refresh(),
+    onPaint: () => bottomDockRef?.restore(),
     reservedBottomRows: isBottomStatusEnabled() ? 1 : 0,
     onMouse: (ev) => {
       const rows = process.stdout.rows || 24;

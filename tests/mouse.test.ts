@@ -39,13 +39,19 @@ describe("SGR mouse", () => {
     assert.equal(sgrMouseConsumed("a"), 0);
   });
 
-  it("FORGE_MOUSE=0 disables", () => {
+  it("FORGE_MOUSE is opt-in so native select/copy stays with the terminal", () => {
     const prev = process.env.FORGE_MOUSE;
+    delete process.env.FORGE_MOUSE;
+    assert.equal(isMouseEnabled(), false);
     process.env.FORGE_MOUSE = "0";
     assert.equal(isMouseEnabled(), false);
     process.env.FORGE_MOUSE = "off";
     assert.equal(isMouseEnabled(), false);
-    delete process.env.FORGE_MOUSE;
+    process.env.FORGE_MOUSE = "1";
+    assert.equal(isMouseEnabled(), true);
+    process.env.FORGE_MOUSE = "true";
+    assert.equal(isMouseEnabled(), true);
+    process.env.FORGE_MOUSE = "on";
     assert.equal(isMouseEnabled(), true);
     if (prev === undefined) delete process.env.FORGE_MOUSE;
     else process.env.FORGE_MOUSE = prev;

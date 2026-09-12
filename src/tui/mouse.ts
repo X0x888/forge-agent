@@ -3,7 +3,8 @@
  * Shift-click is ignored so we do not fight native selection when the
  * terminal still reports it.
  *
- * Disable: FORGE_MOUSE=0 | false | off
+ * Default **off**: mouse tracking steals drag-select and copy-on-select
+ * from the terminal. Click-to-caret / dock chips: FORGE_MOUSE=1 | true | on.
  */
 
 export const MOUSE_SGR_ENABLE = "\x1b[?1000h\x1b[?1006h";
@@ -11,8 +12,7 @@ export const MOUSE_SGR_DISABLE = "\x1b[?1006l\x1b[?1000l";
 
 export function isMouseEnabled(): boolean {
   const v = (process.env.FORGE_MOUSE || "").trim().toLowerCase();
-  if (v === "0" || v === "false" || v === "off" || v === "no") return false;
-  return true;
+  return v === "1" || v === "true" || v === "on" || v === "yes";
 }
 
 export interface MouseEvent {

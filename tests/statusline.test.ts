@@ -341,6 +341,42 @@ describe("statusline", () => {
     dock.stop();
   });
 
+  it("restore restamps the last line without recomputing layout", async () => {
+    let layouts = 0;
+    const writes: string[] = [];
+    const dock = createBottomStatusDock({
+      getContext: () => {
+        layouts++;
+        return {
+          config: { ...DEFAULT_CONFIG, model: "grok-4", contextWindow: 128_000 },
+          session: createSession({
+            cwd: "/tmp",
+            provider: "xai",
+            model: "grok-4",
+          }),
+          auth: { provider: "xai", method: "api_key", token: "t" } as ResolvedAuth,
+        };
+      },
+      forceEnabled: true,
+      paintIntervalMs: 0,
+      planIntervalMs: 0,
+      write: (s) => writes.push(s),
+    });
+    dock.start();
+    await new Promise((r) => setTimeout(r, 20));
+    const afterStart = layouts;
+    assert.ok(afterStart > 0, "start paints the dock");
+    const afterStartWrites = writes.length;
+    dock.restore();
+    dock.restore();
+    assert.equal(layouts, afterStart, "restore must not re-run getContext");
+    assert.ok(
+      writes.length > afterStartWrites,
+      "restore restamps the last line",
+    );
+    dock.stop();
+  });
+
   it("skips unchanged dock paints (no DECSC flicker)", async () => {
     const writes: string[] = [];
     const dock = createBottomStatusDock({
