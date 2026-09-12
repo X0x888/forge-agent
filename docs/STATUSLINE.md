@@ -58,10 +58,11 @@ HUD/`forge status` project labels append detected **package manager** + cheapest
 | **Prompt flags** | Idle input | `ULW`, `c=1/0`, `GOAL`, `PLAN`/`YOLO`/`auto`, `VERBOSE`, `bg:N` |
 | **Live run header** | Start of a turn **only when the bottom dock is off** | One identity line (model · effort · ULW/GOAL) — skipped when the dock already shows it |
 | **Busy status line** | Mid-turn (stderr; dock-off / fallback) | Spinner + honest phase (`waiting retry…`, not `waiting on bg`) + model + ULW |
-| **Stream ticks** | While tokens stream | Newline status every ~10s (no `\r` garble) |
+| **Stream ticks** | While tokens stream | Refresh the sticky dock (~10s); `live ›` redocks on the next keystroke / phase, not a reprint that slices the reply |
 | **`live ›` prompt** | Entire busy turn | Phase + elapsed + work (`tool bash`, `wait retry…`); identity/ctx/ULW only when the dock is off |
 | **Live control ACK** | After mid-run `/cycle` etc. | One-line `live ✓ /cycle 0` + re-prompt |
 | **Turn footer** | After every agent turn | Turn tokens/cost, **budget %** (when `/budget` or `--max-cost` armed), last✓ / next check; ctx/todos only when the dock is off |
+| **Mouse** | TTY REPL (`FORGE_MOUSE=0` off) | Click in the prompt to place the caret (CJK-safe). Click dock `stop` = Ctrl+C abort; `resume` = `/retry`; model / ULW / auth chips open the existing slash. Shift-click is ignored (terminal selection). Wheel is native scrollback. |
 | **`/status`** | On demand (also mid-run) | Full 2-line HUD + session detail + bg task list |
 
 ### Optional external pane

@@ -319,7 +319,7 @@ function renderAlignedTable(
   for (const r of parsed) {
     if (r.sep) continue;
     r.cells.forEach((cell, i) => {
-      widths[i] = Math.max(widths[i]!, cell.length);
+      widths[i] = Math.max(widths[i]!, visibleWidth(cell));
     });
   }
   const pipe = c.dim("│");

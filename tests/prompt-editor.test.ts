@@ -22,6 +22,9 @@ import {
   softWrapRows,
   displayWidth,
   resolveCtrlC,
+  moveGrapheme,
+  cursorIndexAt,
+  eraseEditorBlockSeq,
 } from "../src/tui/prompt-editor.js";
 
 describe("prompt-editor pure ops", () => {
@@ -89,6 +92,16 @@ describe("prompt-editor paste contract", () => {
     assert.ok(n.includes("\n"));
     assert.equal(countLines(n), 4);
     assert.ok(n.includes("Ship it"));
+  });
+});
+
+describe("editor erase vs dock", () => {
+  it("eraseEditorBlockSeq never uses CSI J (ED wipes the dock)", () => {
+    const seq = eraseEditorBlockSeq(3);
+    assert.ok(seq.includes("\x1b[2K"));
+    assert.equal(seq.includes("\x1b[J"), false);
+    assert.equal(seq.includes("\x1b[0J"), false);
+    assert.equal(eraseEditorBlockSeq(0), "");
   });
 });
 
@@ -252,6 +265,69 @@ describe("history incremental search", () => {
       "fix the ".length + "dock".length,
     );
     assert.equal(historySearchCursor("abc", ""), 3);
+  });
+});
+
+describe("mixed-script layout and motion", () => {
+  it("caret on hi你好 sits after 6 columns, not 4 UTF-16 units", () => {
+    const prompt = ">>";
+    const buf = "hi你好";
+    const end = layoutEditor({
+      buffer: buf,
+      cursor: buf.length,
+      promptPlain: prompt,
+      cols: 80,
+      showFooter: false,
+    });
+    assert.equal(end.cursorViewRow, 0);
+    assert.equal(end.cursorViewCol, displayWidth(prompt) + 6);
+    assert.equal(end.totalViewRows, 1);
+  });
+
+  it("wrapped 你 rows use display columns", () => {
+    const buf = "你".repeat(20);
+    const lay = layoutEditor({
+      buffer: buf,
+      cursor: 10, // 10 你 = 20 cols
+      promptPlain: "",
+      cols: 10,
+      showFooter: false,
+    });
+    // 20 cols on 10-wide → xenl: last filled row, col 10
+    assert.equal(lay.cursorViewRow, 1);
+    assert.equal(lay.cursorViewCol, 10);
+    assert.equal(lay.totalViewRows, 4); // 40 cols / 10
+  });
+
+  it("moveGrapheme / delete skips a whole 👍 and 你", () => {
+    const s = "hi👍你";
+    const afterThumb = moveGrapheme(s, 2, 1);
+    assert.equal(s.slice(2, afterThumb), "👍");
+    const back = deleteBackward(s, s.length);
+    assert.equal(back.buffer, "hi👍");
+    const back2 = deleteBackward(back.buffer, back.cursor);
+    assert.equal(back2.buffer, "hi");
+  });
+
+  it("moveWord splits hello世界, not one hop", () => {
+    const s = "hello世界";
+    assert.equal(moveWord(s, s.length, -1), "hello".length);
+    assert.equal(moveWord(s, 0, 1), "hello".length);
+  });
+
+  it("cursorIndexAt hits the second 你 in mixed text", () => {
+    const buf = "hi你好";
+    const prompt = ">>";
+    // columns: >> h i 你 你  — click col of second 你 (prefix 2 + 2 + 2 = 6)
+    const idx = cursorIndexAt({
+      buffer: buf,
+      promptPlain: prompt,
+      cols: 80,
+      showFooter: false,
+      viewRow: 0,
+      viewCol: 2 + 4, // start of 好
+    });
+    assert.equal(buf.slice(idx), "好");
   });
 });
 

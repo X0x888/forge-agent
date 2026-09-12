@@ -327,6 +327,14 @@ describe("markdown prose measure", () => {
     assert.equal(markdownMeasure(1), 8);
   });
 
+  test("Chinese prose wraps on columns, not JS length", () => {
+    const lines = wrapAnsiLine("你好世界".repeat(8), 16);
+    assert.ok(lines.length > 1, "CJK should wrap");
+    for (const line of lines) {
+      assert.ok(visibleWidth(line) <= 16, `${visibleWidth(line)} > 16`);
+    }
+  });
+
   test("wrapAnsiLine breaks on words and stays within width", () => {
     const words = Array.from({ length: 12 }, (_, i) => `word${i}`).join(" ");
     const lines = wrapAnsiLine(words, 24);

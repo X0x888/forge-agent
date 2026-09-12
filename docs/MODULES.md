@@ -46,7 +46,10 @@ Dense on purpose — each bullet is one module's invariants in the project's own
 ## TUI and status (`src/tui/`, `src/statusline/`)
 
 - `src/statusline/` — provider-agnostic HUD (`forge status`); never invent plan metrics; SuperGrok weekly `use%`+reset via nested `config.creditUsagePercent` / period end
-- `src/tui/bottom-status.ts` — always-on REPL bottom dock (folder last-2-segments · `git:branch` dirty/worktree · model · ctx · `cache N%` last-round · plan quota · reset · `sub N $x` when children spent); `ULW c3 EXEC 2/7` badge follows the live cycle state (a release clears `meta.ultrawork`); `FORGE_BOTTOM_STATUS=0` off
+- `src/util/cell-width.ts` — terminal columns (grapheme × East Asian Width); `visibleWidth` / `clipAnsi` / prompt caret use this, never JS `.length` (你好 is 4 columns)
+- `src/tui/bottom-status.ts` — always-on REPL bottom dock (folder last-2-segments · `git:branch` dirty/worktree · model · ctx · `cache N%` last-round · plan quota · reset · `sub N $x` when children spent); `ULW c3 EXEC 2/7` badge follows the live cycle state (a release clears `meta.ultrawork`); skip-unchanged paint; `FORGE_BOTTOM_STATUS=0` off
+- `src/tui/prompt-editor.ts` — mixed-script caret (CJK/emoji graphemes); erase with EL not `CSI J` so the dock row survives a redraw; SGR mouse click-to-caret (`FORGE_MOUSE=0` off)
+- `src/tui/mouse.ts` — SGR 1006 parse (press only, no motion); dock chips dispatch slash/SIGINT, never a second control plane
 - `src/tui/budget-card.ts` — `/budget` verdict-first (`HIT` / `ok` / `none`); set/off that leaves not-hit clears `max_cost` lastErr
 - `src/tui/markdown.ts` — streaming markdown renderer for assistant output (line-buffered; chunk-split invariant; non-TTY passthrough)
 

@@ -7,6 +7,7 @@ import type {
   PlanUsageInfo,
 } from "./types.js";
 import { formatTokens, formatCost, clipAnsi } from "../util/format.js";
+import { sliceByColumns, stringWidth } from "../util/cell-width.js";
 import { getForgeVersion } from "../util/version.js";
 import { forgeHome } from "../util/fs.js";
 import { isFormatOnWriteEnabled } from "../agent/tools/format-on-write.js";
@@ -253,7 +254,9 @@ export function formatCwdChip(cwd: string, levels = 2): string {
 export function formatGitChip(git: GitInfo | undefined): string | null {
   if (!git?.branch) return null;
   const branch =
-    git.branch.length > 24 ? `${git.branch.slice(0, 23)}…` : git.branch;
+    stringWidth(git.branch) > 24
+      ? `${sliceByColumns(git.branch, 23)}…`
+      : git.branch;
   const dirty = git.dirty ? "*" : "";
   const wt = git.isWorktree ? "+wt" : "";
   return `git:${branch}${dirty}${wt}`;

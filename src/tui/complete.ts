@@ -16,6 +16,7 @@ import { SLASH_COMMANDS } from "../commands/slash.js";
 import { listProjectCommandSlashes } from "../commands/project-commands.js";
 import { PROVIDER_IDS } from "../util/provider-id.js";
 import { clipAnsi, visibleWidth } from "../util/format.js";
+import { stringWidth } from "../util/cell-width.js";
 
 export interface ParamChoice {
   value: string;
@@ -634,11 +635,11 @@ export function formatSlashHitMenu(
   const shown = hits.slice(0, max);
   const cmdWidth = Math.min(
     22,
-    Math.max(10, ...shown.map((h) => h.length)),
+    Math.max(10, ...shown.map((h) => stringWidth(h))),
   );
   const lines = shown.map((h) => {
     const hint = hintForSlashHit(h);
-    const pad = Math.max(1, cmdWidth - h.length + 2);
+    const pad = Math.max(1, cmdWidth - stringWidth(h) + 2);
     const row = hint ? `  ${h}${" ".repeat(pad)}${hint}` : `  ${h}`;
     return visibleWidth(row) <= cols ? row : clipAnsi(row, cols);
   });

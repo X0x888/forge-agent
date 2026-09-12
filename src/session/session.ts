@@ -19,6 +19,7 @@ import {
   visibleWidth,
   formatToolDisplayName,
 } from "../util/format.js";
+import { graphemes } from "../util/cell-width.js";
 import {
   costCapStatus,
   formatCostBudgetLine,
@@ -3010,18 +3011,19 @@ export function wrapPlain(text: string, width: number): string[] {
   const hardBreak = (token: string): void => {
     let rest = token;
     while (visibleWidth(rest) > w) {
+      const gs = graphemes(rest);
       let acc = "";
-      let i = 0;
-      for (; i < rest.length; i++) {
-        if (visibleWidth(acc + rest[i]) > w) break;
-        acc += rest[i];
+      let n = 0;
+      for (; n < gs.length; n++) {
+        if (visibleWidth(acc + gs[n]!) > w) break;
+        acc += gs[n];
       }
       if (!acc) {
-        acc = rest[0]!;
-        i = 1;
+        acc = gs[0] ?? "";
+        n = 1;
       }
       rows.push(acc);
-      rest = rest.slice(i);
+      rest = gs.slice(n).join("");
     }
     cur = rest;
   };

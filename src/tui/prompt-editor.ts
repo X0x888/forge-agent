@@ -19,6 +19,22 @@ import readline from "node:readline";
 import type { Interface as ReadlineInterface } from "node:readline";
 import chalk from "chalk";
 import { formatSlashHitMenu } from "./complete.js";
+import {
+  stringWidth,
+  columnsBefore,
+  indexFromColumns,
+  graphemes,
+  sliceByColumns,
+} from "../util/cell-width.js";
+import {
+  isMouseEnabled,
+  parseSgrMouse,
+  MOUSE_SGR_ENABLE,
+  MOUSE_SGR_DISABLE,
+  type MouseEvent,
+} from "./mouse.js";
+
+const wordSegmenter = new Intl.Segmenter(undefined, { granularity: "word" });
 
 const BRACKETED_PASTE_ENABLE = "\x1b[?2004h";
 const BRACKETED_PASTE_DISABLE = "\x1b[?2004l";
@@ -37,6 +53,31 @@ export interface PromptEditorOptions {
   historySize?: number;
   completer?: CompleterFn;
   forceReadline?: boolean;
+  /** After a TTY redraw — restore the bottom dock (never CSI J the last row). */
+  onPaint?: () => void;
+  /**
+   * Rows reserved below the editor (the sticky dock). Clicks map through
+   * this so the caret does not jump when the last row is the HUD.
+   */
+  reservedBottomRows?: number;
+  /** Clicks the editor did not consume (dock chips, etc.). */
+  onMouse?: (ev: MouseEvent) => void;
+}
+
+/**
+ * Erase `prevViewRows` of the editor block with EL, not ED.
+ * `CSI J` (erase to end of display) wipes the DECSTBM dock row.
+ */
+export function eraseEditorBlockSeq(prevViewRows: number): string {
+  const n = Math.max(0, prevViewRows);
+  if (n <= 0) return "";
+  let s = "";
+  for (let i = 0; i < n; i++) {
+    s += "\r\x1b[2K";
+    if (i < n - 1) s += "\n";
+  }
+  if (n > 1) s += `\x1b[${n - 1}A\r`;
+  return s;
 }
 
 export interface PromptEditor {
@@ -59,6 +100,8 @@ export interface PromptEditor {
    * Idle: first Ctrl+C with a draft still clears the line.
    */
   setBusy(busy: boolean): void;
+  /** Fire SIGINT (dock `stop` chip). */
+  interrupt(): void;
   /**
    * Forget the last painted block without writing. After the token stream
    * overwrites `live ›`, the next `prompt()` must start on a fresh line
@@ -127,14 +170,46 @@ export function insertText(
   };
 }
 
+/** UTF-16 offsets of grapheme boundaries, including 0 and buffer.length. */
+export function graphemeOffsets(buffer: string): number[] {
+  const offs = [0];
+  let o = 0;
+  for (const g of graphemes(buffer)) {
+    o += g.length;
+    offs.push(o);
+  }
+  return offs;
+}
+
+/** Move one grapheme cluster. Never lands inside a surrogate pair or 你. */
+export function moveGrapheme(
+  buffer: string,
+  cursor: number,
+  dir: -1 | 1,
+): number {
+  const c = Math.max(0, Math.min(cursor, buffer.length));
+  const offs = graphemeOffsets(buffer);
+  if (dir < 0) {
+    for (let i = offs.length - 1; i >= 0; i--) {
+      if (offs[i]! < c) return offs[i]!;
+    }
+    return 0;
+  }
+  for (const o of offs) {
+    if (o > c) return o;
+  }
+  return buffer.length;
+}
+
 export function deleteBackward(
   buffer: string,
   cursor: number,
 ): { buffer: string; cursor: number } {
   if (cursor <= 0) return { buffer, cursor };
+  const start = moveGrapheme(buffer, cursor, -1);
   return {
-    buffer: buffer.slice(0, cursor - 1) + buffer.slice(cursor),
-    cursor: cursor - 1,
+    buffer: buffer.slice(0, start) + buffer.slice(cursor),
+    cursor: start,
   };
 }
 
@@ -143,8 +218,9 @@ export function deleteForward(
   cursor: number,
 ): { buffer: string; cursor: number } {
   if (cursor >= buffer.length) return { buffer, cursor };
+  const end = moveGrapheme(buffer, cursor, 1);
   return {
-    buffer: buffer.slice(0, cursor) + buffer.slice(cursor + 1),
+    buffer: buffer.slice(0, cursor) + buffer.slice(end),
     cursor,
   };
 }
@@ -154,16 +230,32 @@ export function deleteWordBackward(
   cursor: number,
 ): { buffer: string; cursor: number } {
   if (cursor <= 0) return { buffer, cursor };
-  let i = cursor;
-  while (i > 0 && /\s/.test(buffer[i - 1]!)) i--;
-  while (i > 0 && !/\s/.test(buffer[i - 1]!)) i--;
+  const i = moveWord(buffer, cursor, -1);
   return {
     buffer: buffer.slice(0, i) + buffer.slice(cursor),
     cursor: i,
   };
 }
 
-/** Jump to the previous / next whitespace-delimited word. */
+function wordSegmentAt(
+  buffer: string,
+  index: number,
+): { start: number; end: number } {
+  const n = buffer.length;
+  const i = Math.max(0, Math.min(index, n));
+  let off = 0;
+  for (const { segment } of wordSegmenter.segment(buffer)) {
+    const end = off + segment.length;
+    if (i >= off && i < end) return { start: off, end };
+    off = end;
+  }
+  return { start: n, end: n };
+}
+
+/**
+ * Jump a word. ASCII stays whitespace-delimited; CJK uses Unicode words
+ * so `hello世界` is two hops, not one.
+ */
 export function moveWord(
   buffer: string,
   cursor: number,
@@ -173,11 +265,15 @@ export function moveWord(
   let i = Math.max(0, Math.min(cursor, n));
   if (dir < 0) {
     while (i > 0 && /\s/.test(buffer[i - 1]!)) i--;
-    while (i > 0 && !/\s/.test(buffer[i - 1]!)) i--;
-  } else {
-    while (i < n && !/\s/.test(buffer[i]!)) i++;
-    while (i < n && /\s/.test(buffer[i]!)) i++;
+    if (i > 0 && !/\s/.test(buffer[i - 1]!)) {
+      i = wordSegmentAt(buffer, i - 1).start;
+    }
+    return i;
   }
+  if (i < n && !/\s/.test(buffer[i]!)) {
+    i = wordSegmentAt(buffer, i).end;
+  }
+  while (i < n && /\s/.test(buffer[i]!)) i++;
   return i;
 }
 
@@ -310,7 +406,7 @@ export function stepHistorySearch(
   };
 }
 
-const HISTORY_QUERY_MAX = 32;
+const HISTORY_QUERY_MAX_COLS = 32;
 
 /**
  * Prompt prefix while Ctrl+R / Ctrl+S is live. The match itself is the
@@ -319,7 +415,10 @@ const HISTORY_QUERY_MAX = 32;
  */
 export function formatHistorySearchPrompt(search: HistorySearch): string {
   const q = search.query.replace(/\n/g, " ");
-  const shown = q.length > HISTORY_QUERY_MAX ? `${q.slice(0, HISTORY_QUERY_MAX - 1)}…` : q;
+  const shown =
+    stringWidth(q) > HISTORY_QUERY_MAX_COLS
+      ? `${sliceByColumns(q, HISTORY_QUERY_MAX_COLS - 1)}…`
+      : q;
   const dir = search.dir > 0 ? "↓ " : "";
   const mark = search.failed ? "✗ ›" : "›";
   return `search ${dir}${mark} ${shown} · `;
@@ -362,32 +461,9 @@ export function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
-/** Terminal display width (ASCII + common wide emoji approximation). */
+/** Terminal display columns. Alias of `stringWidth` (CJK = 2). */
 export function displayWidth(s: string): number {
-  let w = 0;
-  for (const ch of s) {
-    const cp = ch.codePointAt(0) ?? 0;
-    // CJK / emoji rough wide
-    if (
-      cp >= 0x1100 &&
-      ((cp <= 0x115f) ||
-        cp === 0x2329 ||
-        cp === 0x232a ||
-        (cp >= 0x2e80 && cp <= 0xa4cf) ||
-        (cp >= 0xac00 && cp <= 0xd7a3) ||
-        (cp >= 0xf900 && cp <= 0xfaff) ||
-        (cp >= 0xfe10 && cp <= 0xfe19) ||
-        (cp >= 0xfe30 && cp <= 0xfe6f) ||
-        (cp >= 0xff00 && cp <= 0xff60) ||
-        (cp >= 0xffe0 && cp <= 0xffe6) ||
-        (cp >= 0x1f300 && cp <= 0x1faff))
-    ) {
-      w += 2;
-    } else if (cp >= 0x20 || ch === "\t") {
-      w += ch === "\t" ? 1 : 1;
-    }
-  }
-  return w;
+  return stringWidth(s);
 }
 
 /** Screen rows used by a logical line of known prefix + content widths. */
@@ -441,10 +517,14 @@ export function layoutEditor(opts: {
   }
 
   const curLine = logical[logRow] ?? logical[0]!;
-  const absCol = curLine.prefixWidth + logCol;
-  // Within this logical line, which soft-wrap row / col?
-  const wrapRowInLine = Math.floor(absCol / cols);
-  const cursorViewCol = absCol % cols;
+  const absCol = curLine.prefixWidth + columnsBefore(curLine.text, logCol);
+  // xenl: a filled row leaves the caret on that row at `cols`, not the next.
+  let wrapRowInLine = Math.floor(absCol / cols);
+  let cursorViewCol = absCol % cols;
+  if (cursorViewCol === 0 && absCol > 0) {
+    wrapRowInLine -= 1;
+    cursorViewCol = cols;
+  }
   const cursorViewRow = rowsBefore + wrapRowInLine;
 
   let totalViewRows = 0;
@@ -452,13 +532,57 @@ export function layoutEditor(opts: {
     totalViewRows += softWrapRows(L.prefixWidth + displayWidth(L.text), cols);
   }
   if (opts.showFooter) totalViewRows += 1;
+  totalViewRows = Math.max(1, totalViewRows, cursorViewRow + 1);
 
   return {
     cursorViewRow,
     cursorViewCol,
-    totalViewRows: Math.max(1, totalViewRows),
+    totalViewRows,
     logical,
   };
+}
+
+/**
+ * Inverse of layoutEditor: buffer index for a click at a view row/col
+ * inside the editor block. Clicks on the prompt prefix snap to the line
+ * start; clicks past the end snap to the line end.
+ */
+export function cursorIndexAt(
+  opts: {
+    buffer: string;
+    promptPlain: string;
+    cols: number;
+    showFooter: boolean;
+    viewRow: number;
+    viewCol: number;
+  },
+): number {
+  const layout = layoutEditor({
+    buffer: opts.buffer,
+    cursor: 0,
+    promptPlain: opts.promptPlain,
+    cols: opts.cols,
+    showFooter: opts.showFooter,
+  });
+  const cols = Math.max(8, opts.cols);
+  const lines = opts.buffer.length ? opts.buffer.split("\n") : [""];
+  let row = 0;
+  let off = 0;
+  for (let i = 0; i < layout.logical.length; i++) {
+    const L = layout.logical[i]!;
+    const used = softWrapRows(L.prefixWidth + displayWidth(L.text), cols);
+    const next = row + used;
+    if (opts.viewRow < next || i === layout.logical.length - 1) {
+      const wrapRow = Math.max(0, Math.min(used - 1, opts.viewRow - row));
+      const absCol = wrapRow * cols + opts.viewCol;
+      const contentCol = Math.max(0, absCol - L.prefixWidth);
+      const colIndex = indexFromColumns(L.text, contentCol);
+      return off + colIndex;
+    }
+    row = next;
+    off += (lines[i] ?? "").length + (i < lines.length - 1 ? 1 : 0);
+  }
+  return opts.buffer.length;
 }
 
 // ── Factory ────────────────────────────────────────────────────────────
@@ -539,6 +663,9 @@ function createReadlineFallback(
     setBusy: () => {
       /* classic readline always emits SIGINT on Ctrl+C */
     },
+    interrupt: () => {
+      ee.emit("SIGINT");
+    },
     abandonPaint: () => {
       /* classic readline has no in-place paint to abandon */
     },
@@ -600,6 +727,13 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
   private searchSnapshotCursor = 0;
 
   private readonly onData: (chunk: Buffer | string) => void;
+  private readonly utf8: TextDecoder;
+  private readonly onPaint?: () => void;
+  private readonly onMouse?: (ev: MouseEvent) => void;
+  private readonly reservedBottomRows: number;
+  private readonly mouseOn: boolean;
+  /** Last painted block height, for EL (not ED) erase. */
+  private lastTotalViewRows = 0;
 
   constructor(
     opts: PromptEditorOptions,
@@ -610,17 +744,27 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     this.input = input;
     this.output = output;
     this.completer = opts.completer;
+    this.onPaint = opts.onPaint;
+    this.onMouse = opts.onMouse;
+    this.reservedBottomRows = Math.max(0, opts.reservedBottomRows ?? 0);
+    this.mouseOn = isMouseEnabled();
     this.historySize = opts.historySize ?? 300;
     this.history = [...(opts.history ?? [])].slice(-this.historySize);
 
+    this.utf8 = new TextDecoder("utf-8");
     this.onData = (chunk) => {
-      const raw = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-      this.feed(raw);
+      if (typeof chunk === "string") {
+        this.feed(chunk);
+        return;
+      }
+      const raw = this.utf8.decode(chunk, { stream: true });
+      if (raw) this.feed(raw);
     };
     if (this.input.isTTY) this.input.setRawMode(true);
     this.input.resume();
     this.input.on("data", this.onData);
     this.output.write(BRACKETED_PASTE_ENABLE);
+    if (this.mouseOn) this.output.write(MOUSE_SGR_ENABLE);
   }
 
   setPrompt(prompt: string): void {
@@ -653,6 +797,12 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     this.pending = "";
     try {
       this.output.write(BRACKETED_PASTE_DISABLE);
+      if (this.mouseOn) this.output.write(MOUSE_SGR_DISABLE);
+    } catch {
+      /* ignore */
+    }
+    try {
+      this.utf8.decode(new Uint8Array(), { stream: false });
     } catch {
       /* ignore */
     }
@@ -666,6 +816,7 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     }
     this.painted = false;
     this.cursorViewRow = 0;
+    this.lastTotalViewRows = 0;
   }
 
   resume(): void {
@@ -686,6 +837,7 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     }
     try {
       this.output.write(BRACKETED_PASTE_ENABLE);
+      if (this.mouseOn) this.output.write(MOUSE_SGR_ENABLE);
     } catch {
       /* ignore */
     }
@@ -699,9 +851,14 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     this.busy = busy;
   }
 
+  interrupt(): void {
+    this.emit("SIGINT");
+  }
+
   abandonPaint(): void {
     this.painted = false;
     this.cursorViewRow = 0;
+    this.lastTotalViewRows = 0;
   }
 
   close(): void {
@@ -713,6 +870,12 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     this.search = null;
     try {
       this.output.write(BRACKETED_PASTE_DISABLE);
+      if (this.mouseOn) this.output.write(MOUSE_SGR_DISABLE);
+    } catch {
+      /* ignore */
+    }
+    try {
+      this.utf8.decode(new Uint8Array(), { stream: false });
     } catch {
       /* ignore */
     }
@@ -823,6 +986,9 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
 
   private escapeComplete(s: string): boolean {
     if (s === "\x1b") return false;
+    if (s.startsWith("\x1b[<")) {
+      return /[Mm]$/.test(s) || s.length > 40;
+    }
     if (s.startsWith("\x1b[")) {
       if (s.length < 3) return false;
       return /[A-Za-z~u]$/.test(s) || s.length > 32;
@@ -834,6 +1000,13 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     if (s.startsWith(PASTE_START)) {
       this.pasting = true;
       return PASTE_START.length;
+    }
+    if (s.startsWith("\x1b[<")) {
+      const m = s.match(/^\x1b\[<(\d+);(\d+);(\d+)([Mm])/);
+      if (!m) return 1;
+      const ev = parseSgrMouse(m[0]!);
+      if (ev) this.handleMouse(ev);
+      return m[0]!.length;
     }
     if (s.startsWith("\x1b[")) {
       const m = s.match(/^\x1b\[([0-9;]*)([A-Za-z~u])/);
@@ -894,13 +1067,13 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     }
     if (final === "C") {
       this.acceptSearch();
-      if (this.cursor < this.buffer.length) this.cursor++;
+      this.cursor = moveGrapheme(this.buffer, this.cursor, 1);
       this.redraw();
       return;
     }
     if (final === "D") {
       this.acceptSearch();
-      if (this.cursor > 0) this.cursor--;
+      this.cursor = moveGrapheme(this.buffer, this.cursor, -1);
       this.redraw();
       return;
     }
@@ -940,9 +1113,49 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     }
   }
 
+  private handleMouse(ev: MouseEvent): void {
+    if (ev.release || ev.motion) return;
+    if (ev.shift || ev.wheel) return;
+    if (ev.btn === 0 && this.tryClickCaret(ev)) return;
+    try {
+      this.onMouse?.(ev);
+    } catch {
+      /* dock chips must not break input */
+    }
+  }
+
+  /**
+   * Left-click inside the painted editor block → caret. Assumes the block
+   * sits just above the reserved dock rows (true after a redraw at
+   * forge › / live ›). Ignored while a stream has abandoned the paint.
+   */
+  private tryClickCaret(ev: MouseEvent): boolean {
+    if (!this.painted || this.search) return false;
+    const termRows = Math.max(4, this.output.rows || 24);
+    const origin = termRows - this.reservedBottomRows - this.lastTotalViewRows + 1;
+    const viewRow = ev.y - origin;
+    if (viewRow < 0 || viewRow >= this.lastTotalViewRows) return false;
+    this.acceptSearch();
+    this.cursor = cursorIndexAt({
+      buffer: this.buffer,
+      promptPlain: stripAnsi(this.activePrompt()),
+      cols: this.cols(),
+      showFooter:
+        Boolean(this.search) ||
+        this.multiLineHint ||
+        countLines(this.buffer) > 1,
+      viewRow,
+      viewCol: ev.x - 1,
+    });
+    this.historyIndex = -1;
+    this.redraw();
+    return true;
+  }
+
   private consumeNormal(text: string): void {
-    for (let i = 0; i < text.length; i++) {
-      const ch = text[i]!;
+    const chars = [...text];
+    for (let i = 0; i < chars.length; i++) {
+      const ch = chars[i]!;
       if (ch === "\x03") {
         // Ctrl+C — mid-run always aborts so a half-typed draft cannot trap it
         if (this.search) {
@@ -1052,7 +1265,7 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
         continue;
       }
       if (ch === "\r") {
-        if (text[i + 1] === "\n") i++;
+        if (chars[i + 1] === "\n") i++;
         if (this.burstActive) {
           this.acceptSearch();
           this.insert("\n");
@@ -1096,9 +1309,11 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
   /** Clear draft and repaint a clean single prompt line. */
   private finishClearLine(): void {
     this.goToBlockTop();
-    this.output.write("\r\x1b[J");
+    const wipe = eraseEditorBlockSeq(this.lastTotalViewRows || 1);
+    if (wipe) this.output.write(wipe);
     this.painted = false;
     this.cursorViewRow = 0;
+    this.lastTotalViewRows = 0;
     this.redraw();
   }
 
@@ -1332,8 +1547,9 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     }
     const newRow = row + dir;
     if (newRow < 0 || newRow >= lines.length) return;
+    const visCol = columnsBefore(lines[row]!, col);
     const target = lines[newRow]!;
-    const newCol = Math.min(col, target.length);
+    const newCol = indexFromColumns(target, visCol);
     let newOff = 0;
     for (let r = 0; r < newRow; r++) newOff += lines[r]!.length + 1;
     this.cursor = newOff + newCol;
@@ -1423,9 +1639,12 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
       countLines(this.buffer) > 1;
     const promptPaint = this.activePrompt();
 
-    // 1. Cursor → top of previous block, clear everything below
+    // 1. Cursor → top of previous block, EL each row (never CSI J — that
+    //    erases the DECSTBM dock).
     this.goToBlockTop();
-    this.output.write("\x1b[J");
+    if (this.painted && this.lastTotalViewRows > 0) {
+      this.output.write(eraseEditorBlockSeq(this.lastTotalViewRows));
+    }
 
     // 2. Paint logical lines (terminal handles soft-wrap)
     const contStyled = chalk.dim(
@@ -1471,6 +1690,12 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     this.output.write(`\r\x1b[${col1}G`);
 
     this.cursorViewRow = layout.cursorViewRow;
+    this.lastTotalViewRows = layout.totalViewRows;
     this.painted = true;
+    try {
+      this.onPaint?.();
+    } catch {
+      /* dock restore must not break input */
+    }
   }
 }

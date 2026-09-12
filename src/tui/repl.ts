@@ -272,10 +272,21 @@ export async function runRepl(opts: {
   const savedHistory = loadHistory(300);
   // Premium multi-line paste editor (bracketed paste + explicit Enter to send).
   // Falls back to classic readline when stdin is not a TTY.
+  let bottomDockRef: ReturnType<typeof createBottomStatusDock> | null = null;
+  let runChip: (id: string) => void = () => {};
   const rl = createPromptEditor({
     history: savedHistory,
     historySize: 300,
     completer: makeCompleter(() => config),
+    onPaint: () => bottomDockRef?.refresh(),
+    reservedBottomRows: isBottomStatusEnabled() ? 1 : 0,
+    onMouse: (ev) => {
+      const rows = process.stdout.rows || 24;
+      if (ev.y !== rows) return;
+      const hit = bottomDockRef?.hitAt(ev.x - 1);
+      if (!hit) return;
+      runChip(hit.id);
+    },
   });
 
   /**
@@ -283,8 +294,9 @@ export async function runRepl(opts: {
    * Plan is shared into statusCtx so the footer / /status HUD stay in sync.
    */
   const bottomDock = createBottomStatusDock({
-    getContext: () => ({ config, session, auth }),
+    getContext: () => ({ config, session, auth, busy, aborting }),
   });
+  bottomDockRef = bottomDock;
 
   const statusCtx = (): StatusBarContext => ({
     config,
@@ -400,7 +412,7 @@ export async function runRepl(opts: {
   ) => {
     let text = line.trim();
     if (!text) {
-      if (busy) livePrompt();
+      if (busy) livePrompt({ freshLine: false });
       else prompt();
       return;
     }
@@ -1181,6 +1193,29 @@ export async function runRepl(opts: {
   const reportShutdownError = (err: unknown) => {
     log.error(`Shutdown failed: ${(err as Error).message || String(err)}`);
     process.exit(1);
+  };
+
+  runChip = (id) => {
+    if (id === "stop") {
+      rl.interrupt();
+      return;
+    }
+    if (id === "resume") {
+      void handleLine("/retry");
+      return;
+    }
+    if (id === "model") {
+      void handleLine("/model");
+      return;
+    }
+    if (id === "ulw") {
+      void handleLine("/cycle");
+      return;
+    }
+    if (id === "auth") {
+      void handleLine("/accounts");
+      return;
+    }
   };
 
   rl.on("line", (line) => {

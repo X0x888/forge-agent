@@ -44,6 +44,19 @@ export interface BottomStatusContext {
   config: ForgeConfig;
   session: SessionData;
   auth: ResolvedAuth;
+  /** Agent turn in flight — dock shows a `stop` chip. */
+  busy?: boolean;
+  /** Abort in flight — dock shows `resume` once idle. */
+  aborting?: boolean;
+}
+
+export type DockChipId = "model" | "auth" | "ulw" | "stop" | "resume";
+
+export interface DockHit {
+  id: DockChipId;
+  /** 0-based columns, exclusive end. */
+  x0: number;
+  x1: number;
 }
 
 function envDisabled(): boolean {
@@ -126,6 +139,14 @@ export function renderBottomStatusLine(
   plan?: PlanUsageInfo,
   opts: { width?: number; plain?: boolean } = {},
 ): string {
+  return layoutBottomStatusLine(ctx, plan, opts).line;
+}
+
+export function layoutBottomStatusLine(
+  ctx: BottomStatusContext,
+  plan?: PlanUsageInfo,
+  opts: { width?: number; plain?: boolean } = {},
+): { line: string; hits: DockHit[] } {
   const { config, session, auth } = ctx;
   const width = opts.width ?? process.stdout.columns ?? 100;
   const c = !opts.plain && process.stdout.isTTY && process.env.NO_COLOR == null;
@@ -190,7 +211,7 @@ export function renderBottomStatusLine(
   // Higher prio survives narrow TTYs. Brand/auth/reset drop before
   // folder / git / ctx / budget / ULW / GOAL / YOLO — right-clip used
   // to eat those first.
-  const bits: { text: string; prio: number }[] = [];
+  const bits: { text: string; prio: number; id?: DockChipId }[] = [];
   bits.push({ text: paint("⚒ forge", "cyan"), prio: 0 });
 
   // Where you are — last two path segments + git:<branch>[*][+wt].
@@ -211,6 +232,7 @@ export function renderBottomStatusLine(
       "blue",
     ),
     prio: 5,
+    id: "model",
   });
 
   const hop = formatDockFallbackHop(session.meta.lastModelFallback);
@@ -227,7 +249,11 @@ export function renderBottomStatusLine(
       snap.accountCount && snap.accountCount > 1
         ? `×${snap.accountCount}`
         : "";
-    bits.push({ text: paint(`${authShort}${multi}`, "dim"), prio: 1 });
+    bits.push({
+      text: paint(`${authShort}${multi}`, "dim"),
+      prio: 1,
+      id: "auth",
+    });
   }
 
   const pct = snap.context.percent;
@@ -324,9 +350,10 @@ export function renderBottomStatusLine(
         ulw.cycleZeroRequested ? "yellow" : "magenta",
       ),
       prio: 10,
+      id: "ulw",
     });
   } else if (session.meta.ultrawork) {
-    bits.push({ text: paint("ULW", "magenta"), prio: 10 });
+    bits.push({ text: paint("ULW", "magenta"), prio: 10, id: "ulw" });
   }
   const g = loadGoal(session.meta.id);
   if (g?.objective && !g.paused && g.status === "active") {
@@ -350,6 +377,11 @@ export function renderBottomStatusLine(
     const todos = formatHudTodos(snap.openTodos, snap.activeTodo);
     if (todos) bits.push({ text: paint(todos, "yellow"), prio: 9 });
   }
+  if (ctx.busy) {
+    bits.push({ text: paint("stop", "red"), prio: 12, id: "stop" });
+  } else if (ctx.aborting) {
+    bits.push({ text: paint("resume", "green"), prio: 12, id: "resume" });
+  }
 
   const live = bits.filter((b) => b.text);
   const joinBits = (rows: { text: string }[]): string =>
@@ -366,12 +398,21 @@ export function renderBottomStatusLine(
   if (width > 8 && visibleWidth(line) > width) {
     line = clipAnsi(line, width);
   }
+  const hits: DockHit[] = [];
+  let x = 0;
+  for (let i = 0; i < live.length; i++) {
+    if (i > 0) x += 2;
+    const w = visibleWidth(live[i]!.text);
+    const id = live[i]!.id;
+    if (id) hits.push({ id, x0: x, x1: x + w });
+    x += w;
+  }
   // Pad to full width so prior longer paint is cleared
   const pad = Math.max(0, width - visibleWidth(line));
   if (pad > 0 && pad < width) {
     line = line + " ".repeat(pad);
   }
-  return line;
+  return { line, hits };
 }
 
 export interface BottomStatusDock {
@@ -398,6 +439,8 @@ export interface BottomStatusDock {
   active: () => boolean;
   /** Current pause depth (for tests) */
   pauseDepth: () => number;
+  /** Clickable chip at 0-based column, if any. */
+  hitAt: (x: number) => DockHit | undefined;
 }
 
 export interface BottomStatusDockOpts {
@@ -432,6 +475,9 @@ export function createBottomStatusDock(
   let plan: PlanUsageInfo | undefined;
   let planInFlight = false;
   let lastPaint = "";
+  let lastCols = 0;
+  let lastRows = 0;
+  let lastHits: DockHit[] = [];
   let rows = process.stdout.rows || 24;
   let paintTimer: ReturnType<typeof setInterval> | null = null;
   let planTimer: ReturnType<typeof setInterval> | null = null;
@@ -478,13 +524,21 @@ export function createBottomStatusDock(
     if (!enabled || !running || pauseDepth > 0) return;
     const ctx = opts.getContext();
     if (!ctx) return;
+    rows = Math.max(4, process.stdout.rows || 24);
     const cols = Math.max(20, process.stdout.columns || 80);
-    const line = renderBottomStatusLine(ctx, plan, { width: cols });
-    if (line !== lastPaint) paintLine(line);
-    else {
-      // Still repaint on resize (width change) even if content equal
-      paintLine(line);
+    const laid = layoutBottomStatusLine(ctx, plan, { width: cols });
+    const line = laid.line;
+    lastHits = laid.hits;
+    if (
+      line === lastPaint &&
+      cols === lastCols &&
+      rows === lastRows
+    ) {
+      return;
     }
+    paintLine(line);
+    lastCols = cols;
+    lastRows = rows;
   };
 
   const fetchPlan = async () => {
@@ -531,6 +585,8 @@ export function createBottomStatusDock(
         if (pauseDepth > 0) return;
         applyScrollRegion();
         lastPaint = "";
+        lastCols = 0;
+        lastRows = 0;
         doPaint();
       };
       process.stdout.on("resize", onResize);
@@ -561,6 +617,8 @@ export function createBottomStatusDock(
       }
       resetScrollRegion();
       lastPaint = "";
+      lastCols = 0;
+      lastRows = 0;
     },
 
     pause() {
@@ -575,6 +633,8 @@ export function createBottomStatusDock(
         // Resize during Allow? skipped applyScrollRegion — restore it now.
         applyScrollRegion();
         lastPaint = "";
+        lastCols = 0;
+        lastRows = 0;
         doPaint();
       }
     },
@@ -595,5 +655,6 @@ export function createBottomStatusDock(
     getPlan: () => plan,
     active: () => running && enabled,
     pauseDepth: () => pauseDepth,
+    hitAt: (x) => lastHits.find((h) => x >= h.x0 && x < h.x1),
   };
 }

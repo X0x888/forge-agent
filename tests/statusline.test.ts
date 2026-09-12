@@ -59,6 +59,7 @@ import {
 } from "../src/tui/status-bar.js";
 import {
   renderBottomStatusLine,
+  layoutBottomStatusLine,
   createBottomStatusDock,
   formatDockActivity,
 } from "../src/tui/bottom-status.js";
@@ -338,6 +339,65 @@ describe("statusline", () => {
     assert.equal(dock.pauseDepth(), 0);
     assert.ok(writes.length > afterStart, "resume paints once");
     dock.stop();
+  });
+
+  it("skips unchanged dock paints (no DECSC flicker)", async () => {
+    const writes: string[] = [];
+    const dock = createBottomStatusDock({
+      getContext: () => ({
+        config: { ...DEFAULT_CONFIG, model: "grok-4", contextWindow: 128_000 },
+        session: createSession({
+          cwd: "/tmp",
+          provider: "xai",
+          model: "grok-4",
+        }),
+        auth: { provider: "xai", method: "api_key", token: "t" } as ResolvedAuth,
+      }),
+      forceEnabled: true,
+      paintIntervalMs: 0,
+      planIntervalMs: 0,
+      write: (s) => writes.push(s),
+    });
+    dock.start();
+    await new Promise((r) => setTimeout(r, 20));
+    const afterStart = writes.length;
+    assert.ok(afterStart > 0, "start paints the dock");
+    dock.refresh();
+    dock.refresh();
+    assert.equal(writes.length, afterStart, "identical line must not DECSC");
+    dock.stop();
+  });
+
+  it("busy dock lays out a stop chip; idle aborting lays out resume", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-dock-chip-"));
+    process.env.FORGE_HOME = tmp;
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4",
+    });
+    const ctx = {
+      config: { ...DEFAULT_CONFIG, model: "grok-4", contextWindow: 128_000 },
+      session,
+      auth: { provider: "xai", method: "api_key", token: "t" } as ResolvedAuth,
+      busy: true,
+    };
+    const busy = layoutBottomStatusLine(ctx, undefined, {
+      width: 160,
+      plain: true,
+    });
+    assert.match(busy.line, /\bstop\b/);
+    const stop = busy.hits.find((h) => h.id === "stop");
+    assert.ok(stop, "stop hit");
+    assert.ok(stop!.x1 > stop!.x0);
+    const idle = layoutBottomStatusLine(
+      { ...ctx, busy: false, aborting: true },
+      undefined,
+      { width: 160, plain: true },
+    );
+    assert.match(idle.line, /\bresume\b/);
+    assert.ok(idle.hits.some((h) => h.id === "resume"));
+    assert.ok(idle.hits.some((h) => h.id === "model"));
   });
 
   it("prompt flags and turn footer surface session health", () => {

@@ -1,6 +1,11 @@
 import chalk from "chalk";
 import { grokCostRates } from "../config/grok-model.js";
 import { replaceUnpairedSurrogates, sliceUtf16Safe } from "./json-utf8.js";
+import {
+  stringWidth,
+  tokenizeAnsi,
+  sliceByColumns,
+} from "./cell-width.js";
 
 /**
  * Chalk level for the surfaces that force colour **on** rather than trusting
@@ -779,10 +784,12 @@ export function formatRelativeTime(
   return new Date(t).toISOString().slice(0, 10);
 }
 
-/** Visible character length ignoring ANSI CSI sequences. */
+/**
+ * Terminal columns of `text`, ignoring SGR. CJK / emoji are width 2;
+ * JS `.length` is the wrong unit (你好 is 2 units and 4 columns).
+ */
 export function visibleWidth(text: string): number {
-  // eslint-disable-next-line no-control-regex
-  return text.replace(/\x1b\[[0-9;]*m/g, "").length;
+  return stringWidth(text);
 }
 
 /**
@@ -815,39 +822,53 @@ function applySgr(style: string, seq: string): string {
 }
 
 function splitAnsiWord(text: string, width: number): { head: string; tail: string } {
-  // eslint-disable-next-line no-control-regex
-  const re = /(\x1b\[[0-9;]*m)|./g;
+  const tokens = tokenizeAnsi(text);
   let vis = 0;
   let style = "";
-  let lastBreak = -1;
+  let lastBreakAt = -1;
   let styleAtBreak = "";
-  let cutIndex = text.length;
+  let cutAt = tokens.length;
   let styleAtCut = style;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    if (m[1]) {
-      style = applySgr(style, m[1]);
+  let rawIndex = 0;
+  let rawIndexAtBreak = 0;
+  let rawIndexAtCut = text.length;
+
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i]!;
+    if (tok.kind === "sgr") {
+      style = applySgr(style, tok.raw);
+      rawIndex += tok.raw.length;
       continue;
     }
-    if (vis >= width) {
-      cutIndex = m.index;
+    const w = tok.width;
+    if (vis + w > width && vis > 0) {
+      cutAt = i;
       styleAtCut = style;
+      rawIndexAtCut = rawIndex;
       break;
     }
-    if (m[0] === " " || m[0] === "\t") {
-      lastBreak = m.index;
+    if (tok.raw === " " || tok.raw === "\t") {
+      lastBreakAt = i;
+      rawIndexAtBreak = rawIndex;
       styleAtBreak = style;
     }
-    vis += 1;
+    vis += w;
+    rawIndex += tok.raw.length;
   }
   const minBreak = Math.min(8, Math.max(1, Math.floor(width / 4)));
-  if (lastBreak >= 0 && visibleWidth(text.slice(0, lastBreak)) >= minBreak) {
-    const head = text.slice(0, lastBreak).replace(/[ \t]+$/, "");
-    const tail = text.slice(lastBreak + 1).replace(/^[ \t]+/, "");
+  if (
+    lastBreakAt >= 0 &&
+    visibleWidth(text.slice(0, rawIndexAtBreak)) >= minBreak
+  ) {
+    const head = text.slice(0, rawIndexAtBreak).replace(/[ \t]+$/, "");
+    const tail = text.slice(rawIndexAtBreak + 1).replace(/^[ \t]+/, "");
     return { head: closeAnsi(head), tail: styleAtBreak + tail };
   }
-  const head = text.slice(0, cutIndex);
-  const tail = text.slice(cutIndex);
+  const head = text.slice(0, rawIndexAtCut);
+  const tail = text.slice(rawIndexAtCut);
+  if (cutAt === tokens.length && vis <= width) {
+    return { head: text, tail: "" };
+  }
   return { head: closeAnsi(head), tail: styleAtCut + tail };
 }
 
@@ -859,23 +880,5 @@ function closeAnsi(text: string): string {
 export function clipAnsi(text: string, max: number): string {
   if (max <= 0) return "";
   if (visibleWidth(text) <= max) return text;
-  let out = "";
-  let vis = 0;
-  // eslint-disable-next-line no-control-regex
-  const re = /(\x1b\[[0-9;]*m)|./g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    if (m[1]) {
-      out += m[1];
-      continue;
-    }
-    if (vis >= max) break;
-    out += m[0];
-    vis += 1;
-  }
-  // Only close what was opened. `closeAnsi` above already guards this way;
-  // clipping plain text used to graft a reset onto it, so under NO_COLOR (or
-  // any plain path — a clipped session title, a `/help` row) an escape came
-  // out of a string that had no colour in it at all.
-  return out.includes("\x1b[") ? out + "\x1b[0m" : out;
+  return sliceByColumns(text, max);
 }
