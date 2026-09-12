@@ -77,7 +77,7 @@ describe("janitorBackgroundTasks", () => {
     process.env.FORGE_HOME = fakeHome;
     const cwd = tmpRoot();
     const started = await startBackgroundTask({
-      command: "sleep 30",
+      command: "sleep 5",
       cwd,
       profile: "off",
       timeoutMs: 60_000,

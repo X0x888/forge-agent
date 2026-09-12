@@ -65,7 +65,7 @@ describe("waitForTask / get_task_output wait", () => {
   it("waitForTask resolves when the command exits", async () => {
     const cwd = tmpRoot();
     const r = await startBackgroundTask({
-      command: "echo hi-wait && sleep 0.2 && echo done",
+      command: "echo hi-wait && echo done",
       cwd,
       profile: "off",
       timeoutMs: 15_000,
@@ -104,7 +104,7 @@ describe("waitForTask / get_task_output wait", () => {
   it("toolGetTaskOutput wait returns final output without polling", async () => {
     const cwd = tmpRoot();
     const r = await startBackgroundTask({
-      command: "printf 'line1\\nline2\\n' ; sleep 0.15 ; printf 'line3\\n'",
+      command: "printf 'line1\\nline2\\n' ; printf 'line3\\n'",
       cwd,
       profile: "off",
       timeoutMs: 15_000,

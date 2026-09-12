@@ -65,6 +65,18 @@ export function signalPidTree(pid: number, signal: NodeJS.Signals): boolean {
 }
 
 /**
+ * TERM→KILL grace for spawned shells, hooks, and background tasks.
+ * Production default 2000ms. `npm test` sets `FORGE_KILL_GRACE_MS=50`.
+ */
+export function processKillGraceMs(): number {
+  const raw = process.env.FORGE_KILL_GRACE_MS?.trim();
+  if (!raw) return 2000;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 2000;
+  return Math.min(30_000, Math.floor(n));
+}
+
+/**
  * SIGTERM a pid/group, then SIGKILL after waitMs without blocking the event
  * loop (Atomics.wait would freeze the TUI and parallel tests).
  */

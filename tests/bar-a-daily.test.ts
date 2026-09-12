@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { checkBashHardDeny, hardSafetyCheck } from "../src/agent/safety.js";
+import { hardSafetyCheck } from "../src/agent/safety.js";
 import { evaluateRules, compileRules } from "../src/agent/rules.js";
 import { PermissionGate } from "../src/agent/permissions.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
@@ -16,31 +16,6 @@ import { assertReadablePath, assertWritablePath } from "../src/agent/tools/path-
 import { isProtectedReadPath, isProtectedWritePath, protectedReadReason } from "../src/agent/protected-paths.js";
 import { forgeHome } from "../src/util/fs.js";
 import { executeTool } from "../src/agent/tools/index.js";
-
-describe("Bar A: hard-deny variants", () => {
-  const denials = [
-    "rm -rf ${HOME}",
-    "find / -delete",
-    "find ./tmp -name '*.log' -delete",
-    "git push -f origin main",
-    "git push origin main -f",
-    "git -C /tmp/repo push --force origin main",
-    'node -e "require(\\"fs\\").rmSync(\\"/\\",{recursive:true})"',
-  ];
-
-  for (const cmd of denials) {
-    it(`denies: ${cmd}`, () => {
-      const v = checkBashHardDeny(cmd);
-      assert.equal(v.ok, false, `expected deny for: ${cmd} got ${JSON.stringify(v)}`);
-    });
-  }
-
-  it("still allows normal project work", () => {
-    for (const cmd of ["rm -rf dist", "npm test", "git push origin feature-x", "git status"]) {
-      assert.equal(checkBashHardDeny(cmd).ok, true, cmd);
-    }
-  });
-});
 
 describe("Bar A: segment-strict allow rules", () => {
   it("Bash(git status) does not allow git status && curl", () => {

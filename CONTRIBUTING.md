@@ -23,10 +23,13 @@ See [AGENTS.md](./AGENTS.md). Non-negotiables:
 ## Tests
 
 ```bash
-npm test           # uses workspace `.tmp` for tsx IPC
+npm test           # in-process unit/integration; workspace `.tmp`; target under 2 min
+npm run smoke      # dist/cli.js fail-closed JSON (the binary)
+npm run test:times # per-file durations when the suite is slow
 ```
 
 Add coverage next to the module under `tests/`. Prefer `node:test` + `tsx`.
+Do not spawn `dist/cli.js` from unit tests. A new incident extends an existing case (table row / `tests/fixtures/prose-corpus.ts` sentence), it does not add a dump file. Tests must be able to fail: a revert of the change must turn the test red.
 
 ## Production reliability
 

@@ -22,7 +22,7 @@ export interface WatchOptions extends CollectOptions {
  * CLI `forge status --watch` (no signal) still stops on SIGINT.
  */
 export async function runStatusWatch(opts: WatchOptions = {}): Promise<void> {
-  const interval = Math.max(250, opts.intervalMs ?? 1000);
+  const interval = Math.max(20, opts.intervalMs ?? 1000);
   const clear =
     opts.clear ?? (Boolean(process.stdout.isTTY) && !opts.json && !opts.tmux);
   const plain = opts.plain || Boolean(process.env.NO_COLOR);

@@ -1832,7 +1832,10 @@ describe("statusline tmux badges", () => {
       indicator.start();
       streaming = true;
       indicator.setStreaming(true);
-      await new Promise((r) => setTimeout(r, 450));
+      const deadline = Date.now() + 500;
+      while (ticks.length < 1 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
     } finally {
       process.stderr.write = origWrite;
       indicator.stop();

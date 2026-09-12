@@ -132,6 +132,27 @@ describe("resolveHeadlessSlashPrompt", () => {
     assert.equal(stripAnsi("\x1b[34mPLAN\x1b[0m"), "PLAN");
   });
 
+  it("non-ephemeral readonly probe keeps the session (forge run --continue)", async () => {
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const { saveSession, loadSession } = await import(
+      "../src/session/session.js"
+    );
+    saveSession(session);
+    const r = await resolveHeadlessSlashPrompt({
+      prompt: "/commands",
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+      ephemeral: false,
+    });
+    assert.equal(r.kind, "done");
+    if (r.kind === "done") {
+      assert.equal(r.ephemeral, false);
+    }
+    assert.ok(loadSession(session.meta.id), "resumed session must stay on disk");
+  });
+
   it("ephemeral pure-control deletes the session dir", async () => {
     const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
     const hooks = new HookRunner(DEFAULT_CONFIG, tmp);

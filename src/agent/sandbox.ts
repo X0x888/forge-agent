@@ -23,6 +23,7 @@ import { forgeHome } from "../util/fs.js";
 import { createChildEnv } from "./tools/env-policy.js";
 import {
   killProcessTree,
+  processKillGraceMs,
   registerInflightChild,
   spawnOwnGroupOpts,
   unregisterInflightChild,
@@ -491,16 +492,18 @@ function runRaw(
       killProcessTree(child, immediateKill ? "SIGKILL" : "SIGTERM");
       if (!immediateKill) {
         // unref: a settled run must not hold the event loop for SIGKILL grace.
+        const grace = processKillGraceMs();
         setTimeout(() => {
           if (settled) return;
           killProcessTree(child, "SIGKILL");
-        }, 2000).unref?.();
+        }, grace).unref?.();
       }
       // Grandchildren can inherit pipes; `close` never fires. Bound wait.
       if (!settleTimer) {
+        const grace = processKillGraceMs();
         settleTimer = setTimeout(
           () => finish(killedResult(opts.signal?.aborted ? 130 : timedOut ? 124 : 1)),
-          immediateKill ? 400 : 2500,
+          immediateKill ? 400 : Math.max(400, grace + 400),
         );
         settleTimer.unref?.();
       }

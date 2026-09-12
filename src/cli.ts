@@ -502,7 +502,7 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
             session: earlySession,
             config,
             hooks: hooksEarly,
-            // No --session/--continue: pure-control must not pollute sessions list
+            // Discard only a throwaway probe. --continue / --session set preflightSession.
             ephemeral: !preflightSession,
           });
           if (resolved.kind === "done") {

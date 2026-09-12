@@ -4015,7 +4015,13 @@ export async function runAgentLoopThroughDrops(
           /* next loop still does proactive refresh */
         }
       }
-      const delay = Math.min(8_000, 400 * 2 ** (n - 1));
+      const continueBase = (() => {
+        const raw = process.env.FORGE_ULW_AUTO_CONTINUE_BASE_MS?.trim();
+        if (!raw) return 400;
+        const v = Number(raw);
+        return Number.isFinite(v) && v >= 0 ? Math.min(8_000, v) : 400;
+      })();
+      const delay = Math.min(8_000, continueBase * 2 ** (n - 1));
       await new Promise<void>((resolve, reject) => {
         if (opts.signal?.aborted) {
           reject(new Error("Aborted"));

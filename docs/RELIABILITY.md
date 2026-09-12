@@ -212,7 +212,8 @@ forge stats --days 7 --json      # counter-only usage dashboard
 forge sessions prune --keep 50   # disk hygiene (skips locked + pinned)
 forge prune-tool-output          # prune ~/.forge/tool-output dumps
 forge prune-metrics --keep 500   # prune counter-only metrics.jsonl
-npm test              # full suite (uses workspace .tmp for tsx)
+npm test              # in-process suite (workspace .tmp; target under 2 min)
+npm run test:times    # per-file durations when the suite is slow
 npm run check         # typecheck + test
 npm run smoke         # build + CLI binary smoke
 npm run ci            # check + smoke (GitHub Actions entrypoint)

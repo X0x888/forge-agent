@@ -68,9 +68,9 @@ describe("status watch hardening", () => {
       fetchCalls += 1;
       cur += 1;
       maxConcurrent = Math.max(maxConcurrent, cur);
-      // ~400ms probe vs 250ms interval: without the in-flight guard the next
+      // Probe longer than the interval: without the in-flight guard the next
       // tick starts while this one is still awaiting → concurrent fetches.
-      await new Promise((r) => setTimeout(r, 400));
+      await new Promise((r) => setTimeout(r, 40));
       cur -= 1;
       return new Response("{}", { status: 401 });
     }) as typeof fetch;
@@ -85,7 +85,7 @@ describe("status watch hardening", () => {
     try {
       const ac = new AbortController();
       const watch = runStatusWatch({
-        intervalMs: 250,
+        intervalMs: 40,
         json: true,
         signal: ac.signal,
         cwd: tmp,
@@ -93,11 +93,10 @@ describe("status watch hardening", () => {
         fetchPlan: true,
         config: cfg,
       });
-      // 250ms interval × 400ms probe: two serialized ticks need ~800ms when
-      // the event loop is idle. The full suite (and live-dogfood `ps`) can
-      // delay the first timer, so wait long enough that a second probe still
-      // happens without relaxing the overlap assertion.
-      await new Promise((r) => setTimeout(r, 2500));
+      const deadline = Date.now() + 2500;
+      while (fetchCalls < 2 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
       assert.equal(
         process.listenerCount("SIGINT"),
         sigintBaseline,

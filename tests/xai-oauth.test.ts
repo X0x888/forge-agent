@@ -159,7 +159,7 @@ describe("device code login resilience", () => {
   const JSON_HEADERS = { "content-type": "application/json" };
 
   /**
-   * Stub the device-code start endpoint (interval 0 → 3s poll floor) plus a
+   * Stub the device-code start endpoint (interval 0 → 20ms poll) plus a
    * scripted token endpoint. No verification_uri → no browser open().
    */
   function stubStartAndPoll(onPoll: (n: number) => Response): () => number {

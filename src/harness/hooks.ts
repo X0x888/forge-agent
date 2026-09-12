@@ -14,6 +14,7 @@ import { log } from "../util/log.js";
 import { isFalsy } from "../util/bool.js";
 import type { ForgeConfig } from "../config/types.js";
 import { createChildEnv } from "../agent/tools/env-policy.js";
+import { processKillGraceMs } from "../util/process-tree.js";
 
 export type HookEvent =
   | "SessionStart"
@@ -464,7 +465,7 @@ export class HookRunner {
         // Escalate TERM→KILL after a short grace (sandbox.ts /
         // background-tasks.ts idiom) so a TERM-ignoring hook cannot outlive
         // its verdict and hold the event loop open.
-        const killTimer = setTimeout(() => killTree("SIGKILL"), 2000);
+        const killTimer = setTimeout(() => killTree("SIGKILL"), processKillGraceMs());
         killTimer.unref?.();
         log.warn(`Hook timed out (${event}): ${hook.command}`);
         if (stopFailClosed) {

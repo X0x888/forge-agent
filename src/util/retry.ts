@@ -288,12 +288,21 @@ export function isRetryableError(err: unknown): boolean {
  * Compute backoff delay. Honors ProviderApiError.retryAfterMs when present
  * (OpenCode-style Retry-After support).
  */
+/** Client backoff base. `npm test` sets `FORGE_RETRY_BASE_MS=1` so retries do not sleep. */
+export function defaultRetryBaseMs(): number {
+  const raw = process.env.FORGE_RETRY_BASE_MS?.trim();
+  if (!raw) return 800;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 800;
+  return Math.min(12_000, Math.floor(n));
+}
+
 export function computeRetryDelayMs(
   err: unknown,
   attempt: number,
   opts: { baseDelayMs?: number; maxDelayMs?: number } = {},
 ): number {
-  const base = opts.baseDelayMs ?? 800;
+  const base = opts.baseDelayMs ?? defaultRetryBaseMs();
   const maxDelay = opts.maxDelayMs ?? 12_000;
 
   if (isProviderApiError(err) && err.retryAfterMs != null && err.retryAfterMs > 0) {
@@ -303,7 +312,8 @@ export function computeRetryDelayMs(
     return Math.min(MAX_SERVER_RETRY_DELAY_MS, Math.max(200, err.retryAfterMs));
   }
 
-  return Math.min(maxDelay, base * 2 ** attempt + Math.random() * 200);
+  const jitter = base <= 5 ? 0 : Math.random() * 200;
+  return Math.min(maxDelay, base * 2 ** attempt + jitter);
 }
 
 /** Ceiling for server-supplied Retry-After hints (matches errors.ts cap). */
@@ -314,7 +324,7 @@ export async function withRetry<T>(
   opts: RetryOptions = {},
 ): Promise<T> {
   const retries = opts.retries ?? 3;
-  const base = opts.baseDelayMs ?? 800;
+  const base = opts.baseDelayMs ?? defaultRetryBaseMs();
   const maxDelay = opts.maxDelayMs ?? 12_000;
   const shouldRetry = opts.shouldRetry ?? ((e) => isRetryableError(e));
 

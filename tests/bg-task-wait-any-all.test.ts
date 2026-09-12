@@ -63,8 +63,8 @@ describe("waitForTasks any|all", () => {
   });
 
   it("any returns when the first of several tasks finishes", async () => {
-    const a = await startSleep(tmp, 0.2);
-    const b = await startSleep(tmp, 8);
+    const a = await startSleep(tmp, 0.05);
+    const b = await startSleep(tmp, 1.2);
     const t0 = Date.now();
     const r = await waitForTasks([a.id, b.id], { timeoutMs: 4000, mode: "any" });
     const elapsed = Date.now() - t0;
@@ -79,8 +79,8 @@ describe("waitForTasks any|all", () => {
   });
 
   it("all blocks until every listed task finishes", async () => {
-    const a = await startSleep(tmp, 0.15);
-    const b = await startSleep(tmp, 0.3);
+    const a = await startSleep(tmp, 0.05);
+    const b = await startSleep(tmp, 0.1);
     const r = await waitForTasks([a.id, b.id], { timeoutMs: 4000, mode: "all" });
     assert.equal(r.ok, true);
     if (!r.ok) return;
@@ -91,8 +91,8 @@ describe("waitForTasks any|all", () => {
   });
 
   it("empty ids lock the running set at start (all)", async () => {
-    await startSleep(tmp, 0.15);
-    await startSleep(tmp, 0.25);
+    await startSleep(tmp, 0.05);
+    await startSleep(tmp, 0.1);
     const r = await waitForTasks([], { timeoutMs: 4000, mode: "all" });
     assert.equal(r.ok, true);
     if (!r.ok) return;
@@ -108,8 +108,8 @@ describe("waitForTasks any|all", () => {
   });
 
   it("get_task_output wait_mode=any surfaces both tasks and the winner", async () => {
-    const a = await startSleep(tmp, 0.15);
-    const b = await startSleep(tmp, 8);
+    const a = await startSleep(tmp, 0.05);
+    const b = await startSleep(tmp, 1.2);
     const out = await toolGetTaskOutput({
       task_ids: [a.id, b.id],
       wait_mode: "any",
@@ -123,8 +123,8 @@ describe("waitForTasks any|all", () => {
   });
 
   it("get_task_output wait_mode=all with no ids waits on every running task", async () => {
-    await startSleep(tmp, 0.15);
-    await startSleep(tmp, 0.25);
+    await startSleep(tmp, 0.05);
+    await startSleep(tmp, 0.1);
     const out = await toolGetTaskOutput({ wait_mode: "all", wait: 4000, tail: 5 });
     assert.match(out.output, /wait: all 2 task\(s\) finished/);
   });

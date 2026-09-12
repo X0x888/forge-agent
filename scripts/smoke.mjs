@@ -102,6 +102,8 @@ mustInclude("invalid_goal empty", ["run", "x", "--goal", "", "--json"], "invalid
 mustInclude("invalid_query empty", ["sessions", "list", "-q", "", "--json"], "invalid_query");
 mustInclude("command_typo", ["sesions", "--json"], "command_typo");
 mustInclude("unknown_session_action", ["sessions", "prun", "--json"], "unknown_session_action");
+mustInclude("auth logout footgun", ["auth", "logout", "--json"], "forge logout");
+mustInclude("sessions login footgun", ["sessions", "login", "--json"], "forge login");
 mustInclude("invalid_model typo", ["run", "x", "--model", "grok-45", "--json"], "invalid_model");
 mustInclude("invalid_effort typo", ["run", "x", "--effort", "medum", "--json"], "invalid_effort");
 mustInclude("invalid_interval", ["status", "--interval", "nope", "--json"], "invalid_interval");
@@ -279,5 +281,19 @@ mustInclude("status lastVerificationStale", ["status", "--json"], "lastVerificat
   console.log("ok  doctor verify-hint-off");
 }
 
+{
+  const compact = spawnSync(process.execPath, [cli, "tips", "--json"], {
+    env: { ...env, FORGE_JSON_COMPACT: "1" },
+    encoding: "utf8",
+    timeout: 15_000,
+  });
+  const out = (compact.stdout || "").trim();
+  if (compact.status !== 0 || out.includes("\n")) {
+    console.error("SMOKE FAIL: FORGE_JSON_COMPACT");
+    console.error(out.slice(0, 200));
+    process.exit(1);
+  }
+  console.log("ok  FORGE_JSON_COMPACT");
+}
 
 console.log("\nSmoke OK");

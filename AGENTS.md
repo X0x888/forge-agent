@@ -9,14 +9,13 @@ Forge is a TypeScript (Node 20+) AI coding agent CLI. The product is the **harne
 ```bash
 npm install
 npm run typecheck        # tsc --noEmit (fast, run after every edit)
-npm test                 # node:test via tsx; ≈2,450 tests in about a minute; FORGE_HOME is sandboxed to .tmp/
+npm test                 # in-process node:test; FORGE_HOME → .tmp/; target under 2 min
 npm run build            # tsc → dist/ (bin: forge)
 npm run dev -- "…"       # tsx src/cli.ts
 npm run smoke            # build + scripts/smoke.mjs
 ```
 
-One test file: `npx tsx --test tests/foo.test.ts` (an isolate is proof=ran, not proof=✓ — the suite is the bar). Colour tests import `tests/helpers/pin-color.ts` first so `NO_COLOR` from a parent session cannot flip them.
-The script clears `.tmp/forge-*` first: `TMPDIR` is pinned inside the repo and fixtures leave their scratch behind, and a `.tmp` grown to six figures of files makes the background-task tests time out at 10s with an unrelated-looking failure. `npm test` also unsets `NO_COLOR` and sets `FORCE_COLOR=1`. User-home Claude/Cursor hooks are not loaded under `node:test`.
+One test file: `npx tsx --test tests/foo.test.ts` (an isolate is proof=ran, not proof=✓). Colour tests import `tests/helpers/pin-color.ts` first. `npm test` clears `.tmp/forge-*`, pins TMPDIR, unsets `NO_COLOR`, sets `FORCE_COLOR=1`. User-home Claude/Cursor hooks are skipped under `node:test`. Do not spawn `dist/cli.js` from unit tests — that is `npm run smoke`. A sleep / git-init / real process needs a reason; a new incident extends a table row or a prose-corpus sentence.
 
 ## Layout (where things live)
 
@@ -39,7 +38,7 @@ The script clears `.tmp/forge-*` first: `TMPDIR` is pinned inside the repo and f
 - `src/tui/` — REPL, bottom dock, status/turn/commit cards, markdown renderer.
 - `src/mcp/`, `src/lsp/` — MCP (defaults context7 + isolated playwright) and LSP ensure packs. GitHub source is the native `github` tool.
 - `skills/forge-*/` — built-in skill packs; `forge-planner` / `forge-reviewer` are the ULW role briefs, `forge-veteran` the shared doctrine; `docs/` — HARNESS, ULW, RELIABILITY, PRODUCTION, SAFETY, TOOLS.
-- `tests/*.test.ts` — one file per module; `tests/helpers/cycle-arm.ts` arms ULW with a plan already admitted (`armWithPlan`) and makes a real git repo (`mkGitRepo`); `tests/cycle-*.test.ts` drive the orchestrator with a fake `CycleRuntime`.
+- `tests/*.test.ts` — one file per module; `tests/helpers/cycle-arm.ts` arms ULW with a plan already admitted (`armWithPlan`) and makes a real git repo (`mkGitRepo`); `tests/cycle-*.test.ts` drive the orchestrator with a fake `CycleRuntime`. CLI fail-closed JSON is `scripts/smoke.mjs`.
 
 ## Conventions
 
@@ -61,7 +60,7 @@ The script clears `.tmp/forge-*` first: `TMPDIR` is pinned inside the repo and f
 
 ## Working here
 
-- After edits: `npm run typecheck`, then the test file for the module, then `npm test` before claiming done. The suite is a minute; there is no excuse for shipping on an isolate.
+- After edits: `npm run typecheck`, the module's test file, then `npm test` before claiming done. Target under 2 min (`npm run test:times` if not). An isolate is proof=ran.
 - Test fixtures must `git init` their temp workspace. An empty `.git` dir is not a repo, `TMPDIR` points inside this repo during `npm test`, and git walks up — a fixture that commits a cycle will otherwise commit the developer's working tree.
 - Real ULW runs are the ground truth for harness changes: `~/.forge/sessions/*/ulw.json` (`cycles[]`, ledger) and `cycles/<n>/plan.md` / `review.md`. Survey them before adding a rule.
 - Changelog: add an entry under `## Unreleased` in `CHANGELOG.md` for user-visible behaviour, in the same "job:" style as its neighbours.

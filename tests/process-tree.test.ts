@@ -8,6 +8,7 @@ import {
   inflightChildCount,
   killAllInflightTrees,
   killProcessTree,
+  processKillGraceMs,
   registerInflightChild,
   spawnOwnGroupOpts,
   _resetInflightChildrenForTests,
@@ -77,6 +78,19 @@ function sleep(ms: number): Promise<void> {
 }
 
 describe("process-tree kill", () => {
+  it("processKillGraceMs reads FORGE_KILL_GRACE_MS", () => {
+    const prev = process.env.FORGE_KILL_GRACE_MS;
+    try {
+      delete process.env.FORGE_KILL_GRACE_MS;
+      assert.equal(processKillGraceMs(), 2000);
+      process.env.FORGE_KILL_GRACE_MS = "50";
+      assert.equal(processKillGraceMs(), 50);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_KILL_GRACE_MS;
+      else process.env.FORGE_KILL_GRACE_MS = prev;
+    }
+  });
+
   it(
     "timeout reaps a SIGTERM-ignoring grandchild and settles",
     { skip: process.platform === "win32" },
@@ -102,7 +116,7 @@ setInterval(() => {}, 1000);
         "bash",
         JSON.stringify({
           command: `node ${JSON.stringify(wrapper)}`,
-          timeout_ms: 6_000,
+          timeout_ms: 2_000,
         }),
         { workspace: tmp, sandbox: "off", config: { sandbox: "off" } },
       );
@@ -125,7 +139,7 @@ setInterval(() => {}, 1000);
         Date.now() - t0 < 15_000,
         `bash timeout must settle, took ${Date.now() - t0}ms`,
       );
-      const deadBy = Date.now() + 4_000;
+      const deadBy = Date.now() + 2_000;
       while (pidAlive(gpid) && Date.now() < deadBy) await sleep(50);
       assert.equal(pidAlive(gpid), false, "grandchild must die with the group");
       fs.rmSync(tmp, { recursive: true, force: true });

@@ -494,7 +494,7 @@ describe("bash mutation journal", () => {
     const result = await executeTool(
       "bash",
       JSON.stringify({
-        command: "sleep 0.35 && printf 'bg\\n' > bg-only.txt",
+        command: "sleep 0.08 && printf 'bg\\n' > bg-only.txt",
         background: true,
       }),
       ctx,
@@ -525,7 +525,7 @@ describe("bash mutation journal", () => {
     const result = await executeTool(
       "bash",
       JSON.stringify({
-        command: "sleep 8 && printf 'late\\n' > late.txt",
+        command: "sleep 1.2 && printf 'late\\n' > late.txt",
         background: true,
       }),
       bashCtx(s),
@@ -535,7 +535,7 @@ describe("bash mutation journal", () => {
     const rw = rewindSessionDetailed(s, 1);
     assert.ok(rw.removed >= 1);
     assert.equal(fs.existsSync(late), false);
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 80));
     assert.equal(fs.existsSync(late), false);
     const w = await waitForTask(id, { timeoutMs: 5_000 });
     assert.equal(w.ok, true);
@@ -553,7 +553,7 @@ describe("bash mutation journal", () => {
     const result = await executeTool(
       "bash",
       JSON.stringify({
-        command: "sleep 0.4 && printf 'x\\n' > late-turn.txt",
+        command: "sleep 0.08 && printf 'x\\n' > late-turn.txt",
         background: true,
       }),
       bashCtx(s),

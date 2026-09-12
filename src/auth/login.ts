@@ -660,7 +660,10 @@ async function deviceCodeLogin(
     );
   }
 
-  let interval = Math.max(3, dc.interval ?? 5) * 1000;
+  const intervalSec = dc.interval ?? 5;
+  // interval 0 (tests) polls immediately; production floors at 3s so we do
+  // not hammer the token endpoint.
+  let interval = intervalSec <= 0 ? 20 : Math.max(3, intervalSec) * 1000;
   const deadline = Date.now() + (dc.expires_in ?? 600) * 1000;
   // A transient network error must not abort the login — the device code
   // stays valid until the deadline (RFC 8628 polls through blips). Bounded

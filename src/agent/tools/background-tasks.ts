@@ -38,6 +38,7 @@ import {
 import { syncBackgroundCounts } from "../../statusline/activity.js";
 import {
   killProcessTree,
+  processKillGraceMs,
   registerInflightChild,
   spawnOwnGroupOpts,
 } from "../../util/process-tree.js";
@@ -527,7 +528,7 @@ export async function startBackgroundTask(opts: {
         // unref: SIGKILL grace must not hold the event loop after timeout.
         setTimeout(() => {
           killProcessTree(child, "SIGKILL");
-        }, 3000).unref?.();
+        }, processKillGraceMs()).unref?.();
       } catch {
         /* */
       }
@@ -920,7 +921,7 @@ export function killTask(id: string): string {
     const child = task.child;
     setTimeout(() => {
       if (child) killProcessTree(child, "SIGKILL");
-    }, 2000).unref?.();
+    }, processKillGraceMs()).unref?.();
   } catch (err) {
     return `Failed to kill ${id}: ${(err as Error).message}`;
   }
@@ -957,7 +958,7 @@ export function killAllRunningTasks(opts?: {
           ) {
             killProcessTree(child, "SIGKILL");
           }
-        }, 1500).unref?.();
+        }, processKillGraceMs()).unref?.();
       }
     } catch {
       /* */

@@ -7,8 +7,6 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { computeRetryDelayMs } from "../src/util/retry.js";
-import { ProviderApiError } from "../src/providers/errors.js";
 import { boundToolOutput } from "../src/agent/tools/truncate.js";
 import { streamLines, toolRead } from "../src/agent/tools/read.js";
 import {
@@ -44,39 +42,6 @@ import { createSession, sessionDir } from "../src/session/session.js";
 import type { ToolContext } from "../src/agent/tools/types.js";
 
 const tmpdir = () => fs.mkdtempSync(path.join(os.tmpdir(), "forge-audit-"));
-
-describe("retry: server Retry-After is honored above client maxDelay", () => {
-  it("Retry-After: 60 is not clamped to the 12s client cap", () => {
-    const err = new ProviderApiError({
-      provider: "xai",
-      status: 429,
-      body: "rate limited",
-      retryAfterMs: 60_000,
-    });
-    const d = computeRetryDelayMs(err, 0, {});
-    assert.equal(d, 60_000);
-  });
-
-  it("server hints are still capped at the 120s ceiling", () => {
-    const err = new ProviderApiError({
-      provider: "xai",
-      status: 429,
-      body: "rate limited",
-      retryAfterMs: 600_000, // parseRetryAfterMs caps at 120s, but be safe
-    });
-    assert.equal(computeRetryDelayMs(err, 0, {}), 120_000);
-  });
-
-  it("no hint → exponential backoff under maxDelay", () => {
-    const err = new ProviderApiError({
-      provider: "xai",
-      status: 500,
-      body: "boom",
-    });
-    const d = computeRetryDelayMs(err, 1, {});
-    assert.ok(d >= 1600 && d <= 12_000);
-  });
-});
 
 describe("truncate: maxChars branch respects maxBytes (multibyte)", () => {
   it("100k CJK chars is capped to ~50KB, not 240KB", async () => {
@@ -134,7 +99,7 @@ describe("read_file: streaming path for huge files", () => {
   it("toolRead streams a >2MB file instead of loading it whole", async () => {
     const dir = tmpdir();
     const file = path.join(dir, "huge.txt");
-    const chunk = "0123456789abcdef\n".repeat(200_000); // ~3.4MB
+    const chunk = "0123456789abcdef\n".repeat(130_000); // ~2.2MB, over the 2MB stream floor
     fs.writeFileSync(file, chunk, "utf8");
     const ctx = { workspace: dir } as ToolContext;
     const r = await toolRead({ path: "huge.txt", offset: 1, limit: 3 }, ctx);

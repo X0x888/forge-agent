@@ -272,6 +272,8 @@ describe("hooks", () => {
     "timeout kills the whole process group and escalates TERM→KILL",
     { skip: process.platform === "win32" },
     async () => {
+      const prevGrace = process.env.FORGE_KILL_GRACE_MS;
+      process.env.FORGE_KILL_GRACE_MS = "50";
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-hooks-kill-"));
       process.env.FORGE_HOME = path.join(tmp, "home");
       fs.mkdirSync(path.join(tmp, ".forge", "hooks"), { recursive: true });
@@ -319,9 +321,10 @@ describe("hooks", () => {
         assert.equal(r.blocked, true);
         assert.match(String(r.reason || ""), /timed out/i);
 
-        // Wait out the 2s TERM→KILL grace, then both the TERM-ignoring hook
+        // Wait out TERM→KILL grace, then both the TERM-ignoring hook
         // and its sleep grandchild must be reaped (pre-fix both orphaned).
-        await new Promise((res) => setTimeout(res, 2600));
+        const { processKillGraceMs } = await import("../src/util/process-tree.js");
+        await new Promise((res) => setTimeout(res, processKillGraceMs() + 150));
         const hookPid = Number(fs.readFileSync(pidFile, "utf8").trim());
         const grandPid = Number(fs.readFileSync(grandPidFile, "utf8").trim());
         assert.ok(hookPid > 0 && grandPid > 0);
@@ -330,6 +333,8 @@ describe("hooks", () => {
       } finally {
         delete process.env.HOOK_TEST_PIDFILE;
         delete process.env.HOOK_TEST_GRAND_PIDFILE;
+        if (prevGrace === undefined) delete process.env.FORGE_KILL_GRACE_MS;
+        else process.env.FORGE_KILL_GRACE_MS = prevGrace;
       }
     },
   );
