@@ -62,21 +62,17 @@ edits alone cannot determine whether an abstraction is warranted.
 
 ## Remaining limits
 
-- The no-commit wall (`noCommitStreak`) now shares `FORGE_ULW_NO_PROGRESS_CAP`
-  with synthesized cycles; `FORGE_ULW_AUTO_COMMIT=0` after a green ship is
-  progress. Worth: no is identity only (same Direction does not admit) — it
-  does not count consecutive invisible cycles.
-- Baseline comparison uses failing test names, not structured failure causes.
-  A different defect under an already failing name can be missed. The new
-  admission rule fixes provenance, not failure attribution or test coverage.
 - Looked, Worth, and per-item proofs are role judgments. A green project gate
   does not independently establish every claim in those documents. The role's
   ability to edit through shell commands also means a read-only instruction is
   not a complete filesystem boundary.
-- The fresh Planner still sees the full cycle record in its second turn;
-  unlimited histories need a deliberate bounded retention policy that preserves
-  constraints, unresolved findings, and rejected approaches without repeatedly
-  loading every cycle.
+- Baseline comparison uses failing test names, not structured failure causes.
+  A different defect under an already failing name can be missed. The new
+  admission rule fixes provenance, not failure attribution or test coverage.
+- Category skill is inlined from the tree (CLI → `forge-shape`, Godot /
+  extension action → `forge-game-assets`, web → `forge-surface`, library →
+  `forge-prove`), never from the user's prompt. Kind is a coarse fingerprint,
+  not a product expert.
 
 Deterministic tests can establish transition ordering, rejection behavior,
 bounded repair, evidence preservation, and baseline provenance. Representative

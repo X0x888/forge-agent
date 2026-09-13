@@ -20,6 +20,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { playwrightLookStatus } from "../../mcp/manager.js";
+import { categorySkillFor } from "../../util/product-kind.js";
 import {
   planArtifactContract,
   recurringArchitectureClass,
@@ -55,6 +56,12 @@ function lookPathLines(opts?: { lookProfileUdd?: string; workspace?: string }): 
     );
   }
   return lines;
+}
+
+/** Same detect as loop.ts — kind from the tree, so the role knows it is already in context. */
+function categorySkillLine(workspace: string): string[] {
+  const skill = categorySkillFor(workspace);
+  return skill ? [`Category skill inlined: ${skill}`] : [];
 }
 
 export interface PlannerBriefInput {
@@ -276,6 +283,7 @@ export function buildPlannerScoutBrief(input: PlannerScoutInput): string {
       lookProfileUdd: "lookProfileUdd" in input ? input.lookProfileUdd : undefined,
       workspace: input.workspace,
     }),
+    ...categorySkillLine(input.workspace),
     ``,
     `## Workspace`,
     input.workspace,

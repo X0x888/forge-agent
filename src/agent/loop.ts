@@ -183,6 +183,7 @@ import {
 import { reapSessionBrowsers } from "./browser-lease.js";
 import { cleanupAgentBrowserScratch } from "../util/look-cleanup.js";
 import { detectProjectIntel } from "../util/project-intel.js";
+import { ulwRoleInlineSkills } from "../util/product-kind.js";
 import { replacePrefixedProjectMemory } from "../harness/project-memory.js";
 import {
   describeGuidelineFile,
@@ -1797,7 +1798,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 reasoningEffort: roleEffort,
                 // forge-rootcause rides with both roles: the class of change
                 // the record shows twice is a symptom, at the run level as at a bug.
-                inlineSkills: [role === "planner" ? "forge-planner" : "forge-reviewer", "forge-veteran", "forge-rootcause"],
+                // Category skill is from the tree, never the prompt.
+                inlineSkills: ulwRoleInlineSkills(role, workspace),
                 ...(roleOpts.resumeSessionId ? { resumeSessionId: roleOpts.resumeSessionId } : {}),
                 ...(roleOpts.keepSession ? { keepSession: true } : {}),
                 ...(roleOpts.maxTurns ? { maxTurns: roleOpts.maxTurns } : {}),

@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -179,6 +180,34 @@ describe("Planner scout brief (turn 1)", () => {
     assert.match(b, /web_search/);
     assert.match(b, /matching shipped forge-\* skill/);
     assert.match(b, /user's adjectives are not the bar/);
+  });
+
+  it("names the inlined category skill for a CLI tree and omits it when unknown", () => {
+    const unknown = buildPlannerScoutBrief({
+      state: runState(),
+      workspace: "/w",
+      gitStatus: "",
+      projectChecks: [],
+    });
+    assert.equal(unknown.includes("Category skill inlined:"), false);
+
+    const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-brief-cli-"));
+    execFileSync("git", ["init", "-q"], { cwd: ws });
+    fs.writeFileSync(
+      path.join(ws, "package.json"),
+      JSON.stringify({ name: "tool", bin: { tool: "./cli.js" } }),
+    );
+    try {
+      const b = buildPlannerScoutBrief({
+        state: runState(),
+        workspace: ws,
+        gitStatus: "",
+        projectChecks: ["npm test"],
+      });
+      assert.match(b, /Category skill inlined: forge-shape/);
+    } finally {
+      fs.rmSync(ws, { recursive: true, force: true });
+    }
   });
 });
 
@@ -387,6 +416,7 @@ describe("Reviewer look brief (turn 1)", () => {
       assert.match(scout, /Leased browser profile.*\/tmp\/look-udd/);
       assert.match(scout, /Godot look:.*gl_compatibility.*--write-movie/);
       assert.match(scout, /do not `open -a Godot`/);
+      assert.match(scout, /Category skill inlined: forge-game-assets/);
     } finally {
       fs.rmSync(ws, { recursive: true, force: true });
     }
