@@ -106,6 +106,12 @@ export function runSpend(s: CycleState): RunSpend {
 }
 
 /**
+ * Newest this many cycle lines keep Direction/worth; older collapse.
+ * A 30-cycle HashPet run otherwise pasted every essay and continued the last theme.
+ */
+export const RECORD_CYCLE_LINES_FULL = 8;
+
+/**
  * One line per shipped cycle: what it set out to do and how it was judged.
  * A record of what shipped, deliberately not the previous plan's body — a
  * 30-cycle HashPet run continued the last plan's theme and its Out-of-scope
@@ -128,6 +134,21 @@ function cycleLine(c: CycleRecord): string {
     files,
   ].filter(Boolean);
   return bits.join(" · ");
+}
+
+/** Older than RECORD_CYCLE_LINES_FULL: identity of the cycle, not its Direction essay. */
+function cycleLineCollapsed(c: CycleRecord): string {
+  const bits = [
+    `cycle ${c.n}${c.title ? ` — ${c.title}` : ""}`,
+    c.reviewVerdict ?? "",
+    c.commitSha ? "commit" : c.endedAt ? "no-commit" : "",
+  ].filter(Boolean);
+  return bits.join(" · ");
+}
+
+function shippedCycleLines(cycles: CycleRecord[]): string[] {
+  const fullFrom = Math.max(0, cycles.length - RECORD_CYCLE_LINES_FULL);
+  return cycles.map((c, i) => `- ${i < fullFrom ? cycleLineCollapsed(c) : cycleLine(c)}`);
 }
 
 function fmtTokens(n: number): string {
@@ -295,7 +316,7 @@ function recordLines(input: PlannerPlanInput): string[] {
       ``,
       `## What this run has shipped (a record, not a thread — do not continue the last theme because it was last; start from the product)`,
     );
-    for (const c of s.cycles) lines.push(`- ${cycleLine(c)}`);
+    lines.push(...shippedCycleLines(s.cycles));
     lines.push(
       `If the last several cycles' files are the same copy/rename surface, the next cycle is a different class you just saw while using the product, or leave it — never the easiest remaining string.`,
     );
@@ -552,7 +573,7 @@ function reviewerRecordLines(s: CycleState): string[] {
   if (!prior.length) return [];
   return [
     `## What this run has shipped before this cycle`,
-    ...prior.map((c) => `- ${cycleLine(c)}`),
+    ...shippedCycleLines(prior),
     `If this cycle's change is the same class as earlier work, investigate whether a shared cause remains. Name the evidence and a concrete correction; similar labels or an arbitrary cycle count do not prove a defect. An unresolved acceptance defect belongs under Must-fix; nonblocking future work belongs under Architecture.`,
     ``,
   ];

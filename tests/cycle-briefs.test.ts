@@ -13,6 +13,7 @@ import {
   formatPlanAdmission,
   LOOK_PATH_DOWN_LINE,
   MANDATE_QUALITY_BAR,
+  RECORD_CYCLE_LINES_FULL,
   runSpend,
 } from "../src/harness/cycle/briefs.js";
 import { newCycleState, type CycleState } from "../src/harness/cycle/state.js";
@@ -198,6 +199,66 @@ describe("Planner plan brief (turn 2)", () => {
       assert.match(b, /Never invent defects or edits to keep running/);
       assert.doesNotMatch(b, /say so and the run stops|the behaviour exists and the item is not an item/);
     }
+  });
+
+  it("a 12-cycle record keeps eight full cycle lines; older rows collapse", () => {
+    const s = runState();
+    s.cycle = 12;
+    s.cycles = Array.from({ length: 12 }, (_, i) => {
+      const n = i + 1;
+      return {
+        n,
+        title: `title-${n}`,
+        direction: `DIR-ESSAY-${String(n).padStart(2, "0")} unique direction for cycle ${n}`,
+        startedAt: `2026-01-${String(n).padStart(2, "0")}T00:00:00Z`,
+        endedAt: `2026-01-${String(n).padStart(2, "0")}T01:00:00Z`,
+        itemsTotal: 1,
+        itemsDone: 1,
+        waves: 1,
+        reviewVerdict: "ship" as const,
+        worthClaim: `worth-claim-${String(n).padStart(2, "0")}`,
+        worth: n === 12 ? "no — last cycle was not worth it" : `yes — cycle ${n} landed`,
+        mustFix: n === 12 ? ["must-fix-from-last-review"] : [],
+        architecture: n === 12 ? ["shape-note-from-last"] : [],
+        commitSha: n % 2 === 0 ? `sha${n}` : undefined,
+        plannerTokens: 1_000,
+        reviewerTokens: 1_000,
+      };
+    });
+    const b = buildPlannerPlanBrief({
+      state: s,
+      workspace: "/w",
+      gitLog: "log",
+      gitStatus: "M a.ts",
+      guidelineSurvey: "ok",
+      projectChecks: ["npm test"],
+      userMessages: [],
+      scoutText: "scout",
+      spend: runSpend(s),
+    });
+    const shipped = b.split("## What this run has shipped")[1]?.split("##")[0] ?? "";
+    assert.ok(12 > RECORD_CYCLE_LINES_FULL, "fixture must exceed the keep-count");
+    const collapsed = 12 - RECORD_CYCLE_LINES_FULL;
+    for (let n = 1; n <= collapsed; n++) {
+      const pad = String(n).padStart(2, "0");
+      assert.equal(shipped.includes(`DIR-ESSAY-${pad}`), false, `cycle ${n} direction collapsed`);
+      assert.equal(shipped.includes(`worth-claim-${pad}`), false, `cycle ${n} worth claim collapsed`);
+      assert.match(
+        shipped,
+        new RegExp(`cycle ${n} — title-${n} · ship · ${n % 2 === 0 ? "commit" : "no-commit"}`),
+      );
+    }
+    for (let n = collapsed + 1; n <= 12; n++) {
+      const pad = String(n).padStart(2, "0");
+      assert.ok(shipped.includes(`DIR-ESSAY-${pad}`), `cycle ${n} keeps direction`);
+      assert.ok(shipped.includes(`worth-claim-${pad}`), `cycle ${n} keeps worth claim`);
+    }
+    assert.ok(b.includes("must-fix-from-last-review"), "last review Must-fix is not only in a dropped line");
+    assert.ok(b.includes("shape-note-from-last"), "last architecture notes stay");
+    assert.ok(b.includes("The last Reviewer judged the last cycle not worth a cycle"));
+    assert.ok(b.includes("A toolbar pet"), "identity stays");
+    assert.ok(b.includes("tap a star to hunt"), "unkept promise stays");
+    assert.ok(b.includes("## Spend so far"));
   });
 
   it("both planning paths keep the quality bar and tell Direction: to be the Planner's sentence", () => {

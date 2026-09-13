@@ -1367,6 +1367,39 @@ describe("cycle orchestrator — two turns per role", () => {
     assert.equal(s.directExecuteStreak, 0);
   });
 
+  it("cycle 2 scout-as-plan still runs turn 2 so the Planner reads the record", async () => {
+    const sid = "orch2-cycle2-record";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "ship" }] });
+    const { rt, calls, briefs } = fakeRuntime(cwd, {
+      twoTurn: true,
+      reviewer: [LOOK(1), REVIEW_OK],
+      planner: [PLAN_OK(2), PLAN_OK(2)],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r?.planAdmitted, true);
+    assert.equal(calls.filter((c) => c === "role:planner#1").length, 1);
+    assert.equal(calls.filter((c) => c === "role:planner#2").length, 1, "plan turn ran after cycle 1");
+    const planBrief = briefs.find((b) => b.role === "planner" && b.turn === 2)!.brief;
+    assert.match(planBrief, /## Your scout \(turn 1\)/);
+    assert.match(planBrief, /## What this run has shipped/);
+  });
+
+  it("cycle 2 does not admit a pre-record scout when the plan turn fails", async () => {
+    const sid = "orch2-cycle2-no-scout-admit";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "ship" }] });
+    const { rt, calls } = fakeRuntime(cwd, {
+      twoTurn: true,
+      reviewer: [LOOK(1), REVIEW_OK],
+      planner: [PLAN_OK(2), "prose", "still prose"],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r?.planAdmitted, true);
+    assert.ok(calls.filter((c) => c === "role:planner#2").length >= 2, "plan turn retried");
+    const s = loadCycleState(sid)!;
+    assert.equal(s.cycles[1]?.plannerStatus, "synthesized");
+    assert.doesNotMatch(s.planTitle ?? "", /theme 2/, "scout-as-plan must not skip the record after cycle 1");
+  });
+
   it("a review turn without its own Looked: takes the look's; a mandate `fulfilled` still releases", async () => {
     const sid = "orch2-look-standin";
     // A real mandate is present (armWithPlan defaults it), so fulfilled is terminal.

@@ -394,6 +394,8 @@ async function runPlanner(
     // does not re-enter reading (that is how cycle 3 burned 60 turns and died).
     secondDocumentOnly: true,
     skipSecondIf: (scoutText) => {
+      // After cycle 1 the record exists; skipping turn 2 would admit a plan that never saw it.
+      if (s.cycles.length > 0) return false;
       const p = parsePlanArtifact(scoutText);
       return Boolean(p && p.verdict === "continue" && !continueArchitectureHold(s, p));
     },
@@ -421,6 +423,8 @@ async function runPlanner(
   let plan = parsePlanArtifact(raw);
   let hold = continueArchitectureHold(s, plan);
   const tryScoutAsPlan = (): boolean => {
+    // Cycle 2+ scout never saw Must-fix / Worth: no; labelled-plan salvage is parsePlanArtifact on turn 2.
+    if (s.cycles.length > 0) return false;
     const fromScout = parsePlanArtifact(scoutRaw);
     if (!fromScout || continueArchitectureHold(s, fromScout)) return false;
     plan = fromScout;
