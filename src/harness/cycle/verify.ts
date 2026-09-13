@@ -96,6 +96,8 @@ export async function runCheckCommand(opts: {
     let size = 0;
     let timedOut = false;
     let settled = false;
+    let killed = false;
+    let settleTimer: ReturnType<typeof setTimeout> | undefined;
     const child = spawn("/bin/sh", ["-c", command], {
       cwd: opts.cwd,
       env: { ...createChildEnv(), CI: process.env.CI ?? "1", FORCE_COLOR: "0" },
@@ -114,6 +116,7 @@ export async function runCheckCommand(opts: {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (settleTimer) clearTimeout(settleTimer);
       opts.signal?.removeEventListener("abort", onAbort);
       const output = chunks.join("");
       const tail = output.length > TAIL ? output.slice(-TAIL) : output;
@@ -143,10 +146,17 @@ export async function runCheckCommand(opts: {
       });
     };
     const kill = () => {
+      killed = true;
       killProcessTree(child, "SIGTERM");
+      const grace = processKillGraceMs();
       setTimeout(() => {
         killProcessTree(child, "SIGKILL");
-      }, processKillGraceMs()).unref();
+      }, grace).unref();
+      // Grandchildren can inherit pipes; `close` never fires. Bound wait.
+      if (!settleTimer) {
+        settleTimer = setTimeout(() => finish(null), Math.max(400, grace + 400));
+        settleTimer.unref();
+      }
     };
     const timer = setTimeout(() => {
       timedOut = true;
@@ -162,7 +172,11 @@ export async function runCheckCommand(opts: {
       push(`\n[forge] spawn error: ${(err as Error).message}`);
       finish(1);
     });
-    child.on("exit", (code) => finish(code));
+    // After kill, settle on `exit` — do not wait for `close` (orphaned pipes).
+    // A green run waits for `close` so the last stdout (test summary) drains.
+    child.on("exit", (code) => {
+      if (timedOut || killed || opts.signal?.aborted) finish(code);
+    });
     child.on("close", (code) => finish(code));
   });
 }

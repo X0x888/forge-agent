@@ -25,5 +25,8 @@ describe("declared-checks — finite gate and swiftc harvest", () => {
     assert.equal(looksLikeCheckCommand("npm test"), true);
     assert.equal(finiteCheckCommand("python3 -m http.server 8080"), undefined);
     assert.equal(isNeverExitingCheckCommand("npm run serve"), true);
+    assert.equal(finiteCheckCommand("npm run serve-check"), "npm run serve-check");
+    assert.equal(finiteCheckCommand("npm run start:test"), "npm run start:test");
+    assert.equal(isNeverExitingCheckCommand("npm run serve-check"), false);
   });
 });

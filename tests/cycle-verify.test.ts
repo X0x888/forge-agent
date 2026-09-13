@@ -135,6 +135,22 @@ describe("runCheckCommand", () => {
     assert.equal(run.tail, run.output);
   });
 
+  it("waits for close so a late stdout line is not dropped", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "forge-verify-late-"));
+    fs.writeFileSync(
+      path.join(cwd, "late.mjs"),
+      "process.stdout.write('early\\n');\nsetTimeout(() => process.stdout.write('late\\n'), 80);\n",
+    );
+    const run = await runCheckCommand({
+      command: "node late.mjs",
+      cwd,
+      timeoutMs: 10_000,
+    });
+    assert.match(run.output, /early/);
+    assert.match(run.output, /late/);
+    assert.equal(run.timedOut, false);
+  });
+
   it("refuses npm run preview without spawning", async () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "forge-verify-prev-"));
     const run = await runCheckCommand({

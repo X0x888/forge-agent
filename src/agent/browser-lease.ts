@@ -320,33 +320,68 @@ function chromeStillCites(udd: string): boolean {
   return false;
 }
 
-function killGuiMatchingWorkspace(lease: BrowserLease, workspace: string): number {
+const VITE_GUI_RE =
+  /\bvite(?:\.js)?\s+(?:preview|dev)\b|\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:preview|dev)\b/i;
+
+function portFromCmd(cmd: string): string | undefined {
+  return cmd.match(/--port[=\s]+(\d+)/i)?.[1];
+}
+
+function simctlBundleFromCmd(cmd: string): string | undefined {
+  return cmd.match(/\bsimctl\s+launch\s+\S+\s+(\S+)/i)?.[1];
+}
+
+function nativeBinFromCmd(cmd: string): string | undefined {
+  return cmd.match(/\.build\/(?:debug|release)\/([^\s/]+)/i)?.[1];
+}
+
+/**
+ * Whether a live process belongs to this session GUI lease.
+ * Scoped by workspace path, or by tokens taken from *this* lease's command
+ * (simctl bundle id, `--port`, native bin name) — never a product name.
+ */
+export function guiProcessMatchesLease(
+  rowCmd: string,
+  lease: Pick<BrowserLease, "cmd" | "bundleId" | "kind">,
+  workspace: string,
+): boolean {
   const ws = path.resolve(workspace);
-  if (ws.length < 8) return 0;
+  if (ws.length < 8) return false;
   const blob = `${lease.cmd ?? ""} ${lease.bundleId ?? ""}`;
-  if (!/godot|simctl|vite-preview|native-bin/i.test(blob) && lease.kind !== "gui") return 0;
-  let n = 0;
+  if (!/godot|simctl|vite-preview|native-bin/i.test(blob) && lease.kind !== "gui") return false;
+  const c = String(rowCmd || "");
+  const inWs = c.includes(ws);
   const app = (lease.bundleId || "").toLowerCase();
+  const leaseCmd = lease.cmd ?? "";
+
+  if (/godot/i.test(blob) && /Godot/i.test(c)) {
+    return inWs || /--write-movie|--quit-after|--path\s/i.test(c);
+  }
+  if (app === "simctl") {
+    const bundle = simctlBundleFromCmd(leaseCmd);
+    if (/\bsimctl\b/i.test(c) && (inWs || (bundle && c.includes(bundle)))) return true;
+    if (bundle && c.includes(bundle)) return true;
+    return false;
+  }
+  if (app === "vite-preview") {
+    if (!VITE_GUI_RE.test(c)) return false;
+    const port = portFromCmd(leaseCmd);
+    return inWs || Boolean(port && (c.includes(`--port ${port}`) || c.includes(`--port=${port}`) || c.includes(`:${port}`)));
+  }
+  if (app === "native-bin") {
+    if (!/\.build\/(?:debug|release)\//i.test(c)) return false;
+    const bin = nativeBinFromCmd(leaseCmd);
+    return inWs || Boolean(bin && c.includes(bin));
+  }
+  return false;
+}
+
+function killGuiMatchingWorkspace(lease: BrowserLease, workspace: string): number {
+  let n = 0;
   for (const row of _listProcessesForTests()) {
     if (row.pid <= 1) continue;
-    const c = row.cmd;
-    const inWs = c.includes(ws);
-    if (/godot/i.test(blob) && /Godot/i.test(c)) {
-      if (!inWs && !/--write-movie|--quit-after|--path\s/i.test(c)) continue;
-      n += escalateKillPid(row.pid);
-      continue;
-    }
-    if (app === "simctl" && /simctl|WatchGlance|PixelPetsWatch/i.test(c) && inWs) {
-      n += escalateKillPid(row.pid);
-      continue;
-    }
-    if (app === "vite-preview" && /vite preview|npm run preview|pnpm preview/i.test(c) && inWs) {
-      n += escalateKillPid(row.pid);
-      continue;
-    }
-    if (app === "native-bin" && /\.build\/(?:debug|release)\//i.test(c) && inWs) {
-      n += escalateKillPid(row.pid);
-    }
+    if (!guiProcessMatchesLease(row.cmd, lease, workspace)) continue;
+    n += escalateKillPid(row.pid);
   }
   return n;
 }

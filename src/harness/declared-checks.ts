@@ -68,8 +68,9 @@ export function stripArrangePrefix(cmd: string): string {
   return c;
 }
 
+/** Whole shell words only — `serve-check` / `start:test` are finite checks. */
 const NEVER_EXIT_SEG_RE =
-  /(?:^|\s)(?:preview|watch|serve)\b|\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve)\b|\bvite\s+(?:preview|dev)\b|\bcargo\s+watch\b|\bhttp\.server\b/i;
+  /(?:^|[\s;|&])(?:preview|watch|serve)(?=$|[\s;|&])|\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve|preview|watch)(?=$|[\s;|&])|\bvite\s+(?:preview|dev)\b|\bcargo\s+watch\b|\bhttp\.server\b/i;
 
 function isNeverExitingSegment(seg: string): boolean {
   return NEVER_EXIT_SEG_RE.test(seg);

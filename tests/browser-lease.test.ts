@@ -9,6 +9,7 @@ import {
   defaultBrowserUdd,
   ensureSessionLookProfile,
   guiLeaseFromCommand,
+  guiProcessMatchesLease,
   isReapableBrowserUdd,
   registerBrowserLease,
   registerSpawnedResources,
@@ -69,9 +70,26 @@ describe("browser-lease", () => {
       { app: "simctl" },
     );
     assert.deepEqual(guiLeaseFromCommand("npm run preview -- --port 4173"), { app: "vite-preview" });
+    assert.deepEqual(guiLeaseFromCommand("npm run dev"), { app: "vite-preview" });
     assert.deepEqual(guiLeaseFromCommand("vite preview --port 4173"), { app: "vite-preview" });
     assert.deepEqual(guiLeaseFromCommand(".build/debug/QQHX"), { app: "native-bin" });
     assert.equal(guiLeaseFromCommand("swift test"), undefined);
+  });
+
+  it("GUI reap matches this lease's tokens, not a product name or a stranger vite", () => {
+    const ws = "/Users/me/proj";
+    const sim = { cmd: "xcrun simctl launch booted com.example.Glance", bundleId: "simctl", kind: "gui" as const };
+    assert.equal(guiProcessMatchesLease("xcrun simctl launch booted com.example.Glance", sim, ws), true);
+    assert.equal(guiProcessMatchesLease("/path/Glance.app/Glance com.example.Glance", sim, ws), true);
+    assert.equal(guiProcessMatchesLease("xcrun simctl launch booted com.other.App", sim, ws), false);
+    const vite = { cmd: "npm run preview -- --port 4173", bundleId: "vite-preview", kind: "gui" as const };
+    assert.equal(guiProcessMatchesLease("vite preview --port 4173", vite, ws), true);
+    assert.equal(guiProcessMatchesLease("node node_modules/vite/bin/vite.js preview --port 4173", vite, ws), true);
+    assert.equal(guiProcessMatchesLease("npm run dev -- --port 5173", vite, ws), false);
+    assert.equal(guiProcessMatchesLease(`vite preview --port 4173 ${ws}/index.html`, vite, ws), true);
+    const bin = { cmd: ".build/debug/HostCare", bundleId: "native-bin", kind: "gui" as const };
+    assert.equal(guiProcessMatchesLease(`${ws}/.build/debug/HostCare`, bin, ws), true);
+    assert.equal(guiProcessMatchesLease("/other/.build/debug/OtherBin", bin, ws), false);
   });
 
   it("ensureSessionLookProfile writes a harness UDD under the session", () => {
