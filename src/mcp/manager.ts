@@ -7,6 +7,7 @@ import { cleanupAgentBrowserScratch } from "../util/look-cleanup.js";
 import { loadMcpConfig, toolAllowedByFilters, type LoadedMcpConfig } from "./config.js";
 import { McpClient } from "./client.js";
 import { isPlaywrightMcp } from "./defaults.js";
+import { playwrightLookApplies } from "../util/product-kind.js";
 import {
   isMcpToolReadOnly,
   mcpToolNameLooksReadOnly,
@@ -106,6 +107,10 @@ export class McpManager {
    */
   async prewarm(waitMs = 0): Promise<void> {
     if (!this.enabled) return;
+    if (!playwrightLookApplies(this.workspace)) {
+      this.prewarmPromise = this.prewarmPromise ?? Promise.resolve();
+      return;
+    }
     this.start();
     if (!this.prewarmPromise) {
       this.prewarmPromise = this.connectPlaywright().catch(() => {});

@@ -5,6 +5,14 @@ import type { ToolContext, ToolResult } from "./types.js";
 import { resolvePath, assertReadablePath, displayRelPath } from "./path-util.js";
 import { pathNotFoundHint } from "./path-hints.js";
 import { boundToolOutput } from "./truncate.js";
+import {
+  SEARCH_MAX_WALKED,
+  SEARCH_SKIP_GLOBS,
+  isBroadSearchRoot,
+  searchRootRefusal,
+  searchTimeoutRefusal,
+  withSearchTimeout,
+} from "./search-root.js";
 
 export async function toolGlob(
   args: Record<string, unknown>,
@@ -57,6 +65,9 @@ export async function toolGlob(
   const cwd = args.path
     ? resolvePath(ctx.workspace, String(args.path).trim())
     : ctx.workspace;
+  if (isBroadSearchRoot(cwd)) {
+    return { output: searchRootRefusal(cwd, "glob"), isError: true };
+  }
   if (args.path) {
     try {
       await assertReadablePath(ctx.workspace, String(args.path).trim());
@@ -86,29 +97,55 @@ export async function toolGlob(
     };
   }
 
+  const rootLabel = args.path ? String(args.path) : ".";
+  const t = withSearchTimeout(ctx.signal);
+  const files: string[] = [];
+  let hitCap = false;
   try {
-    const files = await glob(pattern, {
+    const stream = glob.stream(pattern, {
       cwd,
       nodir: true,
       absolute: false,
-      ignore: ["**/node_modules/**", "**/.git/**", "**/dist/**"],
+      ignore: [...SEARCH_SKIP_GLOBS],
+      signal: t.signal,
     });
-    files.sort();
-    const rootLabel = args.path ? String(args.path) : ".";
-    const body = files.length
-      ? files.slice(0, 200).join("\n")
-      : (
-          `No files matched (pattern=${JSON.stringify(pattern)}, path=${rootLabel}).\n` +
-          `Tips: broaden the glob, check the search root, or try list_dir / grep.`
-        );
-    const managed = await boundToolOutput(body, { maxLines: 250 });
-    return { output: managed.text };
+    for await (const f of stream) {
+      files.push(String(f));
+      if (files.length >= SEARCH_MAX_WALKED) {
+        hitCap = true;
+        try {
+          (stream as { destroy?: () => void }).destroy?.();
+        } catch {
+          /* stream may already be closing */
+        }
+        break;
+      }
+    }
   } catch (err) {
-    return {
-      output: `glob failed: ${(err as Error).message}`,
-      isError: true,
-    };
+    if (t.timedOut()) {
+      return { output: searchTimeoutRefusal("glob", rootLabel), isError: true };
+    }
+    if (!hitCap) {
+      return {
+        output: `glob failed: ${(err as Error).message}`,
+        isError: true,
+      };
+    }
+  } finally {
+    t.clear();
   }
+  if (t.timedOut()) {
+    return { output: searchTimeoutRefusal("glob", rootLabel), isError: true };
+  }
+  files.sort();
+  const body = files.length
+    ? files.slice(0, 200).join("\n")
+    : (
+        `No files matched (pattern=${JSON.stringify(pattern)}, path=${rootLabel}).\n` +
+        `Tips: broaden the glob, check the search root, or try list_dir / grep.`
+      );
+  const managed = await boundToolOutput(body, { maxLines: 250 });
+  return { output: managed.text };
 }
 
 export async function toolListDir(

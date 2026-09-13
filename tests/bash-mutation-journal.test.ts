@@ -11,6 +11,7 @@ import {
   applyBashTreeDelta,
   bashMutationJournalEnabled,
   beginBashTreeSnapshot,
+  isLookScratchRel,
   parsePorcelainRenameFrom,
 } from "../src/agent/tools/bash-mutation-journal.js";
 import {
@@ -61,6 +62,16 @@ function git(dir: string, args: string[]): string {
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
+
+describe("isLookScratchRel", () => {
+  it("skips look/compile junk, not product sources", () => {
+    assert.equal(isLookScratchRel(".forge/tmp-c3-look/swift-mod/PetState.swiftmodule"), true);
+    assert.equal(isLookScratchRel(".forge/tmp/HostCareCheck"), true);
+    assert.equal(isLookScratchRel("build/foo.o"), true);
+    assert.equal(isLookScratchRel("PixelPetsWatch/PetState.swift"), false);
+    assert.equal(isLookScratchRel("src/index.ts"), false);
+  });
+});
 
 describe("parsePorcelainRenameFrom", () => {
   it("returns the source of R old -> new", () => {
@@ -160,6 +171,24 @@ describe("bash mutation journal", () => {
         /* */
       }
     }
+  });
+
+  it("does not journal look/compile junk as a product edit", () => {
+    const s = createSession({ cwd: dir, provider: "xai", model: "grok-4" });
+    s.meta.turnCount = 1;
+    const snap = beginBashTreeSnapshot(dir);
+    assert.ok(snap);
+    const scratch = path.join(dir, ".forge", "tmp-c3-look", "swift-mod");
+    fs.mkdirSync(scratch, { recursive: true });
+    fs.writeFileSync(path.join(scratch, "PetState.swiftmodule"), "mod\n");
+    fs.writeFileSync(path.join(dir, "real.ts"), "export {}\n");
+    const rec = ctxRecord(s.meta.id);
+    const n = applyBashTreeDelta(snap, rec);
+    assert.equal(n, 1);
+    assert.equal(rec.edits(), 1);
+    const journal = readFileMutations(s.meta.id);
+    assert.equal(journal.length, 1);
+    assert.ok(journal[0].path.endsWith("real.ts"));
   });
 
   it("journals a new untracked file as create and /undo removes it", () => {

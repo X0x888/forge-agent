@@ -8,7 +8,10 @@
  * filter. A document that does not parse is a failed role run, reported as
  * such — the harness does not guess.
  */
-import { looksLikeCheckCommand } from "../declared-checks.js";
+import {
+  finiteCheckCommand,
+  looksLikeCheckCommand,
+} from "../declared-checks.js";
 import type {
   CyclePlanItem,
   CyclePromise,
@@ -383,9 +386,11 @@ function parsePlanArtifactFromSections(text: string): ParsedPlan | null {
     if (noneM) {
       verifyNone = noneM[1]?.trim() || "no project check declared";
     } else {
-      const code = verifyRaw.match(/`([^`]{2,220})`/)?.[1] || verifyRaw;
+      const code = verifyRaw.match(/`([^`]{2,400})`/)?.[1] || verifyRaw;
       const cleaned = code.replace(/\s+(?:—|–)\s+.*$/, "").trim();
-      if (looksLikeCheckCommand(cleaned)) verifyCommand = cleaned;
+      const finite = finiteCheckCommand(cleaned);
+      if (finite && looksLikeCheckCommand(finite)) verifyCommand = finite;
+      else if (looksLikeCheckCommand(cleaned)) verifyCommand = cleaned;
       else verifyRefused = cleaned;
     }
   }
@@ -420,14 +425,14 @@ function parsePlanArtifactFromSections(text: string): ParsedPlan | null {
 }
 
 const LOOK_COULD_NOT_RE =
-  /could not run|never opened|did not open popup|playwright mcp never/i;
+  /could not run|never opened|did not open popup|playwright mcp never|could not see|vision dropped|image attachments? dropped/i;
 const LOOK_NEGATED_OPEN_RE =
   /could not run|never(?:\s+\w+){0,3}\s+opened|did(?: not|n't) open(?: popup)?|could not open|playwright mcp never(?: initialized)?/gi;
 /** Opening evidence after stripping fail phrases. Bare "lease" is the brief hint, not a look. */
 const LOOK_DID_OPEN_RE =
   /\b(?:clicked|clicking|click|loaded|loading|load|opened|opening|navigated|unpacked)\b|file:\/\/|bash chrome|SMOKE_[A-Z0-9_]+_OK|\bgodot\b[^\n]*--headless|headless smoke/i;
 const LOOK_INFRA_RE =
-  /maxTurns?\s*\(\d+\)\s*reached|look turn ended before|turn budget ended before|Playwright MCP was down.{0,80}(?:never|could not)|Chrome for Testing died|GPU unusable|godot(?:\.app)? (?:quit unexpectedly|crashed)|Vulkan[^\n]{0,40}hang/i;
+  /maxTurns?\s*\(\d+\)\s*reached|look turn ended before|turn budget ended before|Playwright MCP was down.{0,80}(?:never|could not)|Playwright(?: MCP)? (?:was|is) down|screenshot Vision dropped|image attachments? dropped|this provider dropped \d+ image|Cursor has no multimodal|Chrome for Testing died|GPU unusable|godot(?:\.app)? (?:quit unexpectedly|crashed)|Vulkan[^\n]{0,40}hang/i;
 
 /** True when Looked: reports a failed look and does not also describe opening the product. */
 export function lookCouldNotLook(looked: string): boolean {
@@ -448,7 +453,7 @@ export function lookInfraFailed(looked: string): boolean {
  * already ran it.
  */
 const KERNEL_LOOK_RE =
-  /\bwalk\s*\(|--self-test|SMOKE_[A-Z0-9_]+_OK|Game::|\bsimctl\b/i;
+  /\bwalk\s*\(|--self-test|SMOKE_[A-Z0-9_]+_OK|Game::/i;
 
 export function lookHasKernelEvidence(looked: string): boolean {
   return KERNEL_LOOK_RE.test(String(looked || ""));
@@ -466,7 +471,7 @@ export function parseLookArtifact(text: string): { looked: string; couldNotLook:
  * go-deeper "walk"/"screen" prose, not a CLI whose proof is npm test / JSON-RPC.
  */
 const SURFACE_SIT_RE =
-  /\b(?:popup|chrome|browser|sit|door|gallery)\b|first[- ]hour|file:\/\//i;
+  /\b(?:popup|chrome|browser|sit|door|gallery|watch|glance|hud|appkit|simulator|playfield)\b|first[- ]hour|file:\/\//i;
 const CLI_OR_RPC_PROOF_RE =
   /npm\s+test|json-rpc|godot\b[^\n]*--headless|headless smoke|SMOKE_[A-Z0-9_]+_OK/i;
 
@@ -778,6 +783,65 @@ export function readReviewRecordLabels(text: string): { architecture: string[]; 
     architecture: bullets(sections.get("architecture")),
     worth: paragraph(sections.get("worth")),
   };
+}
+
+/**
+ * A look/fulfillment/verdict without Worth: cannot ship, but is not a blank
+ * stub. Dogfood QQHX c2 wrote Verdict: ship and fulfillment; incomplete_max_turns
+ * replaced it with 95 bytes of "Reviewer did not complete".
+ */
+export function salvageIncompleteReview(text: string): CycleReviewNotes | null {
+  const sections = splitSections(stripRoleBudgetPrefix(String(text || "")));
+  const looked = paragraph(sections.get("looked"));
+  const fulfillment = bullets(sections.get("fulfillment")).map((b) => {
+    const m = b.match(/^(.*?)\s+(?:—|–|-|:)\s*(done|partial|missing)\b\s*(?:[—–:-]\s*)?(.*)$/i);
+    if (!m) return { item: b, state: "partial" as const };
+    return {
+      item: m[1].trim(),
+      state: m[2].toLowerCase() as "done" | "partial" | "missing",
+      note: (m[3] || "").trim() || undefined,
+    };
+  });
+  const verdictLine = parseReviewVerdict(firstLine(sections.get("verdict")));
+  const mustFix = bullets(sections.get("must-fix"));
+  if (!looked && !fulfillment.length && !verdictLine && !mustFix.length) return null;
+  const worth = parseReviewWorth(firstLine(sections.get("worth")));
+  return {
+    verdict: "blocked",
+    looked,
+    fulfillment,
+    revisions: bullets(sections.get("revisions")),
+    mustFix: mustFix.length
+      ? mustFix
+      : [
+          worth
+            ? "Reviewer did not complete the role; look preserved — Worth: is not a ship without a completed review"
+            : "Reviewer look did not include Worth: yes|no — blocked, look preserved",
+        ],
+    architecture: bullets(sections.get("architecture")),
+    worth: paragraph(sections.get("worth")),
+    operator: bullets(sections.get("operator")),
+  };
+}
+
+export function formatBlockedReview(cycle: number, notes: CycleReviewNotes): string {
+  const lines = [`# Cycle ${cycle} review`, `Verdict: blocked`];
+  if (notes.looked?.trim()) lines.push(`Looked: ${notes.looked.trim()}`);
+  if (notes.fulfillment.length) {
+    lines.push("Fulfillment:");
+    for (const f of notes.fulfillment) {
+      lines.push(
+        `- ${f.item} — ${f.state}${f.note ? ` — ${f.note}` : ""}`,
+      );
+    }
+  }
+  lines.push("Must-fix:");
+  for (const m of notes.mustFix) lines.push(`- ${m}`);
+  if (notes.architecture.length) {
+    lines.push("Architecture:");
+    for (const a of notes.architecture) lines.push(`- ${a}`);
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 /** The exact shape the Planner's first turn ends with — written before it is handed the record. */

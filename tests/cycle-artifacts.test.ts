@@ -19,6 +19,8 @@ import {
   parsePlanItemLine,
   parseReviewArtifact,
   parseScoutArtifact,
+  salvageIncompleteReview,
+  formatBlockedReview,
   readPlanRecordLabels,
   readReviewRecordLabels,
   planAddressesArchitectureClass,
@@ -409,6 +411,11 @@ describe("surface sit classifier", () => {
   it("a leftover door / popup / first-hour claim is a surface sit; npm test is not", () => {
     assert.equal(isSurfaceSit([item({ title: "Stay dock leftover", proof: "open leftover door" })]), true);
     assert.equal(isSurfaceSit([item({ title: "the first-hour popup", proof: "click the icon" })]), true);
+    assert.equal(
+      isSurfaceSit([item({ title: "Re-look glance tap so the well opens the garden", proof: "simctl launch" })]),
+      true,
+      "watch glance is a surface sit",
+    );
     assert.equal(isSurfaceSit([item({ title: "ship the widget", proof: "npm test" })]), false);
     assert.equal(
       isSurfaceSit([
@@ -543,6 +550,38 @@ describe("look infra vs could-not-look", () => {
     assert.equal(lookHasKernelEvidence("npm test 62/62"), false, "the project gate is not a look");
     assert.equal(lookHasKernelEvidence("cargo test --offline"), false);
     assert.equal(lookHasKernelEvidence("opened leftover door"), false);
+    assert.equal(
+      lookHasKernelEvidence("Drove SE via simctl launch; screenshot Vision dropped"),
+      false,
+      "simctl without seen pixels is not kernel evidence",
+    );
+    assert.equal(lookInfraFailed("Playwright is down. Drove HID."), true);
+    assert.equal(lookInfraFailed("screenshot Vision dropped — well/garden unread"), true);
+    assert.equal(
+      lookInfraFailed("[Forge: this provider dropped 2 image attachment(s) — Cursor has no multimodal parts.]"),
+      true,
+    );
+  });
+
+  it("salvages a look without Worth: as blocked, not a blank stub", () => {
+    const raw = `# Cycle 2 review
+Verdict: ship — Task / Friend / Role toggle dump chrome
+Looked: could not run — this pass did not host QQ华夏.app
+Fulfillment:
+- 任务 Main bar opens dump panel — done — WorldView loads WindowTable
+Must-fix:
+`;
+    assert.equal(parseReviewArtifact(raw), null);
+    const s = salvageIncompleteReview(raw);
+    assert.ok(s);
+    assert.equal(s.verdict, "blocked");
+    assert.match(s.looked ?? "", /did not host/);
+    assert.equal(s.fulfillment.length, 1);
+    assert.match(s.mustFix.join(" "), /look preserved|Worth/);
+    const blocked = formatBlockedReview(2, s);
+    assert.match(blocked, /Verdict: blocked/);
+    assert.match(blocked, /did not host/);
+    assert.match(blocked, /WorldView loads WindowTable/);
   });
 
   it("an unknown promise whose evidence is a lease limit is stored as limited", () => {

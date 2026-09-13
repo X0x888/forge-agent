@@ -18,12 +18,12 @@ import { isObserverOnlyCommand, isVerificationCommand } from "./verify-command.j
 export const MAX_DECLARED_CHECKS = 4;
 
 const LABEL_RE =
-  /\b(?:verify(?:\s+with|\s+command)?|verification|proof|prove[sd]?(?:\s+it)?|check(?:\s+command)?|proves it|the command that proves it|run)\s*[:=—–-]\s*([^\n]{2,220})/gi;
-const INLINE_CODE_RE = /`([^`\n]{2,220})`/g;
+  /\b(?:verify(?:\s+with|\s+command)?|verification|proof|prove[sd]?(?:\s+it)?|check(?:\s+command)?|proves it|the command that proves it|run)\s*[:=—–-]\s*([^\n]{2,400})/gi;
+const INLINE_CODE_RE = /`([^`\n]{2,400})`/g;
 
 /** Heads that run something — must still carry a check keyword. */
 const CHECK_HEAD_RE =
-  /^(?:npm|pnpm|yarn|bun|deno|node|tsx|npx|python3?|py\.test|pytest|cargo|go|mvn|gradlew?|\.\/gradlew|make|mix|composer|turbo|nx|tsc|eslint|dotnet|swift|xcodebuild|zig|flutter|dart|godot|bundle|rake|just|task|stack|cabal|sbt|lein|ctest|cmake|forge|jest|vitest|mocha|ava|phpunit|rspec|mypy|pyright|ruff|biome|elm-test|bash|sh|zsh)$/i;
+  /^(?:npm|pnpm|yarn|bun|deno|node|tsx|npx|python3?|py\.test|pytest|cargo|go|mvn|gradlew?|\.\/gradlew|make|mix|composer|turbo|nx|tsc|eslint|dotnet|swift|swiftc|xcodebuild|zig|flutter|dart|godot|bundle|rake|just|task|stack|cabal|sbt|lein|ctest|cmake|forge|jest|vitest|mocha|ava|phpunit|rspec|mypy|pyright|ruff|biome|elm-test|bash|sh|zsh)$/i;
 const CHECK_KEYWORD_RE =
   /\b(?:test|tests|spec|check|checks|verify|lint|typecheck|type-check|build|ci|smoke|self-?test|clippy|vet|unittest|nextest)\b|--self-?test\b|\.(?:test|spec)\.[cm]?[jt]sx?\b/i;
 /** With an allow-listed runner head, a target that *contains* a check word (`make selfcheck`, `just verify-all`). */
@@ -50,6 +50,48 @@ function headOf(cmd: string): string {
   return head;
 }
 
+const ARRANGE_HEAD_RE = /^(?:mkdir|cd|env|export|true|:)$/i;
+
+/** Drop leading `mkdir -p … &&` / `cd … &&` so HostCareCheck harvests. */
+export function stripArrangePrefix(cmd: string): string {
+  let c = String(cmd || "").trim();
+  for (let i = 0; i < 6; i++) {
+    const segs = c.split(/&&/);
+    if (segs.length < 2) break;
+    const head = headOf(segs[0]!.trim()).replace(/^.*\//, "");
+    if (!ARRANGE_HEAD_RE.test(head)) break;
+    c = segs
+      .slice(1)
+      .join("&&")
+      .trim();
+  }
+  return c;
+}
+
+const NEVER_EXIT_SEG_RE =
+  /(?:^|\s)(?:preview|watch|serve)\b|\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve)\b|\bvite\s+(?:preview|dev)\b|\bcargo\s+watch\b|\bhttp\.server\b/i;
+
+function isNeverExitingSegment(seg: string): boolean {
+  return NEVER_EXIT_SEG_RE.test(seg);
+}
+
+/**
+ * Drop `preview` / `dev` / `watch` segments so the ULW gate is a process
+ * that exits. `cd game && npm run build:ea && npm run preview` → build:ea.
+ */
+export function finiteCheckCommand(cmd: string): string | undefined {
+  const raw = stripArrangePrefix(cleanCandidate(cmd));
+  if (!raw) return undefined;
+  const segs = raw.split(/&&/).map((s) => s.trim()).filter(Boolean);
+  const kept = segs.filter((s) => !isNeverExitingSegment(s));
+  if (!kept.length) return undefined;
+  return kept.join(" && ");
+}
+
+export function isNeverExitingCheckCommand(cmd: string): boolean {
+  return finiteCheckCommand(cmd) === undefined && Boolean(String(cmd || "").trim());
+}
+
 function cleanCandidate(raw: string): string {
   let c = raw.replace(/\s+/g, " ").trim();
   // Trailing prose: "npm test — 12 pass", "cargo test (workspace)".
@@ -61,8 +103,10 @@ function cleanCandidate(raw: string): string {
 
 /** Shell-shaped and runs a check — not prose, not an observer, not a product verb. */
 export function looksLikeCheckCommand(candidate: string): boolean {
-  const c = cleanCandidate(candidate);
-  if (c.length < 3 || c.length > 200) return false;
+  const arranged = stripArrangePrefix(cleanCandidate(candidate));
+  const finite = finiteCheckCommand(arranged) ?? arranged;
+  const c = finite;
+  if (c.length < 3 || c.length > 400) return false;
   if (/\s(?:and|or|that|which|the|so|then)\s/i.test(c) && !/&&|\|\||;/.test(c)) {
     // Sentence, not a command ("build the thing and run it").
     if (!isVerificationCommand(c)) return false;

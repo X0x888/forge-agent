@@ -36,11 +36,12 @@ back; the cycle is still this product's first-hour verb, feel, look and
 content, evidenced from play — not a generic retention checklist.
 
 If you do not already know the bar, `web_search` what a demanding user of
-this kind of product notices first, and/or read the matching shipped
-`forge-*` skill (the catalog names them: games, UI, CLI, library). Forge
-ships those playbooks so you do not wait for the user to paste them. For
-GitHub source use the `github` tool (search / contents / tree / readme)
-even if the user did not say GitHub — not a scrape of github.com.
+this kind of product notices first. The harness inlines the matching
+category skill (`Category skill inlined: forge-game-assets` and kin) —
+that **is** the playbook. Do not `glob` or `grep` `$HOME` or the whole
+disk for `forge-*` files. For GitHub source use the `github` tool (search
+/ contents / tree / readme) even if the user did not say GitHub — not a
+scrape of github.com.
 
 You work in **two turns**. The harness hands you the record — what this run
 has shipped, what the last review left, what the user said — only after you
@@ -108,8 +109,9 @@ against memory.
 ### 4. Category — what a tool of this kind is expected to do
 
 Know the bar for this kind of product. If you do not, `web_search` what a
-demanding user of this category notices first, and/or read the matching
-shipped `forge-*` skill. Competitors are context, not a feature checklist.
+demanding user of this category notices first. The inlined category skill
+is already in context; do not search the disk for `forge-*`. Competitors
+are context, not a feature checklist.
 The user's adjectives are not the bar. Consider the first-session user, the
 repeat user, the operator and the maintainer. Delegate independent reads with
 these different lenses when useful; their conclusions still need project

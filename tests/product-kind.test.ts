@@ -13,6 +13,7 @@ import {
   categorySkillFor,
   categorySkillForKind,
   detectProductKind,
+  playwrightLookApplies,
   ulwRoleInlineSkills,
   type ProductKind,
 } from "../src/util/product-kind.js";
@@ -44,6 +45,22 @@ describe("detectProductKind", () => {
     withRepo("forge-kind-godot-", (d) => write(d, "project.godot", "; godot\n"), (d) => {
       assert.equal(detectProductKind(d), "game");
       assert.equal(categorySkillFor(d), "forge-game-assets");
+      assert.equal(playwrightLookApplies(d), false);
+    });
+  });
+
+  it("vite web app gets Playwright; a CLI bin does not", () => {
+    withRepo("forge-kind-vite-", (d) => {
+      write(d, "vite.config.ts", "export default {}\n");
+      write(d, "package.json", JSON.stringify({ name: "app" }));
+    }, (d) => {
+      assert.equal(detectProductKind(d), "web");
+      assert.equal(playwrightLookApplies(d), true);
+    });
+    withRepo("forge-kind-cli-pw-", (d) => {
+      write(d, "package.json", JSON.stringify({ name: "tool", bin: { tool: "./cli.js" } }));
+    }, (d) => {
+      assert.equal(playwrightLookApplies(d), false);
     });
   });
 

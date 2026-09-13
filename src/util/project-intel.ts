@@ -449,6 +449,10 @@ function otherEcosystemCommands(cwd: string, kinds: string[]): string[] {
   if (has("swift") || exists(cwd, "Package.swift")) {
     out.push("swift build", "swift test");
   }
+  // Watch/AppKit trees often have an xcodeproj and no Package.swift (pixel-pets).
+  if (hasEntryMatching(cwd, /\.(?:xcodeproj|xcworkspace)$/i)) {
+    if (!out.some((c) => /\bxcodebuild\b/.test(c))) out.push("xcodebuild -quiet test");
+  }
   if (has("zig") || exists(cwd, "build.zig")) {
     out.push("zig build test");
   }

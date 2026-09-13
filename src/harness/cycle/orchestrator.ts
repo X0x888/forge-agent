@@ -37,6 +37,8 @@ import {
   parsePlanArtifact,
   parseReviewArtifact,
   parseScoutArtifact,
+  salvageIncompleteReview,
+  formatBlockedReview,
   readPlanRecordLabels,
   readReviewRecordLabels,
   lookInfraFailed,
@@ -100,6 +102,10 @@ import {
   isIsolateTestCommand,
   isTypecheckCommand,
 } from "../verification.js";
+import {
+  finiteCheckCommand,
+  isNeverExitingCheckCommand,
+} from "../declared-checks.js";
 
 export type CycleRole = "planner" | "reviewer";
 
@@ -492,7 +498,7 @@ function synthCap(): number {
  * executor (which can edit). Further investigation still owes evidence of
  * a worthwhile change; an unlimited run does not require invented defects.
  */
-function synthesizeWorkPlan(
+export function synthesizeWorkPlan(
   s: CycleState,
   scout: ScoutResult | undefined,
   kind: "no-plan" | "keep-promise" | "go-deeper",
@@ -972,7 +978,10 @@ export function resolveVerifyCommand(
   plan: Pick<ParsedPlan, "verifyCommand" | "verifyNone">,
   projectChecks: string[],
 ): { command?: string; declared?: string; note?: string } {
-  const declared = plan.verifyCommand;
+  const declared = plan.verifyCommand
+    ? finiteCheckCommand(plan.verifyCommand) ??
+      (isNeverExitingCheckCommand(plan.verifyCommand) ? undefined : plan.verifyCommand)
+    : undefined;
   // A monorepo root with a stray pyproject.toml lists `pytest` next to the
   // npm scripts; the fuller check must live in the same ecosystem as what
   // the Planner declared (or, absent that, as the stack table's first row).
@@ -1063,7 +1072,10 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
   }
   let raw = roleBody(res.text);
   let completed = res.ok && res.status === "completed";
-  let parsed = completed ? parseReviewArtifact(raw) : null;
+  let parsed = parseReviewArtifact(raw);
+  if (parsed && !completed) {
+    parsed = null;
+  }
   let reviewRetry: RoleRunResult | undefined;
   if (!parsed && tt.mode === "two-turn" && tt.sessionId) {
     const why = explainReviewParseFailure(raw) || "no Verdict: ship | ship-with-revisions | blocked";
@@ -1080,13 +1092,15 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
       raw = againRaw;
       res = again;
       completed = again.ok && again.status === "completed";
-      parsed = completed ? parseReviewArtifact(raw) : null;
+      parsed = parseReviewArtifact(raw);
+      if (parsed && !completed) parsed = null;
     }
   }
   await persistAndCleanupRole(s.sessionId, "reviewer", rt, tt, reviewRetry);
   // No parseable review is a review that did not happen: fail closed (no
   // commit); the work stays in the tree and the next Planner sees why.
-  let notes: CycleReviewNotes = parsed ?? {
+  const salvaged = parsed ? null : salvageIncompleteReview(raw);
+  let notes: CycleReviewNotes = parsed ?? salvaged ?? {
     verdict: "blocked",
     fulfillment: [],
     revisions: res.editCount > 0 ? [`${res.editCount} edit(s) by the reviewer (no parseable review)`] : [],
@@ -1094,6 +1108,12 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     architecture: [],
     operator: [],
   };
+  if (!completed && parsed === null && salvaged) {
+    const why = `Reviewer did not complete (${res.status}${res.error ? `: ${res.error}` : ""}) — look preserved`;
+    if (!notes.mustFix.some((m) => /look preserved/i.test(m))) {
+      notes = { ...notes, mustFix: [why, ...notes.mustFix] };
+    }
+  }
   // The look is the Reviewer's own record of having used the product; the
   // review's Looked: restates it, and stands in when the look turn wrote none
   // (single-brief / FORGE_ULW_TWO_TURN=0 never writes look.md).
@@ -1131,7 +1151,7 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     s.sessionId,
     s.cycle,
     "review.md",
-    parsed ? raw : `# Cycle ${s.cycle} review\nVerdict: blocked\nMust-fix:\n- ${notes.mustFix.join("\n- ")}\n`,
+    parsed ? raw : formatBlockedReview(s.cycle, notes),
   );
   if (record) {
     record.reviewPath = reviewPath;
@@ -1688,7 +1708,7 @@ function continueWorthHoldForState(s: CycleState, plan: ParsedPlan | null): stri
   return continueWorthHold(lastShippedReview(s), plan);
 }
 
-function continuePlanHold(s: CycleState, plan: ParsedPlan | null): string {
+export function continuePlanHold(s: CycleState, plan: ParsedPlan | null): string {
   return continueArchitectureHold(s, plan) || continueWorthHoldForState(s, plan);
 }
 

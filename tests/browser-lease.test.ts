@@ -64,6 +64,14 @@ describe("browser-lease", () => {
     );
     assert.equal(guiLeaseFromCommand("open -a Safari"), undefined);
     assert.equal(guiLeaseFromCommand("Google Chrome --user-data-dir=/tmp/x"), undefined);
+    assert.deepEqual(
+      guiLeaseFromCommand("xcrun simctl launch booted com.x.PixelPetsWatchGlance"),
+      { app: "simctl" },
+    );
+    assert.deepEqual(guiLeaseFromCommand("npm run preview -- --port 4173"), { app: "vite-preview" });
+    assert.deepEqual(guiLeaseFromCommand("vite preview --port 4173"), { app: "vite-preview" });
+    assert.deepEqual(guiLeaseFromCommand(".build/debug/QQHX"), { app: "native-bin" });
+    assert.equal(guiLeaseFromCommand("swift test"), undefined);
   });
 
   it("ensureSessionLookProfile writes a harness UDD under the session", () => {

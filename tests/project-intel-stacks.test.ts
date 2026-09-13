@@ -36,6 +36,19 @@ describe("project-intel: more stacks", () => {
     assert.ok(intel.checkCommands.includes("swift test"));
   });
 
+  it("xcodeproj without Package.swift still lists xcodebuild", () => {
+    const root = tmpDir("forge-intel-xcode-");
+    fs.mkdirSync(path.join(root, ".git"));
+    fs.mkdirSync(path.join(root, "PixelPets.xcodeproj"));
+    write(root, "PixelPets.xcodeproj/project.pbxproj", "// xcode\n");
+    clearProjectIntelCache();
+    const intel = detectProjectIntel(root);
+    assert.ok(
+      intel.checkCommands.some((c) => /\bxcodebuild\b/.test(c)),
+      intel.checkCommands.join(","),
+    );
+  });
+
   it("build.zig → zig build test; *.csproj → dotnet test; pubspec → dart/flutter test", () => {
     const zig = tmpDir("forge-intel-zig-");
     fs.mkdirSync(path.join(zig, ".git"));

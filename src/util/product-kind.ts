@@ -70,6 +70,28 @@ export function ulwRoleInlineSkills(
   return skills;
 }
 
+function isBrowserExtension(root: string): boolean {
+  for (const rel of EXTENSION_MANIFESTS) {
+    const m = readJson(root, rel);
+    if (m && (m.browser_action != null || m.action != null)) return true;
+  }
+  return false;
+}
+
+/**
+ * Playwright look applies to web apps and browser extensions.
+ * Native games (Godot / Unity / Unreal) skip the connect — seven dogfoods
+ * sat on a down Playwright. CLI/library skip too (no browser). Unknown
+ * trees still fail-open if a Playwright server is configured.
+ */
+export function playwrightLookApplies(workspace: string): boolean {
+  if (!workspace) return false;
+  if (isWeb(workspace) || isBrowserExtension(workspace)) return true;
+  const kind = detectProductKind(workspace);
+  if (kind === "game" || kind === "cli" || kind === "library") return false;
+  return true;
+}
+
 export function detectProductKind(workspace: string): ProductKind {
   if (!workspace) return "unknown";
   if (isGame(workspace)) return "game";
@@ -85,10 +107,7 @@ function isGame(root: string): boolean {
   if (isDir(root, "Assets") && isDir(root, "ProjectSettings")) return true;
   if (hasSuffixFile(root, ".uproject")) return true;
   if (exists(root, "Config/DefaultEngine.ini")) return true;
-  for (const rel of EXTENSION_MANIFESTS) {
-    const m = readJson(root, rel);
-    if (m && (m.browser_action != null || m.action != null)) return true;
-  }
+  if (isBrowserExtension(root)) return true;
   return false;
 }
 

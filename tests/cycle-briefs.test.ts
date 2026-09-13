@@ -178,7 +178,8 @@ describe("Planner scout brief (turn 1)", () => {
     assert.match(b, /not a quality ceiling/);
     assert.match(b, /Do not copy their adjectives/);
     assert.match(b, /web_search/);
-    assert.match(b, /matching shipped forge-\* skill/);
+    assert.match(b, /do not glob or grep \$HOME/);
+    assert.doesNotMatch(b, /read the matching shipped forge-\* skill from the catalog/);
     assert.match(b, /user's adjectives are not the bar/);
   });
 

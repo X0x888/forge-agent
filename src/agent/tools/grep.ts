@@ -16,6 +16,14 @@ import { isTruthy } from "../../util/bool.js";
 import { numberFieldError } from "./arg-types.js";
 import { killProcessTree } from "../../util/process-tree.js";
 import { createChildEnv } from "./env-policy.js";
+import {
+  SEARCH_MAX_WALKED,
+  SEARCH_SKIP_GLOBS,
+  isBroadSearchRoot,
+  searchRootRefusal,
+  searchTimeoutRefusal,
+  withSearchTimeout,
+} from "./search-root.js";
 
 // Resolved once per process — PATH scanning is a dozen+ sync FS calls.
 let rgPathCache: string | null | undefined;
@@ -264,6 +272,9 @@ async function toolGrepJs(
     ? resolvePath(ctx.workspace, pathArg)
     : ctx.workspace;
   const pathLabel = pathArg || ".";
+  if (isBroadSearchRoot(searchPath)) {
+    return { output: searchRootRefusal(searchPath, "grep"), isError: true };
+  }
   const denied = await denyProtectedSearchPath(pathArg, ctx.workspace);
   if (denied) return denied;
   const badRoot = await assertSearchRoot(searchPath, pathLabel, ctx.workspace);
@@ -301,19 +312,49 @@ async function toolGrepJs(
   }
 
   // Single-file path: search that file only (glob cwd=file is invalid).
+  const t = withSearchTimeout(ctx.signal);
   let files: string[];
-  const st = await fsp.stat(searchPath);
-  if (st.isFile()) {
-    files = [searchPath];
-  } else {
-    files = await glob(globPat, {
-      cwd: searchPath,
-      nodir: true,
-      absolute: true,
-      ignore: ["**/node_modules/**", "**/.git/**", "**/dist/**"],
-      dot: false,
-    });
+  try {
+    const st = await fsp.stat(searchPath);
+    if (st.isFile()) {
+      files = [searchPath];
+    } else {
+      files = [];
+      const stream = glob.stream(globPat, {
+        cwd: searchPath,
+        nodir: true,
+        absolute: true,
+        ignore: [...SEARCH_SKIP_GLOBS],
+        dot: false,
+        signal: t.signal,
+      });
+      for await (const f of stream) {
+        files.push(String(f));
+        if (files.length >= SEARCH_MAX_WALKED) {
+          try {
+            (stream as { destroy?: () => void }).destroy?.();
+          } catch {
+            /* */
+          }
+          break;
+        }
+      }
+    }
+  } catch (err) {
+    if (t.timedOut()) {
+      return { output: searchTimeoutRefusal("grep", pathLabel), isError: true };
+    }
+    return {
+      output: `grep failed: ${(err as Error).message}`,
+      isError: true,
+    };
+  } finally {
+    t.clear();
   }
+  if (t.timedOut()) {
+    return { output: searchTimeoutRefusal("grep", pathLabel), isError: true };
+  }
+  if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
 
   const matches: string[] = [];
   let skippedOversized = 0;
@@ -428,6 +469,9 @@ export async function toolGrep(
     ? resolvePath(ctx.workspace, pathArg)
     : ctx.workspace;
   const pathLabel = pathArg || ".";
+  if (isBroadSearchRoot(searchPath)) {
+    return { output: searchRootRefusal(searchPath, "grep"), isError: true };
+  }
   const denied = await denyProtectedSearchPath(pathArg, ctx.workspace);
   if (denied) return denied;
   const badRoot = await assertSearchRoot(searchPath, pathLabel, ctx.workspace);
@@ -454,10 +498,21 @@ export async function toolGrep(
   if (args.glob) {
     rgArgs.push("--glob", String(args.glob));
   }
-  rgArgs.push("--glob", "!**/node_modules/**", "--glob", "!**/.git/**", "--glob", "!**/dist/**");
+  for (const g of SEARCH_SKIP_GLOBS) {
+    rgArgs.push("--glob", `!${g}`);
+  }
   rgArgs.push("--", pattern, searchPath);
 
-  const result = await runRg(rg, rgArgs, ctx.workspace, ctx.signal);
+  const t = withSearchTimeout(ctx.signal);
+  let result: Awaited<ReturnType<typeof runRg>>;
+  try {
+    result = await runRg(rg, rgArgs, ctx.workspace, t.signal);
+  } finally {
+    t.clear();
+  }
+  if (t.timedOut()) {
+    return { output: searchTimeoutRefusal("grep", pathLabel), isError: true };
+  }
   if (result.aborted || ctx.signal?.aborted) {
     return { output: "Aborted", isError: true };
   }

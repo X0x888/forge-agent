@@ -36,6 +36,9 @@ describe("git-ensure", () => {
     const gi = defaultGitignore(process.cwd());
     assert.match(gi, /node_modules\//);
     assert.match(gi, /\.forge\/chrome-look\*/);
+    assert.match(gi, /\.forge\/tmp-\*\//);
+    assert.match(gi, /\*\.swiftmodule/);
+    assert.match(gi, /\*\.o/);
     assert.match(gi, /test-results\//);
   });
 

@@ -324,15 +324,29 @@ function killGuiMatchingWorkspace(lease: BrowserLease, workspace: string): numbe
   const ws = path.resolve(workspace);
   if (ws.length < 8) return 0;
   const blob = `${lease.cmd ?? ""} ${lease.bundleId ?? ""}`;
-  if (!/godot/i.test(blob) && lease.kind !== "gui") return 0;
+  if (!/godot|simctl|vite-preview|native-bin/i.test(blob) && lease.kind !== "gui") return 0;
   let n = 0;
+  const app = (lease.bundleId || "").toLowerCase();
   for (const row of _listProcessesForTests()) {
     if (row.pid <= 1) continue;
-    if (!/Godot/i.test(row.cmd)) continue;
-    if (!row.cmd.includes(ws) && !/--write-movie|--quit-after|--path\s/i.test(row.cmd)) {
+    const c = row.cmd;
+    const inWs = c.includes(ws);
+    if (/godot/i.test(blob) && /Godot/i.test(c)) {
+      if (!inWs && !/--write-movie|--quit-after|--path\s/i.test(c)) continue;
+      n += escalateKillPid(row.pid);
       continue;
     }
-    n += escalateKillPid(row.pid);
+    if (app === "simctl" && /simctl|WatchGlance|PixelPetsWatch/i.test(c) && inWs) {
+      n += escalateKillPid(row.pid);
+      continue;
+    }
+    if (app === "vite-preview" && /vite preview|npm run preview|pnpm preview/i.test(c) && inWs) {
+      n += escalateKillPid(row.pid);
+      continue;
+    }
+    if (app === "native-bin" && /\.build\/(?:debug|release)\//i.test(c) && inWs) {
+      n += escalateKillPid(row.pid);
+    }
   }
   return n;
 }
@@ -565,6 +579,16 @@ export function guiLeaseFromCommand(command: string): { app: string } | undefine
   }
   if (/\bgodot(?:\.app)?\b/i.test(cmd) && !/chrome/i.test(cmd)) {
     return { app: "Godot" };
+  }
+  if (/\bsimctl\s+launch\b/i.test(cmd)) return { app: "simctl" };
+  if (
+    /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:preview|dev)\b/i.test(cmd) ||
+    /\bvite\s+preview\b/i.test(cmd)
+  ) {
+    return { app: "vite-preview" };
+  }
+  if (/\.build\/(?:debug|release)\//i.test(cmd) && !/\btest\b/i.test(cmd)) {
+    return { app: "native-bin" };
   }
   return undefined;
 }

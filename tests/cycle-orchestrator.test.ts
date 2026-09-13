@@ -7,7 +7,10 @@ import {
   evaluateCycleAtStop,
   ensureCyclePlanned,
   resolveVerifyCommand,
+  synthesizeWorkPlan,
+  continuePlanHold,
   loadCycleState,
+  newCycleState,
   requestReplan,
   setCycleFlag,
   setMaxCycles,
@@ -1195,6 +1198,39 @@ describe("cycle orchestrator", () => {
     assert.equal(mixed.command, godotGate, "a crate isolate plus product smoke stays the gate");
     assert.equal(mixed.note, undefined);
     assert.equal(resolveVerifyCommand({}, checks).command, "npm test");
+    const preview = resolveVerifyCommand(
+      { verifyCommand: "cd game && npm run build:ea && npm run preview" },
+      checks,
+    );
+    assert.equal(preview.command, "npm run build:ea");
+    assert.equal(preview.declared, "npm run build:ea");
+  });
+
+  it("synth after two shipped `select` reviews leaves the class; three ships collapse it", () => {
+    const shipped = (n: number) => ({
+      n,
+      title: `c${n}`,
+      startedAt: "2026-01-01T00:00:00Z",
+      itemsTotal: 1,
+      itemsDone: 1,
+      waves: 1,
+      mustFix: [] as string[],
+      commitSha: `sha${n}`,
+      architecture: ["`select` is three widgets"],
+    });
+    const two = newCycleState({ sessionId: "synth-hold-2", mandate: null });
+    two.cycles = [shipped(1), shipped(2)];
+    const synth2 = synthesizeWorkPlan(two, undefined, "no-plan");
+    assert.match(synth2.plan.considered.join("\n"), /leave it select/i);
+    assert.equal(continuePlanHold(two, synth2.plan), "");
+    const three = newCycleState({ sessionId: "synth-hold-3", mandate: null });
+    three.cycles = [shipped(1), shipped(2), shipped(3)];
+    const synth3 = synthesizeWorkPlan(three, undefined, "no-plan");
+    assert.ok(
+      synth3.plan.items.some((i) => /select/i.test(`${i.title} ${i.serves ?? ""}`)),
+      "collapse-required synth carries an item that names the class",
+    );
+    assert.equal(continuePlanHold(three, synth3.plan), "");
   });
 
   it("a plan that declares an isolate is gated by the suite when the cycle closes", async () => {
@@ -1684,10 +1720,10 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     assert.equal(st.cycles[0].reviewVerdict, "blocked");
     assert.equal(st.cycles[0].commitSha, undefined);
     assert.equal(st.lastReview?.mustFix[0], "look the surface");
-    assert.match(
-      fs.readFileSync(path.join(cycleArtifactsDir(sid, 1), "review.md"), "utf8"),
-      /Verdict: blocked\nMust-fix:\n- look the surface/,
-    );
+    const reviewMd = fs.readFileSync(path.join(cycleArtifactsDir(sid, 1), "review.md"), "utf8");
+    assert.match(reviewMd, /Verdict: blocked/);
+    assert.match(reviewMd, /Looked: Playwright MCP never initialized/);
+    assert.match(reviewMd, /Must-fix:\n- look the surface/);
   });
 
   it("a surface-claim ship whose look died on maxTurns is look-infra, not look-the-surface", async () => {

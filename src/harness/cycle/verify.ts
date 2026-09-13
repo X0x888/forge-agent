@@ -17,6 +17,12 @@ import { spawn } from "node:child_process";
 import { createChildEnv } from "../../agent/tools/env-policy.js";
 import { envPositiveInt } from "../../util/env.js";
 import {
+  killProcessTree,
+  processKillGraceMs,
+  spawnOwnGroupOpts,
+} from "../../util/process-tree.js";
+import { finiteCheckCommand } from "../declared-checks.js";
+import {
   classifyVerificationRun,
   extractFailingTests,
   type VerificationRunClass,
@@ -69,15 +75,32 @@ export async function runCheckCommand(opts: {
 }): Promise<CheckRun> {
   const started = Date.now();
   const timeoutMs = opts.timeoutMs ?? verifyTimeoutMs();
+  const command = finiteCheckCommand(opts.command);
+  if (!command) {
+    const note =
+      `[forge] verify refused: \`${opts.command}\` never exits (preview/dev/watch/serve). ` +
+      `Declare a finite check (npm test, cargo test, swiftc HostCareCheck).`;
+    return {
+      command: opts.command,
+      exitCode: 1,
+      output: note,
+      tail: note,
+      timedOut: false,
+      ms: 0,
+      cls: { ran: false, passed: false, isolate: false, fullSuite: false },
+      failures: [],
+    };
+  }
   return new Promise<CheckRun>((resolve) => {
     const chunks: string[] = [];
     let size = 0;
     let timedOut = false;
     let settled = false;
-    const child = spawn("/bin/sh", ["-c", opts.command], {
+    const child = spawn("/bin/sh", ["-c", command], {
       cwd: opts.cwd,
       env: { ...createChildEnv(), CI: process.env.CI ?? "1", FORCE_COLOR: "0" },
       stdio: ["ignore", "pipe", "pipe"],
+      ...spawnOwnGroupOpts(),
     });
     const push = (chunk: Buffer | string) => {
       const s = String(chunk);
@@ -95,7 +118,7 @@ export async function runCheckCommand(opts: {
       const output = chunks.join("");
       const tail = output.length > TAIL ? output.slice(-TAIL) : output;
       let cls = classifyVerificationRun({
-        command: opts.command,
+        command,
         exitCode: timedOut ? 1 : exitCode,
         isError: timedOut || exitCode !== 0,
         output: tail,
@@ -109,7 +132,7 @@ export async function runCheckCommand(opts: {
       }
       if (timedOut) cls = { ...cls, passed: false, fullSuite: false };
       resolve({
-        command: opts.command,
+        command,
         exitCode: timedOut ? null : exitCode,
         output,
         tail,
@@ -120,18 +143,10 @@ export async function runCheckCommand(opts: {
       });
     };
     const kill = () => {
-      try {
-        child.kill("SIGTERM");
-        setTimeout(() => {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            /* gone */
-          }
-        }, 5_000).unref();
-      } catch {
-        /* gone */
-      }
+      killProcessTree(child, "SIGTERM");
+      setTimeout(() => {
+        killProcessTree(child, "SIGKILL");
+      }, processKillGraceMs()).unref();
     };
     const timer = setTimeout(() => {
       timedOut = true;
@@ -147,6 +162,7 @@ export async function runCheckCommand(opts: {
       push(`\n[forge] spawn error: ${(err as Error).message}`);
       finish(1);
     });
+    child.on("exit", (code) => finish(code));
     child.on("close", (code) => finish(code));
   });
 }

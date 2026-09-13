@@ -1850,6 +1850,14 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               signal,
               preferredCheckCommands: cyclePreferredCheckCommands(session.meta.id, preferred),
             });
+            if (run.timedOut) {
+              try {
+                const { reapSessionBrowsers } = await import("./browser-lease.js");
+                reapSessionBrowsers(session.meta.id, { workspace });
+              } catch {
+                /* best-effort — the process group kill is the primary reap */
+              }
+            }
             return run;
           },
           creditCheck(run, passed) {

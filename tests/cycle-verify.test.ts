@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { judgeAgainstBaseline, runCheckCommand } from "../src/harness/cycle/verify.js";
+import { pidAlive, processKillGraceMs } from "../src/util/process-tree.js";
 import {
   extractFailingTests,
   isFullSuiteCommand,
@@ -132,5 +133,46 @@ describe("runCheckCommand", () => {
     assert.deepEqual(run.failures, ["broken thing"]);
     assert.match(run.output, /broken thing/);
     assert.equal(run.tail, run.output);
+  });
+
+  it("refuses npm run preview without spawning", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "forge-verify-prev-"));
+    const run = await runCheckCommand({
+      command: "npm run preview",
+      cwd,
+      timeoutMs: 2_000,
+    });
+    assert.equal(run.cls.passed, false);
+    assert.match(run.output, /never exits/);
+    assert.equal(run.timedOut, false);
+    assert.equal(run.ms, 0);
+  });
+
+  it("times out a sleep and settles", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "forge-verify-sleep-"));
+    const run = await runCheckCommand({
+      command: "sleep 30",
+      cwd,
+      timeoutMs: 400,
+    });
+    assert.equal(run.timedOut, true);
+    assert.equal(run.cls.passed, false);
+  });
+
+  it("kills the process group so a grandchild does not survive timeout", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "forge-verify-pg-"));
+    const marker = path.join(cwd, "grandchild.pid");
+    const run = await runCheckCommand({
+      command: `sleep 60 & echo $! > "${marker}"; wait`,
+      cwd,
+      timeoutMs: 500,
+    });
+    assert.equal(run.timedOut, true);
+    await new Promise((r) => setTimeout(r, processKillGraceMs() + 80));
+    const raw = fs.existsSync(marker) ? fs.readFileSync(marker, "utf8").trim() : "";
+    const pid = Number(raw);
+    if (Number.isInteger(pid) && pid > 1) {
+      assert.equal(pidAlive(pid), false, `grandchild pid ${pid} still alive`);
+    }
   });
 });

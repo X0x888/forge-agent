@@ -50,6 +50,18 @@ export type BashTreeSnapshot = {
   beforeFiles: Map<string, BashFileSnap>;
 };
 
+/** Look/compile junk is not a product edit (pixel-pets 13k swiftmodule rows). */
+export function isLookScratchRel(rel: string): boolean {
+  const n = rel.replace(/\\/g, "/");
+  if (n === ".forge/tmp" || n.startsWith(".forge/tmp/") || n.startsWith(".forge/tmp-")) {
+    return true;
+  }
+  if (n.includes("/swift-mod/") || /\.swiftmodule$/i.test(n) || /\.swiftdoc$/i.test(n) || /\.o$/i.test(n)) {
+    return true;
+  }
+  return false;
+}
+
 export function bashMutationJournalEnabled(): boolean {
   const v = (process.env.FORGE_BASH_MUTATION_JOURNAL || "1")
     .trim()
@@ -363,6 +375,7 @@ export function applyBashTreeDelta(
 
   let journaled = 0;
   for (const rel of collectPaths(snap.beforeLines, afterLines)) {
+    if (isLookScratchRel(rel)) continue;
     const beforeLine = snap.beforeLines.get(rel);
     const afterLine = afterLines.get(rel);
     const abs = path.resolve(snap.root, rel);
