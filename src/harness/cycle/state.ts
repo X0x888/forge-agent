@@ -188,6 +188,13 @@ export interface CycleState {
    */
   directExecuteStreak: number;
   /**
+   * Consecutive closed cycles that landed no substance commit (blocked /
+   * unparseable review, surface-sit skip, empty or skipped commit). Reset by a
+   * non-docs commit, or by a green ship skipped because auto-commit is off.
+   * Same cap as `directExecuteStreak` (`FORGE_ULW_NO_PROGRESS_CAP`).
+   */
+  noCommitStreak: number;
+  /**
    * Consecutive harness-synthesized cycles, including ones that committed.
    * Reset when a parseable Planner plan is admitted. Caps the first-hour mill
    * that used to reset the no-progress wall on every synth commit.
@@ -273,6 +280,7 @@ export function newCycleState(opts: {
     fixRounds: 0,
     stuckBlocks: 0,
     directExecuteStreak: 0,
+    noCommitStreak: 0,
     synthStreak: 0,
     blocks: 0,
     lastBlockEditCount: 0,
@@ -340,6 +348,7 @@ function normalizeState(raw: Partial<CycleState>, sessionId: string): CycleState
   if (typeof s.fixRounds !== "number") s.fixRounds = 0;
   if (typeof s.stuckBlocks !== "number") s.stuckBlocks = 0;
   if (typeof s.directExecuteStreak !== "number") s.directExecuteStreak = 0;
+  if (typeof s.noCommitStreak !== "number") s.noCommitStreak = 0;
   if (typeof s.synthStreak !== "number") s.synthStreak = 0;
   if (typeof s.blocks !== "number") s.blocks = 0;
   if (typeof s.lastBlockEditCount !== "number") s.lastBlockEditCount = 0;

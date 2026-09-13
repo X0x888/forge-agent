@@ -77,6 +77,18 @@ describe("/cycle status", () => {
     assert.match(text, /Planner starved → Direct execute 2\/3/);
     assert.match(text, /Planner: scout-admitted/);
   });
+
+  it("shows a no-commit streak and names it on a no-progress release", () => {
+    const s = state();
+    s.noCommitStreak = 2;
+    assert.match(formatUlwStatus(s), /No commit 2\/3/);
+    s.enabled = false;
+    s.phase = "released";
+    s.endReason = "no-progress";
+    s.noCommitStreak = 3;
+    s.directExecuteStreak = 0;
+    assert.match(cycleReportFacts(s).outcome, /3 cycle\(s\) in a row landed nothing/);
+  });
 });
 
 describe("cycleReportFacts", () => {

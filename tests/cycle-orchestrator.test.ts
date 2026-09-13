@@ -166,6 +166,7 @@ describe("cycle orchestrator", () => {
     delete process.env.FORGE_ULW_LOOK_GATE;
     delete process.env.FORGE_ULW_PROMISE_FULFILL;
     delete process.env.FORGE_ULW_CLASS_HOLD;
+    delete process.env.FORGE_ULW_WORTH_HOLD;
   });
 
   it("turn start: the Planner writes cycle 1, items seed the board, the plan is admitted", async () => {
@@ -567,6 +568,52 @@ describe("cycle orchestrator", () => {
     assert.deepEqual(base.calls.slice(0, 3), ["check:npm test", "credit:pass", "role:reviewer"]);
     assert.equal(loadCycleState(sid)!.cycles[0].reviewVerdict, "blocked");
     assert.match(brief, /do not delete/);
+  });
+
+  it("three blocked reviews release no-progress without starting a fourth plan", async () => {
+    const sid = "orch-nocommit-wall";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "the flag" }] });
+    const blocked = `# Cycle 1 review\nVerdict: blocked — the flag deletes user data\nMust-fix:\n- do not delete\nWorth: no — deletes user data\n`;
+    const { rt, calls } = fakeRuntime(cwd, {
+      reviewer: [blocked, blocked, blocked],
+      planner: [PLAN_OK(2), PLAN_OK(3), PLAN_OK(4)],
+    });
+    const r1 = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r1?.planAdmitted, true);
+    assert.equal(loadCycleState(sid)!.noCommitStreak, 1);
+    assert.equal(loadCycleState(sid)!.cycle, 2);
+    const r2 = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r2?.planAdmitted, true);
+    assert.equal(loadCycleState(sid)!.noCommitStreak, 2);
+    assert.equal(loadCycleState(sid)!.cycle, 3);
+    const r3 = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r3?.released);
+    assert.equal(r3.endReason, "no-progress");
+    assert.match(r3.reason, /shipped nothing|not making progress/);
+    const s = loadCycleState(sid)!;
+    assert.equal(s.noCommitStreak, 3);
+    assert.equal(s.cycle, 3, "three blocked reviews do not start a fourth plan");
+    assert.equal(r3.planAdmitted, undefined);
+    assert.equal(calls.filter((c) => c.startsWith("todos:")).length, 2);
+  });
+
+  it("a green ship skipped because auto-commit is off does not increment the no-commit streak", async () => {
+    const sid = "orch-autocommit-off";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test" });
+    const st = loadCycleState(sid)!;
+    st.noCommitStreak = 2;
+    const { saveCycleState } = await import("../src/harness/cycle/state.js");
+    saveCycleState(st);
+    const { rt, calls } = fakeRuntime(cwd, { reviewer: [REVIEW_OK], planner: [PLAN_OK(2)] });
+    rt.commit = ({ subject }) => {
+      calls.push(`commit:${subject}`);
+      return { committed: false, skipped: "FORGE_ULW_AUTO_COMMIT=0" };
+    };
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r?.committed?.skipped, "FORGE_ULW_AUTO_COMMIT=0");
+    assert.equal(r?.planAdmitted, true, "auto-commit off is progress — the next plan starts");
+    assert.equal(loadCycleState(sid)!.noCommitStreak, 0);
+    assert.equal(r?.released, false);
   });
 
   it("an unparseable review fails closed: blocked, no commit", async () => {
@@ -1432,6 +1479,7 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     delete process.env.FORGE_ULW_LOOK_GATE;
     delete process.env.FORGE_ULW_PROMISE_FULFILL;
     delete process.env.FORGE_ULW_CLASS_HOLD;
+    delete process.env.FORGE_ULW_WORTH_HOLD;
     delete process.env.FORGE_ULW_SYNTH_CAP;
   });
 
@@ -1950,6 +1998,41 @@ Considered:
     const c = await ensureCyclePlanned("orch3-class-off", fakeRuntime(cwd, { planner: [PLAN_OK(3)] }).rt);
     assert.equal(c?.planAdmitted, true);
     assert.match(loadCycleState("orch3-class-off")!.planTitle ?? "", /theme 3/);
+  });
+
+  it("after Worth: no, the same Direction is held then synthesized go-deeper; a different Direction admits", async () => {
+    process.env.FORGE_ULW_TWO_TURN = "0";
+    const dir = "leftover sits with Murmur";
+    const seed = (sid: string) => {
+      armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "x" }] });
+      const st = loadCycleState(sid)!;
+      st.phase = "plan";
+      st.cycles[0].endedAt = new Date().toISOString();
+      st.cycles[0].commitSha = "aaa";
+      st.cycles[0].reviewVerdict = "ship";
+      st.cycles[0].worth = "no — a user would not notice";
+      st.cycles[0].direction = dir;
+      return st;
+    };
+    const { saveCycleState } = await import("../src/harness/cycle/state.js");
+    const same = PLAN_OK(2).replace("Direction: theme 2", `Direction: ${dir}`);
+    saveCycleState(seed("orch3-worth-same"));
+    const { rt, briefs } = fakeRuntime(cwd, { planner: [same, same] });
+    const held = await ensureCyclePlanned("orch3-worth-same", rt);
+    assert.equal(held?.planAdmitted, true);
+    assert.match(loadCycleState("orch3-worth-same")!.planTitle ?? "", /Go deeper/);
+    assert.match(briefs[1]?.brief ?? "", /Direction matched the last Worth: no cycle/);
+
+    saveCycleState(seed("orch3-worth-other"));
+    const other = await ensureCyclePlanned("orch3-worth-other", fakeRuntime(cwd, { planner: [PLAN_OK(2)] }).rt);
+    assert.equal(other?.planAdmitted, true);
+    assert.match(loadCycleState("orch3-worth-other")!.planTitle ?? "", /theme 2/);
+
+    process.env.FORGE_ULW_WORTH_HOLD = "0";
+    saveCycleState(seed("orch3-worth-off"));
+    const off = await ensureCyclePlanned("orch3-worth-off", fakeRuntime(cwd, { planner: [same] }).rt);
+    assert.equal(off?.planAdmitted, true);
+    assert.match(loadCycleState("orch3-worth-off")!.planTitle ?? "", /theme 2/);
   });
 
   it("an unknown Recovery promise is not named by Operator mentioning records", async () => {

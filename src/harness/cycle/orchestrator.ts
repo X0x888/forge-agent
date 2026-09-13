@@ -25,6 +25,7 @@ import type { AutoCommitResult } from "../../util/git-auto-commit.js";
 import { appendRoleRunLine } from "../../session/subagent-usage.js";
 import {
   architectureHoldMessage,
+  continueWorthHold,
   explainPlanParseFailure,
   explainReviewParseFailure,
   extractDisputeLines,
@@ -397,7 +398,7 @@ async function runPlanner(
       // After cycle 1 the record exists; skipping turn 2 would admit a plan that never saw it.
       if (s.cycles.length > 0) return false;
       const p = parsePlanArtifact(scoutText);
-      return Boolean(p && p.verdict === "continue" && !continueArchitectureHold(s, p));
+      return Boolean(p && p.verdict === "continue" && !continuePlanHold(s, p));
     },
   });
   let tokens = roleTokens(tt);
@@ -421,12 +422,12 @@ async function runPlanner(
     return { error: tt.second.error || `planner ${tt.second.status}`, raw, tokens, scout };
   }
   let plan = parsePlanArtifact(raw);
-  let hold = continueArchitectureHold(s, plan);
+  let hold = continuePlanHold(s, plan);
   const tryScoutAsPlan = (): boolean => {
     // Cycle 2+ scout never saw Must-fix / Worth: no; labelled-plan salvage is parsePlanArtifact on turn 2.
     if (s.cycles.length > 0) return false;
     const fromScout = parsePlanArtifact(scoutRaw);
-    if (!fromScout || continueArchitectureHold(s, fromScout)) return false;
+    if (!fromScout || continuePlanHold(s, fromScout)) return false;
     plan = fromScout;
     raw = scoutRaw;
     hold = "";
@@ -452,7 +453,7 @@ async function runPlanner(
     const againRaw = roleBody(again.text);
     if (againRaw.trim()) raw = againRaw;
     plan = parsePlanArtifact(againRaw);
-    hold = continueArchitectureHold(s, plan);
+    hold = continuePlanHold(s, plan);
     if ((!plan || hold) && tryScoutAsPlan()) {
       /* retry missed; scout still parses */
     }
@@ -648,6 +649,8 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
   saveCycleState(s);
   const before = stopBeforeAdmittingNextPlan(s);
   if (before) return before;
+  const noCommitWall = releaseIfNoCommitWall(s);
+  if (noCommitWall) return noCommitWall;
   // The review the executor is about to hear: the cycle that just closed.
   const reviewForExecutor = reviewNotesForExecutor(s);
   const out = await runPlanner(s, rt);
@@ -699,7 +702,8 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
     }
     const unkept = (s.promises ?? scout?.parsed?.promises ?? []).some((p) => p.state !== "kept");
     const inventory = s.promises ?? scout?.parsed?.promises ?? [];
-    const kind = unkept ? "keep-promise" : inventory.length ? "go-deeper" : "no-plan";
+    const worthHold = isWorthHoldError(out);
+    const kind = unkept ? "keep-promise" : inventory.length || worthHold ? "go-deeper" : "no-plan";
     rt.log?.(
       `ULW planner did not converge for cycle ${n}; synthesizing a ${kind} cycle (streak ${s.directExecuteStreak + 1}/${noProgressCap()})`,
     );
@@ -1221,14 +1225,18 @@ async function advanceAfterCycle(
   committed: CycleStopOutcome["committed"],
 ): Promise<CycleStopOutcome> {
   const record = currentCycleRecord(s);
+  const firstClose = Boolean(record && !record.endedAt);
   if (record) {
     record.endedAt = nowIso();
     record.itemsDone = s.items.filter((i) => i.status === "done").length;
     record.waves = s.wave;
   }
+  if (firstClose) noteNoCommitStreak(s, committed);
   saveCycleState(s);
   const stop = stopBeforeAdmittingNextPlan(s);
   if (stop) return { ...stop, cycleClosed: true, committed };
+  const wall = releaseIfNoCommitWall(s);
+  if (wall) return { ...wall, cycleClosed: true, committed };
   const next = await planNextCycle(s, rt);
   return { ...next, cycleClosed: true, committed };
 }
@@ -1252,6 +1260,7 @@ async function finishCycle(s: CycleState, rt: CycleRuntime, accepted: CheckRun |
       // Substance landed: the no-progress wall counts "shipped nothing", not
       // "the title was Direct execute". Synth mill still caps via synthStreak.
       s.directExecuteStreak = 0;
+      s.noCommitStreak = 0;
       if (synth) s.synthStreak += 1;
       else s.synthStreak = 0;
     }
@@ -1663,6 +1672,56 @@ function continueArchitectureHold(s: CycleState, plan: ParsedPlan | null): strin
   }
   if (planAddressesArchitectureClass(plan, cls)) return "";
   return hold;
+}
+
+function lastShippedReview(s: CycleState): CycleRecord | undefined {
+  for (let i = s.cycles.length - 1; i >= 0; i--) {
+    const c = s.cycles[i]!;
+    if (c.reviewVerdict === "ship" || c.reviewVerdict === "ship-with-revisions") return c;
+  }
+  return undefined;
+}
+
+function continueWorthHoldForState(s: CycleState, plan: ParsedPlan | null): string {
+  if (isFalsy(process.env.FORGE_ULW_WORTH_HOLD)) return "";
+  return continueWorthHold(lastShippedReview(s), plan);
+}
+
+function continuePlanHold(s: CycleState, plan: ParsedPlan | null): string {
+  return continueArchitectureHold(s, plan) || continueWorthHoldForState(s, plan);
+}
+
+function isWorthHoldError(out: { error: string; mustFix?: string[] }): boolean {
+  return /Worth:\s*no/i.test(`${out.error}\n${(out.mustFix ?? []).join("\n")}`);
+}
+
+/** A green ship skipped only because the user turned auto-commit off is progress. */
+function isAutoCommitOffSkip(skipped: string | undefined): boolean {
+  return Boolean(skipped && /FORGE_ULW_AUTO_COMMIT=0|auto-commit\s+off/i.test(skipped));
+}
+
+function cycleCloseIsProgress(s: CycleState, committed: CycleStopOutcome["committed"] | undefined): boolean {
+  const rec = currentCycleRecord(s);
+  if (rec?.commitKind === "docs") return false;
+  if (rec?.commitKind === "substance" || rec?.commitSha || committed?.sha) return true;
+  return isAutoCommitOffSkip(committed?.skipped);
+}
+
+function noteNoCommitStreak(s: CycleState, committed: CycleStopOutcome["committed"] | undefined): void {
+  if (cycleCloseIsProgress(s, committed)) {
+    s.noCommitStreak = 0;
+    return;
+  }
+  s.noCommitStreak += 1;
+}
+
+function releaseIfNoCommitWall(s: CycleState): CycleStopOutcome | null {
+  if (s.noCommitStreak < noProgressCap()) return null;
+  return release(
+    s,
+    "no-progress",
+    `ULW released — ${s.noCommitStreak} cycle(s) in a row shipped nothing. The run is not making progress; re-arm with /ulw or give a mandate.`,
+  );
 }
 
 function stampSynthMustFix(s: CycleState, mustFix: string[]): void {

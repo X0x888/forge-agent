@@ -131,6 +131,9 @@ export function formatUlwStatus(s: CycleState | null | undefined): string {
       `  Planner starved → Direct execute ${s.directExecuteStreak}/3 (no-progress wall; /cycle 0 stops)`,
     );
   }
+  if (s.noCommitStreak > 0) {
+    lines.push(`  No commit ${s.noCommitStreak}/3 (no-progress wall; /cycle 0 stops)`);
+  }
   const lastCycle = s.cycles[s.cycles.length - 1];
   if (lastCycle?.plannerStatus && lastCycle.plannerStatus !== "planned") {
     lines.push(`  Planner: ${lastCycle.plannerStatus}`);
@@ -216,7 +219,7 @@ export function cycleReportFacts(s: CycleState | null | undefined): {
           : st.endReason === "fix-cap"
             ? `Blocked — verification or review findings remain in cycle ${st.cycle}`
             : st.endReason === "no-progress"
-              ? `Stopped — ${st.directExecuteStreak} synthesized cycle(s) in a row landed nothing (no-progress wall); re-arm with /ulw or give a mandate`
+              ? `Stopped — ${Math.max(st.noCommitStreak, st.directExecuteStreak)} cycle(s) in a row landed nothing (no-progress wall); re-arm with /ulw or give a mandate`
               : st.endReason === "blocked"
                 ? `Blocked — the Planner needs the user`
                 : st.endReason

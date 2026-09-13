@@ -62,10 +62,10 @@ edits alone cannot determine whether an abstraction is warranted.
 
 ## Remaining limits
 
-- The normal-plan path still lacks the synthesized-cycle no-progress wall.
-  Repeated accepted-but-empty cycles or blocked reviews can consume resources
-  until a user control or another limit intervenes. A general progress policy
-  must also recognize verified work with auto-commit disabled.
+- The no-commit wall (`noCommitStreak`) now shares `FORGE_ULW_NO_PROGRESS_CAP`
+  with synthesized cycles; `FORGE_ULW_AUTO_COMMIT=0` after a green ship is
+  progress. Worth: no is identity only (same Direction does not admit) — it
+  does not count consecutive invisible cycles.
 - Baseline comparison uses failing test names, not structured failure causes.
   A different defect under an already failing name can be missed. The new
   admission rule fixes provenance, not failure attribution or test coverage.

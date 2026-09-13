@@ -12,6 +12,7 @@ import {
   lookHasKernelEvidence,
   lookInfraFailed,
   architectureClassMustCollapse,
+  continueWorthHold,
   parseLookArtifact,
   parsePlanArtifact,
   parsePlanItemLine,
@@ -486,6 +487,36 @@ describe("architecture class tokens", () => {
     assert.ok(left);
     assert.equal(planAddressesArchitectureClass(left, cls!), true);
     assert.equal(planCollapsesArchitectureClass(left, cls!), false);
+  });
+});
+
+describe("continueWorthHold", () => {
+  const last = { worth: "no — a user would not notice", direction: "leftover sits with Murmur" };
+  const planAt = (direction: string) =>
+    parsePlanArtifact(MINIMAL().replace("Direction: first-run card", `Direction: ${direction}`));
+
+  it("same Direction after Worth: no does not admit; different Direction does", () => {
+    const same = planAt("leftover sits with Murmur");
+    assert.ok(same);
+    assert.match(continueWorthHold(last, same), /Direction matched the last Worth: no cycle/);
+    const spaced = planAt("  Leftover   sits with MURMUR ");
+    assert.ok(spaced);
+    assert.match(continueWorthHold(last, spaced), /Worth:\s*no/);
+    const other = planAt("a different door");
+    assert.ok(other);
+    assert.equal(continueWorthHold(last, other), "");
+  });
+
+  it("Worth: yes, missing Direction, or a non-continue plan do not hold", () => {
+    const same = planAt("leftover sits with Murmur");
+    assert.ok(same);
+    assert.equal(continueWorthHold({ worth: "yes — the card shows", direction: last.direction }, same), "");
+    assert.equal(continueWorthHold({ worth: "nope — not a no", direction: last.direction }, same), "");
+    assert.equal(continueWorthHold({ worth: "no — invisible", direction: "" }, same), "");
+    assert.equal(continueWorthHold(undefined, same), "");
+    const fulfilled = parsePlanArtifact(`# Cycle 3 plan\nVerdict: fulfilled — the flag exists`);
+    assert.ok(fulfilled);
+    assert.equal(continueWorthHold(last, fulfilled), "");
   });
 });
 

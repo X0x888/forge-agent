@@ -611,6 +611,33 @@ export function architectureHoldMessage(cls: string): string {
   return `the last two shipped reviews named the architecture class \`${cls}\`; a continue plan must include an item whose title/serves mentions that class, or leave it that class in Considered: or Out of scope:`;
 }
 
+/** Collapse whitespace, lowercase, trim — Direction identity for Worth: no hold. */
+export function normalizeDirection(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/** Reviewer `Worth:` that starts with no — identity only, never a count. */
+export function worthIsNo(worth: string | undefined): boolean {
+  return Boolean(worth && /^\s*no\b/i.test(worth));
+}
+
+/**
+ * A continue plan whose Direction matches the last Worth: no cycle does not
+ * admit. Presence of the same string, not a streak of nos.
+ */
+export function continueWorthHold(
+  lastShipped: { worth?: string; direction?: string } | undefined,
+  plan: ParsedPlan | null,
+): string {
+  if (!plan || plan.verdict !== "continue") return "";
+  if (!worthIsNo(lastShipped?.worth)) return "";
+  const prev = normalizeDirection(lastShipped?.direction ?? "");
+  const next = normalizeDirection(plan.direction ?? "");
+  if (!prev || prev !== next) return "";
+  const shown = (lastShipped?.direction ?? "").replace(/\s+/g, " ").trim();
+  return `Direction matched the last Worth: no cycle (${shown}) — pick a different Direction`;
+}
+
 /** The Planner's turn-1 document. Null when none of its sections is there, or Looked: is missing or empty. */
 export function parseScoutArtifact(text: string): ParsedScout | null {
   const sections = splitSections(text);
