@@ -71,7 +71,7 @@ Type a coding task. You do not need a slash command. On the first-run card, **1â
 | `/help <word>` | Find a command by job word (`budget`, `undo`, `notify`) |
 | `/help all` | Every slash command |
 | `/plan` | Read-only design, then `/build` to implement |
-| `/doctor` | Health check (auth, sandbox, Stop, file modes) |
+| `/doctor` | Health check (auth, sandbox, Stop, leftover tmp, orphan subagents) |
 | `/budget 5` | Session spend cap (estimate USD, not a bill) |
 | `/notify on` | Desktop alert when a turn ends |
 | `/undo` | Rewind last turn + journaled files |

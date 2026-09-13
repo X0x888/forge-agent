@@ -8,11 +8,16 @@ Forge is a TypeScript (Node 20+) AI coding agent CLI. The product is the **harne
 
 ```bash
 npm install
-npm run typecheck        # tsc --noEmit (fast, run after every edit)
-npm test                 # in-process node:test; FORGE_HOME → .tmp/; target under 2 min
-npm run build            # tsc → dist/ (bin: forge)
-npm run dev -- "…"       # tsx src/cli.ts
-npm run smoke            # build + scripts/smoke.mjs
+# tsc --noEmit (fast, run after every edit)
+npm run typecheck
+# in-process node:test; FORGE_HOME → .tmp/; target under 2 min
+npm test
+# tsc → dist/ (bin: forge)
+npm run build
+# tsx src/cli.ts
+npm run dev -- "…"
+# build + scripts/smoke.mjs
+npm run smoke
 ```
 
 One test file: `npx tsx --test tests/foo.test.ts` (an isolate is proof=ran, not proof=✓). Colour tests import `tests/helpers/pin-color.ts` first. `npm test` clears `.tmp/forge-*`, pins TMPDIR, unsets `NO_COLOR`, sets `FORCE_COLOR=1`. User-home Claude/Cursor hooks are skipped under `node:test`. Do not spawn `dist/cli.js` from unit tests — that is `npm run smoke`. A sleep / git-init / real process needs a reason; a new incident extends a table row or a prose-corpus sentence.

@@ -604,7 +604,7 @@ describe("doctor surfaces reliability", () => {
       const bashTimeoutMs = defaultBashTimeoutMs();
       const bashBackgroundTimeoutMs = defaultBashBackgroundTimeoutMs();
       const undoJournal = mutationsJournalStats();
-      assert.equal(bashTimeoutMs, 120_000);
+      assert.equal(bashTimeoutMs, 180_000);
       assert.equal(bashBackgroundTimeoutMs, 30 * 60_000);
       // Shape experts/CI should read from forge doctor --json
       const doctorJsonShape = {

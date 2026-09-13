@@ -100,7 +100,7 @@ Safety
   /plan               Read-only design (no sticky prefs)
   /diff               Change-review card · /diff --full for the patch
   /logs               Sandbox / safety event tail
-  /doctor             Flags YOLO, sandbox=off, mode 0600, Blocking Stop OFF
+  /doctor             Flags YOLO, sandbox=off, poisoned checks, leftover ~/.forge/tmp, orphan subagents
   /budget             Session spend cap · HIT Next is /budget off
 
   Project .forge/config.toml cannot set YOLO, sandbox=off, or disable Stop.

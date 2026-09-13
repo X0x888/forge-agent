@@ -4,6 +4,22 @@ import { visibleWidth } from "../util/format.js";
 /** REPL `/doctor` is slash keys; `forge doctor` keeps CLI verbs. */
 export type DoctorSurface = "repl" | "cli";
 
+export type DoctorRecSeverity = "quality" | "hygiene" | "setup";
+
+/**
+ * Actionable doctor follow-up that is not a CI `issues[]` fail.
+ * Sit-down Next uses `replAction` only; CLI Next may use `cliAction`.
+ */
+export interface DoctorRecommendation {
+  id: string;
+  severity: DoctorRecSeverity;
+  detail: string;
+  /** Slash key at ›. Omit when there is no sit-down command. */
+  replAction?: string;
+  /** CLI verb for `forge doctor`. */
+  cliAction?: string;
+}
+
 /** Verdict line — "Forge doctor" stays for existing scrapers. */
 export function formatDoctorHeader(
   issues: string[],
@@ -38,37 +54,82 @@ export function rewriteDoctorIssueForSurface(
     .replace(/\bforge doctor --json\b/gi, "/doctor");
 }
 
-/** Next command after the dump — login / permissions / setup. */
+function closerKeyForRec(
+  rec: DoctorRecommendation,
+  surface: DoctorSurface,
+): string | null {
+  if (surface === "cli") {
+    return rec.cliAction || rec.replAction || null;
+  }
+  return rec.replAction || null;
+}
+
+/** Next command after the dump — login / permissions / setup / recs. */
 export function formatDoctorCloser(
   issues: string[],
-  opts?: { columns?: number; surface?: DoctorSurface },
+  opts?: {
+    columns?: number;
+    surface?: DoctorSurface;
+    recommendations?: DoctorRecommendation[];
+  },
 ): string {
   const surface: DoctorSurface = opts?.surface ?? "repl";
   const blob = issues.join("\n");
   const keys: string[] = [];
+  const push = (k: string) => {
+    if (k && !keys.includes(k)) keys.push(k);
+  };
   if (/not authenticated|forge login/i.test(blob)) {
-    keys.push(surface === "cli" ? "forge login" : "/auth");
+    push(surface === "cli" ? "forge login" : "/auth");
   }
   if (/bypassPermissions|yolo|dontAsk|permission mode/i.test(blob)) {
-    keys.push("/permissions");
+    push("/permissions");
+  }
+  if (/undo journal is large|sessions on disk/i.test(blob)) {
+    push(surface === "cli" ? "forge sessions prune --keep 50" : "/sessions");
+  }
+  for (const rec of opts?.recommendations ?? []) {
+    const k = closerKeyForRec(rec, surface);
+    if (k) push(k);
   }
   if (!issues.length || /not authenticated/i.test(blob)) {
-    keys.push("/setup");
+    push("/setup");
   }
   if (!keys.length) {
-    keys.push(surface === "cli" ? "forge doctor --json" : "/status");
+    push(surface === "cli" ? "forge doctor --json" : "/status");
   }
-  const line = `Next  ${keys.join("  ·  ")}`;
+  const line = `Next  ${keys.slice(0, 4).join("  ·  ")}`;
   const cols = Math.max(
     24,
     opts?.columns ??
       (process.stdout.isTTY ? process.stdout.columns || 80 : 80),
   );
   if (visibleWidth(line) <= cols) return line;
-  const tokens = keys;
+  const tokens = keys.slice(0, 4);
   return [`Next  ${tokens[0]}`, ...tokens.slice(1).map((k) => `  ·  ${k}`)].join(
     "\n",
   );
+}
+
+export function formatDoctorRecommended(
+  recs: DoctorRecommendation[],
+  opts?: { color?: boolean; surface?: DoctorSurface },
+): string[] {
+  if (!recs.length) return [];
+  const color = opts?.color !== false;
+  const surface: DoctorSurface = opts?.surface ?? "repl";
+  const head = "Recommended";
+  const out = [color ? chalk.cyan(head) : head];
+  for (const rec of recs.slice(0, 8)) {
+    const action =
+      surface === "cli"
+        ? rec.cliAction || rec.replAction
+        : rec.replAction || rec.cliAction;
+    const arrow = action ? `  →  ${action}` : "";
+    const row = `  • ${rec.detail}${arrow}`;
+    out.push(color ? chalk.cyan(row) : row);
+  }
+  return out;
 }
 
 export function formatDoctorIssueBlock(
@@ -93,13 +154,21 @@ export function formatDoctorIssueBlock(
 export function assembleDoctorReport(
   facts: string[],
   issues: string[],
-  opts?: { color?: boolean; columns?: number; surface?: DoctorSurface },
+  opts?: {
+    color?: boolean;
+    columns?: number;
+    surface?: DoctorSurface;
+    recommendations?: DoctorRecommendation[];
+  },
 ): string {
   const surface: DoctorSurface = opts?.surface ?? "repl";
-  const closer = formatDoctorCloser(issues, opts);
+  const recs = opts?.recommendations ?? [];
+  const closer = formatDoctorCloser(issues, { ...opts, recommendations: recs });
   const shown = issues.map((i) => rewriteDoctorIssueForSurface(i, surface));
   const header = formatDoctorHeader(shown, opts);
   const block = formatDoctorIssueBlock(shown, opts);
+  const recBlock = formatDoctorRecommended(recs, { ...opts, surface });
   const body = facts.filter((l, i) => !(i === 0 && l.trim() === ""));
-  return [header, ...block, "", ...body, closer].join("\n");
+  const mid = recBlock.length ? ["", ...recBlock] : [];
+  return [header, ...block, ...mid, "", ...body, closer].join("\n");
 }

@@ -15,7 +15,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "Do NOT use for file reads/edits/search/list — prefer read_file, search_replace, grep, glob, list_dir. " +
         "Set background=true for long jobs (returns task_id; poll with get_task_output, stop with kill_task). " +
         "Cloud metadata endpoints (IMDS) and file:// fetches are hard-denied. " +
-        "Timeout default 120s fg (cap 30m) / 30m bg (cap 6h). " +
+        "Timeout default 180s fg (cap 30m) / 30m bg (cap 6h). " +
         "Do not foreground npm test / npm run ci / npm run check — background:true then get_task_output, or run the last targeted check.",
       parameters: {
         type: "object",
@@ -24,7 +24,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           timeout_ms: {
             type: "number",
             description:
-              "Timeout in ms (default 120s fg / 30m bg; fg cap 30m). Aliases: default|max|all; suffixes 30s/1m.",
+              "Timeout in ms (default 180s fg / 30m bg; fg cap 30m). Aliases: default|max|all; suffixes 30s/1m.",
           },
           background: {
             type: "boolean",

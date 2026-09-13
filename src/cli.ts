@@ -146,6 +146,7 @@ import {
   createThinkingLandmark,
 } from "./tui/turn-summary.js";
 import { forgeHome, ensureDir, inspectSecureFile } from "./util/fs.js";
+import { forgeTmpStats, pruneForgeTmp } from "./util/forge-tmp.js";
 import { log, setLogLevel } from "./util/log.js";
 import { mergeRunOpts } from "./util/merge-run-opts.js";
 import { armGoal, formatGoalStatus, loadGoal } from "./harness/goal.js";
@@ -299,6 +300,8 @@ Examples:
   forge config --json
   forge prune-tool-output --keep 80
   forge prune-metrics --keep 500
+  forge tmp prune
+  forge sessions prune --orphans
   eval "$(forge completion bash)"
 
 Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
@@ -2282,6 +2285,10 @@ Docs: docs/PRODUCTION.md
       "Prune: also delete sessions that still carry lastError (default: keep for /sessions errors)",
     )
     .option(
+      "--orphans",
+      "Prune: nested subagent: sessions with no ulw.json (max_turns mills; ULW parents kept)",
+    )
+    .option(
       "-n, --limit <n>",
       "List limit (0/all/max = unlimited)",
       "30",
@@ -3075,6 +3082,7 @@ Docs: docs/PRODUCTION.md
           keep,
           maxAgeDays,
           forceLastError: Boolean(globalOpts.forceLastError),
+          orphans: Boolean(globalOpts.orphans),
         });
         if (globalOpts.json) {
           emitOkJson(
@@ -3087,7 +3095,9 @@ Docs: docs/PRODUCTION.md
               skippedPinned: result.skippedPinned,
               skippedLastError: result.skippedLastError,
               deletedWithLastError: result.deletedWithLastError,
+              deletedOrphans: result.deletedOrphans,
               forceLastError: Boolean(globalOpts.forceLastError),
+              orphans: Boolean(globalOpts.orphans),
               keep,
               ...(maxAgeDays !== undefined ? { maxAgeDays } : {}),
             },
@@ -3107,6 +3117,9 @@ Docs: docs/PRODUCTION.md
                 : "") +
               (result.deletedWithLastError
                 ? `; deleted ${result.deletedWithLastError} with lastError`
+                : "") +
+              (result.deletedOrphans
+                ? `; ${result.deletedOrphans} orphan subagent(s)`
                 : "") +
               `)`,
           );
@@ -4003,6 +4016,80 @@ Docs: docs/PRODUCTION.md
     });
 
   program
+    .command("tmp")
+    .description("Show or prune leftover ~/.forge/tmp look/Chrome profiles")
+    .argument("[action]", "prune (default) | stats")
+    .option("--dry", "List what would be deleted without removing it")
+    .option("--force", "Ignore mtime (still only scratch names)")
+    .option(
+      "--max-age-hours <n>",
+      "Keep scratch newer than N hours (0 = all stale names)",
+      "6",
+    )
+    .option("--json", "Machine-readable JSON")
+    .action((action: string | undefined, opts, command) => {
+      const act = String(action || "prune").trim().toLowerCase();
+      const wantJson = flagJson(opts, command);
+      if (act !== "prune" && act !== "stats") {
+        failUsage("Usage: forge tmp [prune|stats] [--dry] [--force] [--max-age-hours N]", {
+          json: wantJson,
+        });
+      }
+      const before = forgeTmpStats();
+      if (act === "stats") {
+        if (wantJson) {
+          emitOkJson({ forgeHome: forgeHome(), ...before }, true);
+          return;
+        }
+        const mb = (before.scratchBytes / (1024 * 1024)).toFixed(1);
+        const total = (before.bytes / (1024 * 1024)).toFixed(1);
+        log.info(
+          `~/.forge/tmp  ${total} MB` +
+            (before.scratchDirs
+              ? ` · ${before.scratchDirs} leftover look/Chrome dir(s) (${mb} MB)`
+              : " · no leftover look profiles"),
+        );
+        return;
+      }
+      const hoursRaw = String(opts.maxAgeHours ?? "6").trim();
+      const hours = Number(hoursRaw);
+      if (!Number.isFinite(hours) || hours < 0) {
+        failInvalidFlag(
+          "invalid_max_age_hours",
+          `Invalid --max-age-hours "${opts.maxAgeHours}". Pass a non-negative number (0 = all scratch names).`,
+          { value: String(opts.maxAgeHours) },
+          { json: wantJson },
+        );
+      }
+      const result = pruneForgeTmp({
+        maxAgeMs: hours === 0 ? 0 : hours * 60 * 60 * 1000,
+        force: Boolean(opts.force),
+        dry: Boolean(opts.dry),
+      });
+      const after = forgeTmpStats();
+      if (wantJson) {
+        emitOkJson(
+          { forgeHome: forgeHome(), before, ...result, after },
+          true,
+        );
+        return;
+      }
+      const freed = result.freedBytes
+        ? ` · freed ${(result.freedBytes / (1024 * 1024)).toFixed(1)} MB`
+        : "";
+      const verb = result.dry ? "Would prune" : "Pruned";
+      log.success(
+        `${verb} ${result.deleted.length} leftover look/Chrome dir(s)${freed}` +
+          (result.skippedFresh
+            ? `; skipped ${result.skippedFresh} newer than --max-age-hours`
+            : ""),
+      );
+      if (!result.deleted.length && before.scratchDirs === 0) {
+        log.dim("~/.forge/tmp has no leftover look profiles");
+      }
+    });
+
+  program
     .command("logs")
     .description(
       "Tail sandbox/safety events (~/.forge/logs/sandbox.jsonl) — no secrets",
@@ -4486,6 +4573,10 @@ Docs: docs/PRODUCTION.md
               nodeModulesPresent: check.nodeModulesPresent ?? null,
               packageManagerMismatch: check.packageManagerMismatch ?? null,
               multipleLockfiles: check.multipleLockfiles ?? [],
+              recommendations: check.recommendations ?? [],
+              tmpScratch: check.tmpScratch ?? null,
+              orphanSubagentSessions: check.orphanSubagentSessions ?? 0,
+              subagentTurns: check.subagentTurns ?? null,
               autoResume:
                 process.env.FORGE_NO_AUTO_RESUME !== "1" &&
                 process.env.FORGE_NO_AUTO_RESUME !== "true",
@@ -4796,6 +4887,7 @@ const TOP_LEVEL_COMMANDS = [
   "completion",
   "prune-tool-output",
   "prune-metrics",
+  "tmp",
   "logs",
   "config",
   "stats",

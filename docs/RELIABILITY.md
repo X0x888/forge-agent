@@ -158,7 +158,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | `FORGE_PROVIDER_TIMEOUT_MS` | `10m` / `600000` | Provider **stall** silence budget (ms or `5m`/`10m`); resets on each stream chunk. Raise if first-token thinking often exceeds this with no bytes yet |
 | `FORGE_PROVIDER_REASONING_WALL_MS` | `12m` / `720000` | No-content / no-tool wall. Reasoning and keepalives do not reset it. `0` / `off` disables |
 | `FORGE_PROVIDER_MAX_MS` | off (`0`) | Optional absolute wall-clock ceiling for one provider call (stall resets do not extend it); e.g. `2h` for hard unattended caps |
-| `FORGE_BASH_TIMEOUT_MS (ms or 90s/2m)` | `120000` | Default foreground `bash` timeout (min 5s, max 30m) |
+| `FORGE_BASH_TIMEOUT_MS (ms or 90s/2m)` | `180000` | Default foreground `bash` timeout (min 5s, max 30m). 180s so a suite that targets ~2 min is not killed at the ceiling |
 | `FORGE_BASH_MUTATION_JOURNAL` | on | `0`/`false` disables git-porcelain journaling of foreground bash / idle `!cmd` writes |
 | `FORGE_BASH_BG_TIMEOUT_MS` | `1800000` | Default background task timeout (min 30s, max 6h) |
 | `FORGE_MAX_RUN_MS` | off | Headless `forge run` wall-clock cap (ms or `30m`; exit 124) |

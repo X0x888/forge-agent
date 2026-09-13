@@ -1132,6 +1132,45 @@ it("/fork includes last-turn peek", async () => {
     assert.ok(!listSessions(100).some((m) => m.id === failed.meta.id));
   });
 
+  it("prune --orphans deletes nested subagent sessions and keeps ULW parents", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-prune-orphan-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      createSession: mk,
+      saveSession,
+      setSessionLastError,
+      pruneSessions,
+      listSessions,
+      sessionDir,
+    } = await import("../src/session/session.js");
+    const parent = mk({ cwd: tmp, provider: "xai", model: "m", title: "ulw parent" });
+    fs.writeFileSync(
+      path.join(sessionDir(parent.meta.id), "ulw.json"),
+      JSON.stringify({ version: 2, cycle: 1 }),
+    );
+    saveSession(parent);
+    const mill = mk({
+      cwd: tmp,
+      provider: "xai",
+      model: "m",
+      title: "subagent: Find next play-path hole",
+    });
+    mill.meta.subagent = {
+      parentId: parent.meta.id,
+      type: "explore",
+      isolation: "none",
+    };
+    setSessionLastError(mill, {
+      code: "max_turns",
+      message: "maxTurns (25) reached — releasing.",
+    });
+    saveSession(mill);
+    const r = pruneSessions({ keep: 50, orphans: true });
+    assert.ok(r.deletedOrphans >= 1);
+    assert.ok(!listSessions(100).some((m) => m.id === mill.meta.id));
+    assert.ok(listSessions(100).some((m) => m.id === parent.meta.id));
+  });
+
   it("pinned sessions survive prune", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-pin-"));
     process.env.FORGE_HOME = tmp;

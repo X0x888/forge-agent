@@ -67,9 +67,13 @@ export const BASH_FOREGROUND_TIMEOUT_CAP_MS = 30 * 60_000;
 /** Background bash wall-clock cap. */
 export const BASH_BACKGROUND_TIMEOUT_CAP_MS = 6 * 60 * 60_000;
 
-/** Default foreground bash timeout (ms). Min 5s, max 30m. */
+/**
+ * Default foreground bash timeout (ms). Min 5s, max 30m.
+ * 180s so a suite that targets "under 2 min" is not killed at the documented
+ * ceiling (120s used to SIGTERM `npm test` on a slow machine).
+ */
 export function defaultBashTimeoutMs(): number {
-  const n = envDurationMs("FORGE_BASH_TIMEOUT_MS", 120_000);
+  const n = envDurationMs("FORGE_BASH_TIMEOUT_MS", 180_000);
   return Math.min(BASH_FOREGROUND_TIMEOUT_CAP_MS, Math.max(5_000, n));
 }
 

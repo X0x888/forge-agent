@@ -4,6 +4,7 @@ import {
   assembleDoctorReport,
   formatDoctorCloser,
   formatDoctorHeader,
+  formatDoctorRecommended,
 } from "../src/tui/doctor-card.js";
 
 const AUTH_ISSUE = "Not authenticated — run forge login or set an API key env var";
@@ -80,6 +81,55 @@ describe("doctor health card", () => {
       formatDoctorCloser([OTHER_ISSUE], { surface: "cli" }),
       /^Next  forge doctor --json$/,
     );
+  });
+
+  it("Recommended block sits between issues and facts; Next uses rec actions", () => {
+    const recs = [
+      {
+        id: "tmp-scratch",
+        severity: "hygiene" as const,
+        detail: "~/.forge/tmp has 4 leftover look/Chrome dir(s) (200.0 MB)",
+        cliAction: "forge tmp prune",
+      },
+      {
+        id: "orphan-subagents",
+        severity: "hygiene" as const,
+        detail: "12 nested subagent sessions with no ulw.json",
+        replAction: "/sessions errors",
+        cliAction: "forge sessions prune --orphans",
+      },
+    ];
+    const report = assembleDoctorReport(
+      ["Version: 0.9.99"],
+      [OTHER_ISSUE],
+      { color: false, recommendations: recs },
+    );
+    assert.match(report, /Recommended/);
+    assert.match(report, /forge tmp prune/);
+    assert.ok(
+      report.indexOf("Recommended") < report.indexOf("Version:"),
+      "Recommended must precede facts",
+    );
+    assert.match(
+      formatDoctorCloser([OTHER_ISSUE], {
+        recommendations: recs,
+        surface: "cli",
+      }),
+      /forge tmp prune/,
+    );
+    assert.match(
+      formatDoctorCloser([OTHER_ISSUE], { recommendations: recs }),
+      /\/sessions errors/,
+    );
+    assert.doesNotMatch(
+      formatDoctorCloser([OTHER_ISSUE], { recommendations: recs }),
+      /forge tmp prune/,
+    );
+    const recLines = formatDoctorRecommended(recs, {
+      color: false,
+      surface: "cli",
+    });
+    assert.ok(recLines.some((l) => /forge tmp prune/.test(l)));
   });
 
   it("header stays scrapeable as Forge doctor", () => {

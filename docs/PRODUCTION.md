@@ -121,8 +121,12 @@ CI (GitHub Actions) runs `npm run check` + `npm run smoke` on Node 20 and 22.
     "preferences": { "exists": true, "mode": "600", "modeOk": true }
   },
   "issues": [],
+  "recommendations": [],
+  "tmpScratch": { "bytes": 0, "dirs": 0, "scratchDirs": 0, "scratchBytes": 0 },
+  "orphanSubagentSessions": 0,
+  "subagentTurns": { "explore": 25, "plan": 25, "gp": 80, "planner": 60, "reviewer": 80 },
   "providerTimeoutMs": 600000,
-  "bashTimeoutMs": 120000,
+  "bashTimeoutMs": 180000,
   "bashBackgroundTimeoutMs": 1800000,
   "maxRunMs": null,
   "permissionAskTimeoutMs": null,
@@ -145,6 +149,7 @@ Exit code `1` when `ok` is false (still prints JSON first). Thresholds reflect e
 - `ok === false` when any `secureFiles.*.modeOk` is `false`
 - `ok === false` when `blockingStop` is `false` or `authenticated` is `false`
 - Prefer `issues[]` + structured fields over regex on `report`
+- `recommendations[]` is hygiene/quality follow-up (leftover `~/.forge/tmp`, orphan subagent sessions, max_turns mills, bloated project memory). It does **not** fail `ok`. Next keys on the report use `replAction` at › and `cliAction` on `forge doctor`.
 
 ## Auth
 
@@ -256,7 +261,7 @@ Success `ok` is `true` only when the run completed without abort/timeout **and**
   "blockingStop": true,
   "maxRunMs": null,
   "providerTimeoutMs": 600000,
-  "bashTimeoutMs": 120000,
+  "bashTimeoutMs": 180000,
   "bashBackgroundTimeoutMs": 1800000,
   "permissionAskTimeoutMs": null,
   "doomLoopThreshold": 3,

@@ -330,6 +330,45 @@ function nodeCheckCommands(
 }
 
 /**
+ * Drop an unquoted `# …` comment so a Commands fence line like
+ * `npm test  # in-process` harvests as `npm test`. Quoted `#` is kept.
+ * A `#` at the start of the trimmed line is a whole-line comment (empty).
+ */
+export function stripInlineShellComment(line: string): string {
+  const raw = String(line ?? "");
+  let out = "";
+  let quote: "'" | '"' | null = null;
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i]!;
+    if (quote) {
+      out += c;
+      if (c === "\\" && i + 1 < raw.length) {
+        out += raw[i + 1]!;
+        i += 1;
+        continue;
+      }
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      out += c;
+      continue;
+    }
+    if (c === "#") break;
+    out += c;
+  }
+  return out.trim();
+}
+
+/** True when a check command still carries a `#` comment bash would honour. */
+export function checkCommandHasShellComment(cmd: string): boolean {
+  const raw = String(cmd ?? "").trim();
+  if (!raw || raw.startsWith("#")) return false;
+  return stripInlineShellComment(raw) !== raw;
+}
+
+/**
  * Commands fences in AGENTS.md / CLAUDE.md — the product's own gate, which
  * the stack table misses on mixed trees (Godot + a Cargo notebook).
  */
@@ -351,7 +390,7 @@ export function harvestGuidelineChecks(cwd: string): string[] {
     const fence = raw.match(/```(?:bash|sh|zsh|shell)?\r?\n([\s\S]*?)```/);
     if (!fence) continue;
     for (const line of fence[1].split("\n")) {
-      const t = line.trim();
+      const t = stripInlineShellComment(line.trim());
       if (!t || t.startsWith("#")) continue;
       if (/^(?:npm install|pip install|cargo install|cd |export |source |git )/.test(t)) continue;
       if (!/\b(?:test|check|lint|typecheck|verify|smoke|godot|pytest|cargo test)\b/i.test(t)) {

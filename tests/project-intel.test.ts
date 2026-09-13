@@ -11,6 +11,8 @@ import {
   detectPackageManager,
   detectProjectIntel,
   harvestGuidelineChecks,
+  stripInlineShellComment,
+  checkCommandHasShellComment,
   formatProjectIntelForPrompt,
   wrongPackageManagerTip,
   missingScriptTip,
@@ -374,6 +376,57 @@ describe("detectProjectIntel", () => {
     const intel = detectProjectIntel(d);
     assert.match(intel.checkCommands[0] ?? "", /cargo test -p.*&&.*godot/);
   });
+
+  it("strips inline # comments so harvest does not comment-out && npm test", () => {
+    assert.equal(
+      stripInlineShellComment("npm run typecheck        # tsc --noEmit"),
+      "npm run typecheck",
+    );
+    assert.equal(
+      stripInlineShellComment(`echo "keep # inside"`),
+      `echo "keep # inside"`,
+    );
+    assert.equal(
+      checkCommandHasShellComment(
+        "npm run typecheck        # tsc --noEmit && npm test",
+      ),
+      true,
+    );
+    assert.equal(checkCommandHasShellComment("npm run typecheck && npm test"), false);
+    const d = tmpDir("forge-intel-comments-");
+    write(
+      d,
+      "package.json",
+      JSON.stringify({
+        name: "c",
+        scripts: { typecheck: "tsc -b", test: "node --test" },
+      }),
+    );
+    write(d, "package-lock.json", "{}");
+    write(
+      d,
+      "AGENTS.md",
+      [
+        "## Commands",
+        "",
+        "```bash",
+        "npm run typecheck        # tsc --noEmit (fast)",
+        "npm test                 # in-process",
+        "```",
+        "",
+      ].join("\n"),
+    );
+    clearProjectIntelCache();
+    const harvested = harvestGuidelineChecks(d);
+    assert.deepEqual(harvested.slice(0, 2), ["npm run typecheck", "npm test"]);
+    const intel = detectProjectIntel(d);
+    assert.equal(intel.checkCommands[0], "npm run typecheck && npm test");
+    assert.equal(
+      intel.checkCommands.some((c) => checkCommandHasShellComment(c)),
+      false,
+    );
+  });
+
 
   it("formatProjectIntelForPrompt is empty when blank", () => {
     assert.equal(

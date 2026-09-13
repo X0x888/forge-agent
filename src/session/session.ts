@@ -2156,6 +2156,29 @@ export interface PruneSessionsResult {
   skippedLastError: number;
   /** How many deleted sessions carried lastError (only when forceLastError). */
   deletedWithLastError: number;
+  /** Nested `subagent:` children with no ulw.json (orphan mills). */
+  deletedOrphans: number;
+}
+
+/**
+ * Nested explore/plan children (`subagent:` title or `meta.subagent`) that
+ * never became a ULW parent. HashPet/Maze "find next hole" mills pile these
+ * up; the parent `ulw.json` stays. Safe to delete for disk.
+ */
+export function isOrphanSubagentSession(meta: {
+  id: string;
+  title?: string;
+  subagent?: unknown;
+}): boolean {
+  const title = String(meta.title || "").trim();
+  const stamped =
+    Boolean(meta.subagent) || /^subagent:/i.test(title);
+  if (!stamped) return false;
+  try {
+    return !fs.existsSync(path.join(sessionDir(meta.id), "ulw.json"));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -2165,6 +2188,8 @@ export interface PruneSessionsResult {
  * Never deletes sessions held by another live process (foreign session.lock).
  * By default also skips sessions with `meta.lastError` (recovery backlog) unless
  * `forceLastError` is set — experts inspect failures via `/sessions errors` first.
+ * `orphans` deletes nested `subagent:` children with no `ulw.json` (mills),
+ * including their lastError, without touching ULW parent records.
  */
 export function pruneSessions(opts?: {
   keep?: number;
@@ -2177,6 +2202,11 @@ export function pruneSessions(opts?: {
    * Default false so failed runs survive hygiene until reviewed.
    */
   forceLastError?: boolean;
+  /**
+   * Delete nested `subagent:` sessions that have no `ulw.json`.
+   * lastError on those rows does not protect them. ULW parents stay.
+   */
+  orphans?: boolean;
 }): PruneSessionsResult {
   // 0 is valid (keep none). NaN/negative fall back to 50.
   const keepRaw = opts?.keep;
@@ -2188,6 +2218,7 @@ export function pruneSessions(opts?: {
   const protect = new Set(opts?.protectIds || []);
   const skipLocked = opts?.skipLocked !== false;
   const forceLastError = Boolean(opts?.forceLastError);
+  const orphans = Boolean(opts?.orphans);
   const all = listSessions(10_000);
   const cutoff =
     maxAgeDays != null && maxAgeDays > 0
@@ -2200,6 +2231,7 @@ export function pruneSessions(opts?: {
   let skippedPinned = 0;
   let skippedLastError = 0;
   let deletedWithLastError = 0;
+  let deletedOrphans = 0;
   all.forEach((meta, index) => {
     if (protect.has(meta.id)) return;
     if (meta.pinned) {
@@ -2210,20 +2242,23 @@ export function pruneSessions(opts?: {
     const tooOld =
       cutoff != null && Number.isFinite(ts) && ts < cutoff;
     const overKeep = index >= keep;
-    if (tooOld || overKeep) {
-      if (skipLocked && sessionHasForeignLiveLock(meta.id)) {
-        skippedLocked += 1;
-        return;
-      }
-      const hasErr = isLastErrorProblem(meta.lastError);
-      if (hasErr && !forceLastError) {
-        skippedLastError += 1;
-        return;
-      }
-      if (deleteSession(meta.id)) {
-        deleted.push(meta.id);
-        if (hasErr) deletedWithLastError += 1;
-      }
+    const orphan = orphans && isOrphanSubagentSession(meta);
+    if (!(tooOld || overKeep || orphan)) return;
+    if (skipLocked && sessionHasForeignLiveLock(meta.id)) {
+      skippedLocked += 1;
+      return;
+    }
+    const hasErr = isLastErrorProblem(meta.lastError);
+    // Orphans are mill children — lastError (usually max_turns) must not
+    // protect them. ULW parents never match isOrphanSubagentSession.
+    if (hasErr && !forceLastError && !orphan) {
+      skippedLastError += 1;
+      return;
+    }
+    if (deleteSession(meta.id)) {
+      deleted.push(meta.id);
+      if (hasErr) deletedWithLastError += 1;
+      if (orphan) deletedOrphans += 1;
     }
   });
 
@@ -2235,6 +2270,7 @@ export function pruneSessions(opts?: {
     skippedPinned,
     skippedLastError,
     deletedWithLastError,
+    deletedOrphans,
   };
 }
 

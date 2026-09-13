@@ -644,13 +644,13 @@ describe("/init and /compact-and slash commands", () => {
     const prevBg = process.env.FORGE_BASH_BG_TIMEOUT_MS;
     try {
       delete process.env.FORGE_BASH_TIMEOUT_MS;
-      assert.equal(defaultBashTimeoutMs(), 120_000);
+      assert.equal(defaultBashTimeoutMs(), 180_000);
       process.env.FORGE_BASH_TIMEOUT_MS = "1000"; // below min → 5s
       assert.equal(defaultBashTimeoutMs(), 5_000);
       process.env.FORGE_BASH_TIMEOUT_MS = "600000";
       assert.equal(defaultBashTimeoutMs(), 600_000);
       process.env.FORGE_BASH_TIMEOUT_MS = "nope";
-      assert.equal(defaultBashTimeoutMs(), 120_000);
+      assert.equal(defaultBashTimeoutMs(), 180_000);
       delete process.env.FORGE_BASH_BG_TIMEOUT_MS;
       assert.equal(defaultBashBackgroundTimeoutMs(), 30 * 60_000);
       process.env.FORGE_BASH_BG_TIMEOUT_MS = "1000";

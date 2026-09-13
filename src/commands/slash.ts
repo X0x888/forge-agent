@@ -32,6 +32,7 @@ import {
   listSessionForks,
   deleteSessionDetailed,
   pruneSessions,
+  isOrphanSubagentSession,
   sessionHasForeignLiveLock,
   compactMessages,
   clearRequestPruneSticky,
@@ -149,6 +150,7 @@ import { copyToClipboard } from "../util/clipboard.js";
 import { formatDiffReviewCard } from "../tui/diff-card.js";
 import {
   assembleDoctorReport,
+  type DoctorRecommendation,
   type DoctorSurface,
 } from "../tui/doctor-card.js";
 import {
@@ -165,6 +167,9 @@ import {
 import { normalizePermissionMode, normalizeSandboxProfile } from "../util/mode-aliases.js";
 import { isFalsy } from "../util/bool.js";
 import { forgeHome, inspectSecureFile } from "../util/fs.js";
+import { forgeTmpStats } from "../util/forge-tmp.js";
+import { checkCommandHasShellComment } from "../util/project-intel.js";
+import { defaultSubagentMaxTurns } from "../agent/subagent-policy.js";
 import { getForgeVersion } from "../util/version.js";
 import { formatWhatsNew } from "../util/changelog.js";
 import { formatExpertTips } from "../util/tips.js";
@@ -5611,10 +5616,15 @@ case "/new":
           parts.includes("--force-last-error") ||
           parts.includes("--force-errors") ||
           parts.includes("--include-errors");
+        const orphans =
+          parts.includes("--orphans") ||
+          parts.includes("--orphan") ||
+          parts.includes("--subagents");
         const result = pruneSessions({
           keep,
           protectIds: [opts.session.meta.id],
           forceLastError,
+          orphans,
         });
         const lockNote = result.skippedLocked
           ? `; skipped ${result.skippedLocked} foreign-locked`
@@ -5627,9 +5637,13 @@ case "/new":
           : result.deletedWithLastError
             ? `; deleted ${result.deletedWithLastError} with lastError`
             : "";
+        const orphanNote =
+          result.deletedOrphans > 0
+            ? `; ${result.deletedOrphans} orphan subagent(s)`
+            : "";
         return {
           handled: true,
-          output: `Pruned ${result.deleted.length} session(s); kept ${result.kept} (active protected${lockNote}${pinNote}${errNote}). CLI: forge sessions prune --keep ${keep}`,
+          output: `Pruned ${result.deleted.length} session(s); kept ${result.kept} (active protected${lockNote}${pinNote}${errNote}${orphanNote}). CLI: forge sessions prune --keep ${keep}${orphans ? " --orphans" : ""}`,
         };
       }
       // Default: same-cwd sessions (multi-project experts). /sessions all|global for everything.
@@ -6613,6 +6627,22 @@ export interface DoctorResult {
   gitBranch?: string | null;
   gitRoot?: string | null;
   gitChangedFiles?: number | null;
+  /** Actionable hygiene/quality follow-ups (do not fail CI `ok`). */
+  recommendations?: DoctorRecommendation[];
+  tmpScratch?: {
+    bytes: number;
+    dirs: number;
+    scratchDirs: number;
+    scratchBytes: number;
+  };
+  orphanSubagentSessions?: number;
+  subagentTurns?: {
+    explore: number;
+    plan: number;
+    gp: number;
+    planner: number;
+    reviewer: number;
+  };
 }
 
 /**
@@ -7181,8 +7211,13 @@ export async function runDoctorCheck(
       : " · auto-resume=same-cwd";
     const bashTo = defaultBashTimeoutMs();
     const bashBg = defaultBashBackgroundTimeoutMs();
+    const exploreTurns = defaultSubagentMaxTurns("explore");
+    const planTurns = defaultSubagentMaxTurns("plan");
+    const gpTurns = defaultSubagentMaxTurns("general-purpose");
+    const plannerTurns = envPositiveInt("FORGE_ULW_PLANNER_MAX_TURNS", 60);
+    const reviewerTurns = envPositiveInt("FORGE_ULW_REVIEWER_MAX_TURNS", 80);
     lines.push(
-      `Reliability: Retry-After · abortable streams · empty-SSE retry · JSON repair · orphan tool heal · doom-loop@${doomN} · error-streak@${errN} · ulw-continues@${ulwCap} · apply_patch · file-aware undo · overflow→compact · session lock/tmp-recover · metrics.jsonl · OAuth refresh · provider stall=${Math.round(providerTimeoutMs() / 1000)}s${providerMaxWallMs() > 0 ? ` max=${Math.round(providerMaxWallMs() / 1000)}s` : ""} · reasoning-wall=${Math.round(providerReasoningWallMs() / 1000)}s · bash timeout=${Math.round(bashTo / 1000)}s (bg ${Math.round(bashBg / 1000)}s)${maxRunNote}${permNote}${bellNote}${resumeNote}`,
+      `Reliability: Retry-After · abortable streams · empty-SSE retry · JSON repair · orphan tool heal · doom-loop@${doomN} · error-streak@${errN} · ulw-continues@${ulwCap} · apply_patch · file-aware undo · overflow→compact · session lock/tmp-recover · metrics.jsonl · OAuth refresh · provider stall=${Math.round(providerTimeoutMs() / 1000)}s${providerMaxWallMs() > 0 ? ` max=${Math.round(providerMaxWallMs() / 1000)}s` : ""} · reasoning-wall=${Math.round(providerReasoningWallMs() / 1000)}s · bash timeout=${Math.round(bashTo / 1000)}s (bg ${Math.round(bashBg / 1000)}s) · subagent explore/plan=${exploreTurns} gp=${gpTurns} · planner=${plannerTurns} reviewer=${reviewerTurns}${maxRunNote}${permNote}${bellNote}${resumeNote}`,
     );
   }
 
@@ -7331,6 +7366,31 @@ export async function runDoctorCheck(
       );
     } else {
       lines.push(`  tool-output: empty`);
+    }
+  } catch {
+    /* optional */
+  }
+  let tmpScratch: DoctorResult["tmpScratch"];
+  try {
+    const tmp = forgeTmpStats();
+    tmpScratch = {
+      bytes: tmp.bytes,
+      dirs: tmp.dirs,
+      scratchDirs: tmp.scratchDirs,
+      scratchBytes: tmp.scratchBytes,
+    };
+    if (tmp.exists && tmp.bytes > 0) {
+      const mb = (tmp.scratchBytes / (1024 * 1024)).toFixed(1);
+      const totalMb = (tmp.bytes / (1024 * 1024)).toFixed(1);
+      lines.push(
+        `  tmp: ${totalMb} MB` +
+          (tmp.scratchDirs
+            ? ` · ${tmp.scratchDirs} leftover look/Chrome dir(s) (${mb} MB)`
+            : "") +
+          (tmp.scratchBytes >= 32 * 1024 * 1024
+            ? chalk.yellow(" — forge tmp prune")
+            : chalk.dim("  (~/.forge/tmp)")),
+      );
     }
   } catch {
     /* optional */
@@ -7500,6 +7560,7 @@ export async function runDoctorCheck(
   let sessionsUntitled = 0;
   let sessionsTotal = 0;
   let sessionsPinned = 0;
+  let orphanSubagentSessions = 0;
   try {
     const { listProjectRulePaths } = await import("../agent/system-prompt.js");
     projectRulesCount = listProjectRulePaths(
@@ -7581,6 +7642,9 @@ export async function runDoctorCheck(
     sessionsLastErrorByCode = lastErrorTallyRecord(errTally);
     sessionsUntitled = all.filter((s) => !String(s.title || "").trim()).length;
     sessionsPinned = all.filter((s) => Boolean(s.pinned)).length;
+    orphanSubagentSessions = all.filter((s) =>
+      isOrphanSubagentSession(s),
+    ).length;
     if (sessionsWithLastError > 0) {
       const codes = formatLastErrorTally(errTally);
       const codeBit = codes ? ` (${codes})` : "";
@@ -7614,6 +7678,13 @@ export async function runDoctorCheck(
       lines.push(
         chalk.yellow(
           `  ⚠ ${sessionsTotal} sessions on disk — consider forge sessions prune --keep 50 (lastError sessions kept unless --force-last-error)`,
+        ),
+      );
+    }
+    if (orphanSubagentSessions >= 5) {
+      lines.push(
+        chalk.yellow(
+          `  ⚠ ${orphanSubagentSessions} nested subagent sessions with no ulw.json — forge sessions prune --orphans (ULW parents kept)`,
         ),
       );
     }
@@ -7668,6 +7739,18 @@ export async function runDoctorCheck(
     packageManager = intel.packageManager ?? null;
     projectKinds = [...intel.kinds];
     checkCommands = [...intel.checkCommands];
+    const commented = checkCommands.filter((c) => checkCommandHasShellComment(c));
+    if (commented[0]) {
+      const preview = commented[0].slice(0, 140);
+      lines.push(
+        chalk.yellow(
+          `  ⚠ check command still has a # comment — bash drops the rest of the line so \`&& npm test\` never runs: ${preview}`,
+        ),
+      );
+      issues.push(
+        `Preferred check command includes a # comment — bash drops the rest of the line (e.g. \`&& npm test\` never runs): ${preview}`,
+      );
+    }
     workspaces = [...(intel.workspaces || [])];
     monorepoRoot = intel.monorepoRoot ?? null;
     projectStackSummary = intel.summary || null;
@@ -7774,8 +7857,84 @@ export async function runDoctorCheck(
     /* setup card is advisory */
   }
 
+  const recommendations: DoctorRecommendation[] = [];
+  try {
+    const scratchBytes = tmpScratch?.scratchBytes ?? 0;
+    const scratchDirs = tmpScratch?.scratchDirs ?? 0;
+    if (scratchBytes >= 32 * 1024 * 1024 || scratchDirs >= 3) {
+      const mb = (scratchBytes / (1024 * 1024)).toFixed(1);
+      recommendations.push({
+        id: "tmp-scratch",
+        severity: "hygiene",
+        detail: `~/.forge/tmp has ${scratchDirs} leftover look/Chrome dir(s) (${mb} MB)`,
+        cliAction: "forge tmp prune",
+      });
+    }
+  } catch {
+    /* */
+  }
+  if (orphanSubagentSessions >= 5) {
+    recommendations.push({
+      id: "orphan-subagents",
+      severity: "hygiene",
+      detail: `${orphanSubagentSessions} nested subagent sessions with no ulw.json (max_turns mills)`,
+      replAction: "/sessions errors",
+      cliAction: "forge sessions prune --orphans",
+    });
+  }
+  {
+    const top = Object.entries(sessionsLastErrorByCode).sort(
+      (a, b) => b[1] - a[1],
+    )[0];
+    if (top && top[0] === "max_turns" && top[1] >= 5) {
+      recommendations.push({
+        id: "max-turns-backlog",
+        severity: "quality",
+        detail:
+          `${top[1]} sessions ended max_turns — explore default is ${defaultSubagentMaxTurns("explore")}; raising FORGE_SUBAGENT_EXPLORE_MAX_TURNS spends more on find-next-hole mills, it does not finish more`,
+        replAction: "/sessions errors",
+        cliAction: "forge sessions list --errors",
+      });
+    }
+  }
+  {
+    let memN = 0;
+    try {
+      memN = listActiveProjectMemory(config.workspace || process.cwd()).length;
+    } catch {
+      memN = 0;
+    }
+    if (memN >= 20) {
+      recommendations.push({
+        id: "project-memory",
+        severity: "hygiene",
+        detail: `${memN} active project-memory notes (2k injected; extras live in .forge/MEMORY.md)`,
+        replAction: "/memory project prune",
+        cliAction: "/memory project prune",
+      });
+    }
+  }
+  {
+    const bashTo = defaultBashTimeoutMs();
+    if (
+      bashTo < 180_000 &&
+      checkCommands.some((c) =>
+        /\b(?:npm test|cargo test|pytest|npm run test)\b/i.test(c),
+      )
+    ) {
+      recommendations.push({
+        id: "bash-timeout",
+        severity: "quality",
+        detail: `foreground bash timeout is ${Math.round(bashTo / 1000)}s — a suite that targets ~2 min can be killed; set FORGE_BASH_TIMEOUT_MS=180000`,
+      });
+    }
+  }
+
   return {
-    report: assembleDoctorReport(lines, issues, { surface }),
+    report: assembleDoctorReport(lines, issues, {
+      surface,
+      recommendations,
+    }),
     issues: [...issues],
     ok: issues.length === 0,
     authenticated: Boolean(auth),
@@ -7795,6 +7954,16 @@ export async function runDoctorCheck(
     sessionsUntitled,
     sessionsTotal,
     sessionsPinned,
+    recommendations,
+    tmpScratch,
+    orphanSubagentSessions,
+    subagentTurns: {
+      explore: defaultSubagentMaxTurns("explore"),
+      plan: defaultSubagentMaxTurns("plan"),
+      gp: defaultSubagentMaxTurns("general-purpose"),
+      planner: envPositiveInt("FORGE_ULW_PLANNER_MAX_TURNS", 60),
+      reviewer: envPositiveInt("FORGE_ULW_REVIEWER_MAX_TURNS", 80),
+    },
     formatOnWrite: isFormatOnWriteEnabled(
       config.workspace || process.cwd(),
     ),

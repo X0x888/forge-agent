@@ -9,6 +9,7 @@ import type { ForgeConfig } from "../config/types.js";
 import { getGitSnapshot } from "./git-context.js";
 import { listSessions } from "../session/session.js";
 import {
+  checkCommandHasShellComment,
   detectPackageManager,
   detectProjectIntel,
   hasNodeModules,
@@ -165,6 +166,19 @@ export function productionWarningsForRun(
                 `Multiple lockfiles present (${multi.join(", ")}). Pick one package manager and remove the others.`,
               );
             }
+          }
+          try {
+            const intel = detectProjectIntel(cwd);
+            const commented = intel.checkCommands.find((c) =>
+              checkCommandHasShellComment(c),
+            );
+            if (commented) {
+              warnings.push(
+                `Preferred check command includes a # comment — bash drops the rest of the line so \`&& npm test\` never runs: ${commented.slice(0, 120)}`,
+              );
+            }
+          } catch {
+            /* */
           }
         } catch {
           /* */
