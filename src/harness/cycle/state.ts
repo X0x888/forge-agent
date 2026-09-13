@@ -13,9 +13,15 @@
  * re-arms with /ulw.
  */
 import path from "node:path";
+import { envPositiveInt } from "../../util/env.js";
 import { forgeHome, readJsonFile, writeJsonFile, nowIso, ensureDir } from "../../util/fs.js";
 
 export const CYCLE_SCHEMA = 2 as const;
+
+/** Synthesized-cycle and no-commit walls. `FORGE_ULW_NO_PROGRESS_CAP`, default 3. */
+export function noProgressCap(): number {
+  return envPositiveInt("FORGE_ULW_NO_PROGRESS_CAP", 0) || 3;
+}
 
 export type CyclePhase =
   | "plan"

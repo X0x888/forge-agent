@@ -84,6 +84,7 @@ import {
   cycleActive,
   ensureCycleArtifactsDir,
   loadActiveCycle,
+  noProgressCap,
   openItems,
   saveCycleState,
   type CycleEndReason,
@@ -477,11 +478,6 @@ async function runPlanner(
   const plannerStatus: CycleRecord["plannerStatus"] =
     fromScout && fromScout.verdict === plan.verdict && fromScout.title === plan.title ? "scout-admitted" : "planned";
   return { plan, raw, tokens, scout, plannerStatus };
-}
-
-/** The no-progress wall: consecutive synthesized cycles that never commit. */
-function noProgressCap(): number {
-  return envPositiveInt("FORGE_ULW_NO_PROGRESS_CAP", 0) || 3;
 }
 
 /** Consecutive synthesized cycles, even ones that committed. Default 2. */

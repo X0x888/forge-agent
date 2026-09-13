@@ -51,6 +51,8 @@ interface FakeOpts {
   /** Failing test names per red run (consumed in order). */
   checkFailures?: string[][];
   commitOk?: boolean;
+  /** docs-only vs substance — no-progress wall uses this. */
+  commitKind?: "docs" | "substance";
   /** Keep role sessions so the orchestrator runs each role in two turns. */
   twoTurn?: boolean;
 }
@@ -115,7 +117,7 @@ function fakeRuntime(cwd: string, o: FakeOpts = {}) {
       calls.push(`commit:${subject}`);
       if (o.commitOk === false) return { committed: false, skipped: "working tree clean" };
       commits += 1;
-      return { committed: true, sha: `abc${commits}`, subject, files: 1 };
+      return { committed: true, sha: `abc${commits}`, subject, files: 1, ...(o.commitKind ? { commitKind: o.commitKind } : {}) };
     },
     seedTodos(items: CyclePlanItem[]) {
       calls.push(`todos:${items.length}`);
@@ -167,6 +169,7 @@ describe("cycle orchestrator", () => {
     delete process.env.FORGE_ULW_PROMISE_FULFILL;
     delete process.env.FORGE_ULW_CLASS_HOLD;
     delete process.env.FORGE_ULW_WORTH_HOLD;
+    delete process.env.FORGE_ULW_NO_PROGRESS_CAP;
   });
 
   it("turn start: the Planner writes cycle 1, items seed the board, the plan is admitted", async () => {
@@ -614,6 +617,56 @@ describe("cycle orchestrator", () => {
     assert.equal(r?.planAdmitted, true, "auto-commit off is progress — the next plan starts");
     assert.equal(loadCycleState(sid)!.noCommitStreak, 0);
     assert.equal(r?.released, false);
+  });
+
+  it("a docs-only commit increments the no-commit streak and does not reset it", async () => {
+    const sid = "orch-docs-only";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test" });
+    const st = loadCycleState(sid)!;
+    st.noCommitStreak = 1;
+    const { saveCycleState } = await import("../src/harness/cycle/state.js");
+    saveCycleState(st);
+    const { rt } = fakeRuntime(cwd, { reviewer: [REVIEW_OK], planner: [PLAN_OK(2)], commitKind: "docs" });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r?.committed?.sha, "docs-only still commits");
+    assert.equal(loadCycleState(sid)!.cycles[0].commitKind, "docs");
+    assert.equal(loadCycleState(sid)!.noCommitStreak, 2, "a README mill is not progress");
+    assert.equal(r?.planAdmitted, true);
+    assert.equal(r?.released, false);
+  });
+
+  it("/cycle 0 at the no-commit cap still releases cycle-zero, not no-progress", async () => {
+    const sid = "orch-cycle0-at-cap";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test" });
+    assert.equal(setCycleFlag(sid, 0).ok, true);
+    const st = loadCycleState(sid)!;
+    st.noCommitStreak = 3;
+    const { saveCycleState } = await import("../src/harness/cycle/state.js");
+    saveCycleState(st);
+    const { rt, calls } = fakeRuntime(cwd, {
+      reviewer: [`# Cycle 1 review\nVerdict: blocked — leftover\nMust-fix:\n- look again\nWorth: no — leftover\n`],
+      planner: [PLAN_OK(2)],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r?.released);
+    assert.equal(r.endReason, "cycle-zero");
+    assert.ok(!calls.includes("role:planner"), "cycle-zero wins over the no-commit wall");
+  });
+
+  it("ensureCyclePlanned at the no-commit cap releases without admitting a plan", async () => {
+    const sid = "orch-nocommit-cap-plan";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "x" }] });
+    const st = loadCycleState(sid)!;
+    st.phase = "plan";
+    st.noCommitStreak = 3;
+    const { saveCycleState } = await import("../src/harness/cycle/state.js");
+    saveCycleState(st);
+    const { rt, calls } = fakeRuntime(cwd, { planner: [PLAN_OK(2)] });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.ok(out?.released);
+    assert.equal(out.endReason, "no-progress");
+    assert.equal(out.planAdmitted, undefined);
+    assert.ok(!calls.includes("role:planner"));
   });
 
   it("an unparseable review fails closed: blocked, no commit", async () => {
@@ -1481,6 +1534,7 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     delete process.env.FORGE_ULW_CLASS_HOLD;
     delete process.env.FORGE_ULW_WORTH_HOLD;
     delete process.env.FORGE_ULW_SYNTH_CAP;
+    delete process.env.FORGE_ULW_NO_PROGRESS_CAP;
   });
 
   it("a mandate `fulfilled` releases — a real ask that is met is a real answer", async () => {

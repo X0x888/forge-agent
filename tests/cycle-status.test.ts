@@ -1,4 +1,4 @@
-import { describe, it } from "node:test";
+import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { cycleReportFacts, formatUlwStatus } from "../src/harness/cycle/status.js";
 import { newCycleState, type CycleState } from "../src/harness/cycle/state.js";
@@ -39,6 +39,10 @@ function state(): CycleState {
 }
 
 describe("/cycle status", () => {
+  afterEach(() => {
+    delete process.env.FORGE_ULW_NO_PROGRESS_CAP;
+  });
+
   it("keeps untested promises visible as unknown, not broken or kept", () => {
     const s = state();
     s.promises!.push({ text: "Recovery after restart", state: "unknown", seen: "service unavailable" });
@@ -88,6 +92,16 @@ describe("/cycle status", () => {
     s.noCommitStreak = 3;
     s.directExecuteStreak = 0;
     assert.match(cycleReportFacts(s).outcome, /3 cycle\(s\) in a row landed nothing/);
+  });
+
+  it("no-commit streak prints against FORGE_ULW_NO_PROGRESS_CAP", () => {
+    process.env.FORGE_ULW_NO_PROGRESS_CAP = "5";
+    const s = state();
+    s.noCommitStreak = 2;
+    s.directExecuteStreak = 1;
+    const text = formatUlwStatus(s);
+    assert.match(text, /No commit 2\/5/);
+    assert.match(text, /Direct execute 1\/5/);
   });
 });
 

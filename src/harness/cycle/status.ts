@@ -2,9 +2,11 @@
  * Human surfaces for the cycle driver: dock badge, /cycle status card,
  * counts for the admit fingerprint, report facts.
  */
+import { worthIsNo } from "./artifacts.js";
 import {
   cycleActive,
   loadCycleState,
+  noProgressCap,
   openItems,
   type CycleRecord,
   type CycleState,
@@ -47,7 +49,7 @@ export function formatUlwBadge(s: CycleState | null | undefined): string {
   const cap = s.maxCycles != null ? `/${s.maxCycles}` : "";
   const last = s.cycleZeroRequested ? " LAST" : "";
   const synth =
-    s.directExecuteStreak > 0 ? ` synth ${s.directExecuteStreak}/3` : "";
+    s.directExecuteStreak > 0 ? ` synth ${s.directExecuteStreak}/${noProgressCap()}` : "";
   return `ULW c${s.cycle}${cap} ${phase}${items}${last}${synth}`;
 }
 
@@ -86,7 +88,7 @@ function cycleRow(c: CycleRecord): string {
     // The Reviewer's answer to "would a user notice this cycle?" — the
     // column to read down when a run has been going all night — and whether
     // the Planner claimed it before the spend.
-    c.worth ? `worth ${/^\s*no\b/i.test(c.worth) ? "no" : "yes"}${c.worthClaim ? " (claimed)" : ""}` : c.worthClaim ? "worth claimed" : "",
+    c.worth ? `worth ${worthIsNo(c.worth) ? "no" : "yes"}${c.worthClaim ? " (claimed)" : ""}` : c.worthClaim ? "worth claimed" : "",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -126,13 +128,14 @@ export function formatUlwStatus(s: CycleState | null | undefined): string {
     if (open.length > 6) lines.push(`    … +${open.length - 6} more`);
   }
   if (s.verifyCommand) lines.push(`  Verify: ${s.verifyCommand}`);
+  const wallCap = noProgressCap();
   if (s.directExecuteStreak > 0) {
     lines.push(
-      `  Planner starved → Direct execute ${s.directExecuteStreak}/3 (no-progress wall; /cycle 0 stops)`,
+      `  Planner starved → Direct execute ${s.directExecuteStreak}/${wallCap} (no-progress wall; /cycle 0 stops)`,
     );
   }
   if (s.noCommitStreak > 0) {
-    lines.push(`  No commit ${s.noCommitStreak}/3 (no-progress wall; /cycle 0 stops)`);
+    lines.push(`  No commit ${s.noCommitStreak}/${wallCap} (no-progress wall; /cycle 0 stops)`);
   }
   const lastCycle = s.cycles[s.cycles.length - 1];
   if (lastCycle?.plannerStatus && lastCycle.plannerStatus !== "planned") {

@@ -13,6 +13,7 @@ import {
   lookInfraFailed,
   architectureClassMustCollapse,
   continueWorthHold,
+  worthIsNo,
   parseLookArtifact,
   parsePlanArtifact,
   parsePlanItemLine,
@@ -517,6 +518,18 @@ describe("continueWorthHold", () => {
     const fulfilled = parsePlanArtifact(`# Cycle 3 plan\nVerdict: fulfilled — the flag exists`);
     assert.ok(fulfilled);
     assert.equal(continueWorthHold(last, fulfilled), "");
+  });
+
+  it("Worth: **no** and a bolded Direction still hold", () => {
+    assert.equal(worthIsNo("**no** — invisible"), true);
+    assert.equal(worthIsNo("**yes** — the card shows"), false);
+    const last = { worth: "**no** — invisible", direction: "**leftover sits with Murmur**" };
+    const same = planAt("leftover sits with Murmur");
+    assert.ok(same);
+    assert.match(continueWorthHold(last, same), /Direction matched the last Worth: no cycle/);
+    const boldPlan = planAt("**leftover sits with Murmur**");
+    assert.ok(boldPlan);
+    assert.match(continueWorthHold({ worth: "no — invisible", direction: "leftover sits with Murmur" }, boldPlan), /Direction matched/);
   });
 });
 

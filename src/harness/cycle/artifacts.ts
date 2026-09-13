@@ -611,14 +611,23 @@ export function architectureHoldMessage(cls: string): string {
   return `the last two shipped reviews named the architecture class \`${cls}\`; a continue plan must include an item whose title/serves mentions that class, or leave it that class in Considered: or Out of scope:`;
 }
 
-/** Collapse whitespace, lowercase, trim — Direction identity for Worth: no hold. */
+/** Same strip the Worth/Verdict approve gates use (`**no**`, wrapping `*`). */
+function stripMarkdownTicks(raw: string): string {
+  return raw
+    .replace(/^\*+|\*+$/g, "")
+    .replace(/^_+|_+$/g, "")
+    .replace(/\.+$/g, "")
+    .trim();
+}
+
+/** Collapse whitespace, strip wrapping ticks, lowercase — Direction identity for Worth: no hold. */
 export function normalizeDirection(text: string): string {
-  return text.replace(/\s+/g, " ").trim().toLowerCase();
+  return stripMarkdownTicks(text.replace(/\s+/g, " ").trim()).toLowerCase();
 }
 
 /** Reviewer `Worth:` that starts with no — identity only, never a count. */
 export function worthIsNo(worth: string | undefined): boolean {
-  return Boolean(worth && /^\s*no\b/i.test(worth));
+  return parseReviewWorth(worth) === "no";
 }
 
 /**
@@ -665,14 +674,6 @@ export function explainReviewParseFailure(text: string): string {
   if (!worthRaw) return "no Worth: line (need `yes` | `no`)";
   if (!parseReviewWorth(worthRaw)) return "Worth: is not yes or no";
   return "";
-}
-
-function stripMarkdownTicks(raw: string): string {
-  return raw
-    .replace(/^\*+|\*+$/g, "")
-    .replace(/^_+|_+$/g, "")
-    .replace(/\.+$/g, "")
-    .trim();
 }
 
 function parseReviewVerdict(raw: string | undefined): ReviewVerdict | null {
