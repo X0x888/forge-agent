@@ -457,6 +457,7 @@ export function buildPlannerBrief(input: PlannerPlanInput): string {
       lookProfileUdd: "lookProfileUdd" in input ? input.lookProfileUdd : undefined,
       workspace: input.workspace,
     }),
+    ...categorySkillLine(input.workspace),
     ``,
     `## Workspace`,
     input.workspace,

@@ -190,6 +190,17 @@ describe("Planner scout brief (turn 1)", () => {
       projectChecks: [],
     });
     assert.equal(unknown.includes("Category skill inlined:"), false);
+    const unknownSingle = buildPlannerBrief({
+      state: runState(),
+      workspace: "/w",
+      gitLog: "",
+      gitStatus: "",
+      guidelineSurvey: "",
+      projectChecks: [],
+      userMessages: [],
+      spend: runSpend(runState()),
+    });
+    assert.equal(unknownSingle.includes("Category skill inlined:"), false);
 
     const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-brief-cli-"));
     execFileSync("git", ["init", "-q"], { cwd: ws });
@@ -205,6 +216,17 @@ describe("Planner scout brief (turn 1)", () => {
         projectChecks: ["npm test"],
       });
       assert.match(b, /Category skill inlined: forge-shape/);
+      const single = buildPlannerBrief({
+        state: runState(),
+        workspace: ws,
+        gitLog: "",
+        gitStatus: "",
+        guidelineSurvey: "",
+        projectChecks: ["npm test"],
+        userMessages: [],
+        spend: runSpend(runState()),
+      });
+      assert.match(single, /Category skill inlined: forge-shape/);
     } finally {
       fs.rmSync(ws, { recursive: true, force: true });
     }
