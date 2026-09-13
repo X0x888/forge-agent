@@ -93,7 +93,7 @@ describe("detectProductKind", () => {
     assert.equal(detectProductKind("/no/such/forge-kind-workspace"), "unknown");
   });
 
-  it("game wins over a bin; web wins over a bin; bin wins over exports", () => {
+  it("game wins over a bin; a bin wins over vite.config; bin wins over exports", () => {
     withRepo(
       "forge-kind-pri-game-",
       (d) => {
@@ -108,7 +108,7 @@ describe("detectProductKind", () => {
         write(d, "vite.config.ts", "export default {}\n");
         write(d, "package.json", JSON.stringify({ bin: "./cli.js" }));
       },
-      (d) => assert.equal(detectProductKind(d), "web"),
+      (d) => assert.equal(detectProductKind(d), "cli"),
     );
     withRepo(
       "forge-kind-pri-cli-",

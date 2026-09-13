@@ -696,8 +696,8 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
         `ULW released — ${s.synthStreak} synthesized cycle(s) already ran; the Planner must produce a parseable plan. Re-arm with /ulw or give a mandate.`,
       );
     }
-    const unkept = (s.promises ?? scout?.parsed?.promises ?? []).some((p) => p.state !== "kept");
     const inventory = s.promises ?? scout?.parsed?.promises ?? [];
+    const unkept = inventory.some(promiseNeedsWork);
     const worthHold = isWorthHoldError(out);
     const kind = unkept ? "keep-promise" : inventory.length || worthHold ? "go-deeper" : "no-plan";
     rt.log?.(
@@ -789,7 +789,7 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
         `ULW released — ${s.synthStreak} synthesized cycle(s) already ran; the Planner must produce a parseable plan. Re-arm with /ulw or give a mandate.`,
       );
     }
-    const unkept = (s.promises ?? []).some((p) => p.state !== "kept");
+    const unkept = (s.promises ?? []).some(promiseNeedsWork);
     const kind = outstanding.length || unkept ? "keep-promise" : "go-deeper";
     const whySynth =
       s.mandate != null && !usedTheProduct
@@ -1597,6 +1597,11 @@ function promiseNamedInOperator(p: CyclePromise, operator: string[]): boolean {
   for (const m of text.matchAll(/[a-z0-9]+(?:-[a-z0-9]+)+/gi)) ids.add(m[0]);
   for (const m of p.text.matchAll(/[A-Z][a-z0-9]*[A-Z][A-Za-z0-9]*/g)) ids.add(m[0]);
   return [...ids].some((id) => wordBounded(blob, id));
+}
+
+/** Broken/absent/unknown — not kept, not a lease `limited` the harness already parked. */
+function promiseNeedsWork(p: CyclePromise): boolean {
+  return p.state !== "kept" && p.state !== "limited";
 }
 
 /** Broken/unknown promises not named on Operator:. Kill-switch restores mandate release. */

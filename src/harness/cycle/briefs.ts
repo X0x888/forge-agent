@@ -338,7 +338,7 @@ function recordLines(input: PlannerPlanInput): string[] {
       lines.push(``, `## The last Reviewer's shape notes`);
       for (const a of last.architecture.slice(0, 6)) lines.push(`- ${clipBlock(a, 300).replace(/\n/g, " ")}`);
     }
-    const unkept = (s.promises ?? []).filter((p) => p.state !== "kept");
+    const unkept = (s.promises ?? []).filter((p) => p.state !== "kept" && p.state !== "limited");
     if (unkept.length) {
       lines.push(
         ``,

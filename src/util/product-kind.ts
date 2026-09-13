@@ -93,10 +93,10 @@ function isGame(root: string): boolean {
 }
 
 function isWeb(root: string): boolean {
+  // A bin is a CLI even when Vite/Next sits beside it (docs site, playground).
+  if (hasBin(readPkg(root))) return false;
   if (WEB_CONFIGS.some((f) => exists(root, f))) return true;
-  if (exists(root, "index.html") && hasFrontendLock(root) && !hasBin(readPkg(root))) {
-    return true;
-  }
+  if (exists(root, "index.html") && hasFrontendLock(root)) return true;
   return false;
 }
 

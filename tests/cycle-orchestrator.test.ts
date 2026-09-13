@@ -1594,6 +1594,20 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     assert.match(state.items[0]?.proof ?? "", /public interface; report the observation and any limits/);
   });
 
+  it("a no-mandate fulfilled with only a limited promise is go-deeper, not keep-promise", async () => {
+    const sid = "orch3-fulfilled-limited";
+    const scout = `# Cycle 1 scout\nIdentity: a watch face\nLooked: TCC -10004; could not tap the glass\nPromises:\n- Wear the moth on the face — limited — System Events -10004; CLKActive []\nConsidered:\n- leave it — the lease cannot exercise the face`;
+    const { rt } = fakeRuntime(cwd, { twoTurn: true, planner: [scout, PLAN_FULFILLED] });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: null, cwd });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.equal(out?.released, false);
+    const state = loadCycleState(sid)!;
+    assert.equal(state.promises?.[0]?.state, "limited");
+    assert.match(state.planTitle ?? "", /Go deeper/);
+    assert.doesNotMatch(state.planTitle ?? "", /Keep the promise/);
+  });
+
   it("the no-progress wall stops the run only after N synthesized cycles land nothing", async () => {
     const sid = "orch3-wall";
     const { rt } = fakeRuntime(cwd, { twoTurn: true, planner: [SCOUT(1), "prose", "still prose"] });
