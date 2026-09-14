@@ -88,7 +88,7 @@ export const SETUP_CLI_USAGE =
   "Usage: forge setup [model|budget [N]|notify|lsp|init|scaffold|json]\n" +
   "  forge setup              first-day card\n" +
   "  forge setup model        confirm provider/model\n" +
-  "  forge setup budget 5     persist spend cap (omit N → $5)\n" +
+  "  forge setup budget 5     persist spend cap (omit N → peek)\n" +
   "  forge setup notify       turn-end desktop notify\n" +
   "  forge setup --json";
 
@@ -117,24 +117,23 @@ export function setupJsonPayload(
   };
 }
 
-/** Parse `/setup budget` / `forge setup budget` amount. Empty → first-day $5. */
+/** Parse `/setup budget` / `forge setup budget` amount. Empty → peek, do not write. */
 export function resolveSetupBudgetAmount(
   raw?: string,
-): { ok: true; amount: number } | { ok: false; raw: string } {
+):
+  | { ok: true; peek: true }
+  | { ok: true; peek: false; amount: number }
+  | { ok: false; raw: string } {
   const t = String(raw ?? "").trim();
-  if (!t) return { ok: true, amount: SETUP_DEFAULT_BUDGET_USD };
+  if (!t) return { ok: true, peek: true };
   const n = parseCostUsd(t);
   if (n == null) return { ok: false, raw: t };
-  return { ok: true, amount: n };
+  return { ok: true, peek: false, amount: n };
 }
 
-/** Sticky spend cap so `forge config --json` / the next `forge setup` see it. */
+/** Sticky spend cap so `forge config --json` / the next `forge setup` see it. Throws if the write does not land. */
 export function persistSetupBudget(amount: number): void {
-  try {
-    savePreferences({ maxCostUsd: amount, seenSetup: true });
-  } catch {
-    /* */
-  }
+  savePreferences({ maxCostUsd: amount, seenSetup: true });
 }
 
 export {
@@ -145,29 +144,17 @@ export {
 };
 
 export function markSetupSeen(): void {
-  try {
-    savePreferences({ seenSetup: true, seenWelcomeTip: true });
-  } catch {
-    /* */
-  }
+  savePreferences({ seenSetup: true, seenWelcomeTip: true });
 }
 
 export function markSetupSkipped(): void {
-  try {
-    savePreferences({
-      setupSkipped: true,
-      seenSetup: true,
-      seenWelcomeTip: true,
-    });
-  } catch {
-    /* */
-  }
+  savePreferences({
+    setupSkipped: true,
+    seenSetup: true,
+    seenWelcomeTip: true,
+  });
 }
 
 export function markProviderModelConfirmed(): void {
-  try {
-    savePreferences({ seenProviderModelConfirm: true, seenSetup: true });
-  } catch {
-    /* */
-  }
+  savePreferences({ seenProviderModelConfirm: true, seenSetup: true });
 }

@@ -3892,7 +3892,15 @@ const stats = collectUsageStats({
     case "/setup": {
       const action = parseSetupAction(arg);
       if (action.kind === "skip") {
-        markSetupSkipped();
+        try {
+          markSetupSkipped();
+        } catch (err) {
+          return {
+            handled: true,
+            failed: true,
+            output: `Could not persist setup skip: ${err instanceof Error ? err.message : String(err)}`,
+          };
+        }
         return {
           handled: true,
           output: "Setup compact line hidden. /setup still works anytime.",
@@ -3912,7 +3920,11 @@ const stats = collectUsageStats({
         auth: opts.auth ?? null,
       });
       if (action.kind === "json") {
-        markSetupSeen();
+        try {
+          markSetupSeen();
+        } catch {
+          /* peek still works */
+        }
         return {
           handled: true,
           output: JSON.stringify(
@@ -3927,11 +3939,23 @@ const stats = collectUsageStats({
         };
       }
       if (action.kind === "card") {
-        markSetupSeen();
+        try {
+          markSetupSeen();
+        } catch {
+          /* peek still works */
+        }
         return { handled: true, output: formatSetupCard(assessed) };
       }
       if (action.kind === "model") {
-        markProviderModelConfirmed();
+        try {
+          markProviderModelConfirmed();
+        } catch (err) {
+          return {
+            handled: true,
+            failed: true,
+            output: `Could not persist model confirm: ${err instanceof Error ? err.message : String(err)}`,
+          };
+        }
         return {
           handled: true,
           output:
@@ -3957,7 +3981,30 @@ const stats = collectUsageStats({
             session: result.session ?? opts.session,
           };
         }
-        persistSetupBudget(resolved.amount);
+        if (resolved.peek) {
+          const result = runBudget({
+            session: opts.session,
+            config: opts.config,
+            arg: "",
+            color: Boolean(process.stdout.isTTY),
+            persist: false,
+            notify: true,
+          });
+          return {
+            handled: true,
+            output: result.output,
+            session: result.session ?? opts.session,
+          };
+        }
+        try {
+          persistSetupBudget(resolved.amount);
+        } catch (err) {
+          return {
+            handled: true,
+            failed: true,
+            output: `Could not persist spend cap: ${err instanceof Error ? err.message : String(err)}`,
+          };
+        }
         const result = runBudget({
           session: opts.session,
           config: opts.config,
@@ -3979,7 +4026,11 @@ const stats = collectUsageStats({
           focus,
           opts.config.workspace || opts.session.meta.cwd || process.cwd(),
         );
-        markSetupSeen();
+        try {
+          markSetupSeen();
+        } catch {
+          /* forward still works */
+        }
         return {
           handled: true,
           output: focus
@@ -3990,7 +4041,15 @@ const stats = collectUsageStats({
         };
       }
       if (action.kind === "notify") {
-        savePreferences({ notifyOnTurnEnd: true });
+        try {
+          savePreferences({ notifyOnTurnEnd: true });
+        } catch (err) {
+          return {
+            handled: true,
+            failed: true,
+            output: `Could not persist notify: ${err instanceof Error ? err.message : String(err)}`,
+          };
+        }
         return {
           handled: true,
           output:
@@ -4025,7 +4084,11 @@ const stats = collectUsageStats({
           cwd: opts.config.workspace || opts.session.meta.cwd || process.cwd(),
           quiet: true,
         });
-        markSetupSeen();
+        try {
+          markSetupSeen();
+        } catch {
+          /* scaffold still wrote files */
+        }
         return {
           handled: true,
           output: formatInitScaffoldSummary(result),

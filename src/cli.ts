@@ -3633,11 +3633,20 @@ Docs: docs/PRODUCTION.md
           return;
         }
         if (action.kind === "skip") {
-          savePreferences({
-            setupSkipped: true,
-            seenSetup: true,
-            seenWelcomeTip: true,
-          });
+          try {
+            savePreferences({
+              setupSkipped: true,
+              seenSetup: true,
+              seenWelcomeTip: true,
+            });
+          } catch (err) {
+            failInvalidFlag(
+              "setup_persist_failed",
+              `Could not persist setup skip: ${err instanceof Error ? err.message : String(err)}`,
+              {},
+              { json: wantJson },
+            );
+          }
           if (wantJson) {
             await emitCard();
             return;
@@ -3646,7 +3655,16 @@ Docs: docs/PRODUCTION.md
           return;
         }
         if (action.kind === "model") {
-          markProviderModelConfirmed();
+          try {
+            markProviderModelConfirmed();
+          } catch (err) {
+            failInvalidFlag(
+              "setup_persist_failed",
+              `Could not persist model confirm: ${err instanceof Error ? err.message : String(err)}`,
+              {},
+              { json: wantJson },
+            );
+          }
           if (!wantJson) {
             log.info(
               `Provider/model confirmed: ${config.provider}/${config.model}`,
@@ -3665,7 +3683,26 @@ Docs: docs/PRODUCTION.md
               { json: wantJson },
             );
           }
-          persistSetupBudget(resolved.amount);
+          if (resolved.peek) {
+            const cap = resolveMaxCostUsd(config) ?? 0;
+            if (!wantJson) {
+              log.info(
+                cap > 0 ? `Spend cap  $${cap}` : "Spend cap  unlimited",
+              );
+            }
+            await emitCard();
+            return;
+          }
+          try {
+            persistSetupBudget(resolved.amount);
+          } catch (err) {
+            failInvalidFlag(
+              "setup_persist_failed",
+              `Could not persist spend cap: ${err instanceof Error ? err.message : String(err)}`,
+              { amount: resolved.amount },
+              { json: wantJson },
+            );
+          }
           config = loadConfig();
           if (!wantJson) {
             log.info(
@@ -3678,7 +3715,16 @@ Docs: docs/PRODUCTION.md
           return;
         }
         if (action.kind === "notify") {
-          savePreferences({ notifyOnTurnEnd: true, seenSetup: true });
+          try {
+            savePreferences({ notifyOnTurnEnd: true, seenSetup: true });
+          } catch (err) {
+            failInvalidFlag(
+              "setup_persist_failed",
+              `Could not persist notify: ${err instanceof Error ? err.message : String(err)}`,
+              {},
+              { json: wantJson },
+            );
+          }
           if (!wantJson) {
             log.info(
               "Turn-end desktop notify ON (persisted). FORGE_NOTIFY=0 overrides.",

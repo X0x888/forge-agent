@@ -11,7 +11,11 @@ import {
   loadPreferences,
   savePreferences,
 } from "../src/config/preferences.js";
-import { persistSetupBudget } from "../src/commands/setup.js";
+import {
+  persistSetupBudget,
+  markProviderModelConfirmed,
+  resolveSetupBudgetAmount,
+} from "../src/commands/setup.js";
 import { formatUnknownSlash } from "../src/commands/slash.js";
 import { runForgeInit } from "../src/commands/init-scaffold.js";
 
@@ -111,6 +115,66 @@ describe("/setup slash", () => {
     const { loadConfig } = await import("../src/config/load.js");
     const cfg = loadConfig();
     assert.equal(cfg.maxCostUsd, 5);
+  });
+
+  it("bare /setup budget peeks without writing $5", async () => {
+    const s = session();
+    const r = await handleSlash("/setup budget", {
+      session: s,
+      config: { ...DEFAULT_CONFIG, workspace: cwd },
+      hooks: new HookRunner(DEFAULT_CONFIG, cwd),
+    });
+    assert.equal(r.failed, undefined);
+    assert.equal(loadPreferences().maxCostUsd, undefined);
+    assert.equal(s.meta.maxCostUsd, undefined);
+    const empty = resolveSetupBudgetAmount("");
+    assert.equal(empty.ok, true);
+    assert.equal(empty.ok && empty.peek, true);
+    const five = resolveSetupBudgetAmount("5");
+    assert.equal(five.ok, true);
+    assert.equal(five.ok && !five.peek && five.amount, 5);
+  });
+
+  it("persistSetupBudget fails closed when preferences cannot be written", () => {
+    const bad = path.join(home, "not-a-dir");
+    fs.writeFileSync(bad, "x");
+    process.env.FORGE_HOME = bad;
+    assert.throws(() => persistSetupBudget(5));
+    assert.throws(() => markProviderModelConfirmed());
+    process.env.FORGE_HOME = home;
+  });
+
+  it("/setup budget 5 fails closed when preferences cannot be written", async () => {
+    const s = session();
+    const bad = path.join(home, "not-a-dir");
+    fs.writeFileSync(bad, "x");
+    process.env.FORGE_HOME = bad;
+    const r = await handleSlash("/setup budget 5", {
+      session: s,
+      config: { ...DEFAULT_CONFIG, workspace: cwd },
+      hooks: new HookRunner(DEFAULT_CONFIG, cwd),
+    });
+    assert.equal(r.failed, true);
+    assert.doesNotMatch(String(r.output), /persisted/i);
+    assert.match(String(r.output), /Could not persist spend cap/);
+    process.env.FORGE_HOME = home;
+    assert.equal(loadPreferences().maxCostUsd, undefined);
+  });
+
+  it("/setup model fails closed when preferences cannot be written", async () => {
+    const s = session();
+    const bad = path.join(home, "not-a-dir");
+    fs.writeFileSync(bad, "x");
+    process.env.FORGE_HOME = bad;
+    const r = await handleSlash("/setup model", {
+      session: s,
+      config: { ...DEFAULT_CONFIG, workspace: cwd, model: "grok-4.6" },
+      hooks: new HookRunner(DEFAULT_CONFIG, cwd),
+    });
+    assert.equal(r.failed, true);
+    assert.doesNotMatch(String(r.output), /confirmed/);
+    process.env.FORGE_HOME = home;
+    assert.equal(loadPreferences().seenProviderModelConfirm, undefined);
   });
 
   it("/setup model then the card drops (not confirmed)", async () => {
