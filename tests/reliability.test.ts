@@ -2370,6 +2370,26 @@ assert.match(fish, /l continue/);
     assert.equal(normalizeCompletionShell("bogus"), null);
     assert.throws(() => shellCompletionScript("powershell"), /Unknown completion shell/);
   });
+
+  it("lists every TOP_LEVEL_COMMANDS entry and --max-cycles / --max-cost", async () => {
+    const { shellCompletionScript } = await import(
+      "../src/util/completion-script.js"
+    );
+    const { TOP_LEVEL_COMMANDS } = await import("../src/cli/help-groups.js");
+    const bash = shellCompletionScript("bash");
+    const zsh = shellCompletionScript("zsh");
+    const fish = shellCompletionScript("fish");
+    for (const cmd of TOP_LEVEL_COMMANDS) {
+      assert.match(bash, new RegExp(`\\b${cmd}\\b`));
+      assert.match(zsh, new RegExp(`\\b${cmd}\\b`));
+      assert.match(fish, new RegExp(`\\b${cmd}\\b`));
+    }
+    for (const flag of ["max-cycles", "max-cost"]) {
+      assert.match(bash, new RegExp(`--${flag}`));
+      assert.match(zsh, new RegExp(`--${flag}`));
+      assert.match(fish, new RegExp(`-l ${flag}`));
+    }
+  });
 });
 
 describe("sessions list cwd filter", () => {

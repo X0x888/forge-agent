@@ -10,7 +10,7 @@
  *  - Multi-provider: xAI, Anthropic, OpenAI, OpenRouter, Google
  */
 import { Command } from "commander";
-import { installGroupedHelp } from "./cli/help-groups.js";
+import { installGroupedHelp, TOP_LEVEL_COMMANDS } from "./cli/help-groups.js";
 import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
@@ -398,6 +398,32 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
       "Disable blocking Stop hooks (Grok-compatible passive mode)",
     );
   installGroupedHelp(program);
+  program.addHelpCommand(false);
+  program
+    .command("help")
+    .description("Show CLI help (same as --help)")
+    .option("--json", "Machine-readable JSON")
+    .action(
+      (
+        opts: { json?: boolean },
+        command?: { optsWithGlobals?: () => Record<string, unknown> },
+      ) => {
+        const wantJson = flagJson(opts as Record<string, unknown>, command);
+        const text = program.helpInformation();
+        if (wantJson) {
+          emitOkJson(
+            {
+              ok: true,
+              reason: "help",
+              help: text.replace(/\x1B\[[0-9;]*m/g, ""),
+            },
+            true,
+          );
+          return;
+        }
+        process.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
+      },
+    );
   program
     .argument("[prompt...]", "Optional initial prompt (also used by `forge run`)")
     .action(async (promptParts: string[], opts) => {
@@ -5069,31 +5095,6 @@ function failSessionLookup(
  * Usage / missing-arg failures for sessions subcommands.
  * With --json: `{ ok:false, reason:usage, error }` on stdout.
  */
-
-/** Top-level CLI subcommands (for bare `forge <typo>` recovery). */
-const TOP_LEVEL_COMMANDS = [
-  "run",
-  "login",
-  "logout",
-  "auth",
-  "accounts",
-  "sessions",
-  "init",
-  "setup",
-  "lsp",
-  "models",
-  "completion",
-  "prune-tool-output",
-  "prune-metrics",
-  "tmp",
-  "logs",
-  "config",
-  "stats",
-  "tips",
-  "news",
-  "doctor",
-  "status",
-] as const;
 
 /**
  * When a bare prompt is a single token that looks like a mistyped subcommand,

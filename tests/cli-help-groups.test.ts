@@ -4,6 +4,7 @@ import { Command } from "commander";
 import {
   groupOptionsByHelpSection,
   installGroupedHelp,
+  TOP_LEVEL_COMMANDS,
 } from "../src/cli/help-groups.js";
 
 describe("groupOptionsByHelpSection", () => {
@@ -64,5 +65,13 @@ describe("installGroupedHelp", () => {
     assert.doesNotMatch(help, /^Options:/m);
     // implicit --help lands in Output, not a leftover dump
     assert.match(help, /--help/);
+  });
+});
+
+describe("TOP_LEVEL_COMMANDS", () => {
+  it("includes help, lsp, and tmp so typo recovery and Tab match --help", () => {
+    assert.ok(TOP_LEVEL_COMMANDS.includes("help"));
+    assert.ok(TOP_LEVEL_COMMANDS.includes("lsp"));
+    assert.ok(TOP_LEVEL_COMMANDS.includes("tmp"));
   });
 });

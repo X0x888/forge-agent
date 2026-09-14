@@ -4,6 +4,35 @@
  */
 import { Help, type Command, type Option } from "commander";
 
+/**
+ * Top-level subcommands Commander registers (plus `help`).
+ * Typo recovery and shell completion share this list so Tab matches `--help`.
+ */
+export const TOP_LEVEL_COMMANDS = [
+  "run",
+  "login",
+  "logout",
+  "auth",
+  "accounts",
+  "sessions",
+  "init",
+  "setup",
+  "lsp",
+  "models",
+  "completion",
+  "prune-tool-output",
+  "prune-metrics",
+  "tmp",
+  "logs",
+  "config",
+  "stats",
+  "tips",
+  "news",
+  "doctor",
+  "status",
+  "help",
+] as const;
+
 export type HelpFlag = { flags: string };
 
 export const OPTION_HELP_GROUPS: ReadonlyArray<{

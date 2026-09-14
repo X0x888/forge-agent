@@ -1,4 +1,6 @@
 /** Shell completion scripts for expert terminals. */
+import { TOP_LEVEL_COMMANDS } from "../cli/help-groups.js";
+
 export const COMPLETION_SHELLS = ["bash", "zsh", "fish"] as const;
 export type CompletionShell = (typeof COMPLETION_SHELLS)[number];
 
@@ -22,13 +24,12 @@ const ADD_ACCOUNT_NOTES = [
 ].join("\n");
 
 export function shellCompletionScript(shell: string): string {
-  const cmds =
-    "run login logout auth accounts sessions init setup models doctor stats tips news logs config status completion prune-tool-output prune-metrics";
+  const cmds = TOP_LEVEL_COMMANDS.join(" ");
   const zshCmds = cmds.split(" ").join(" ");
   const runFlags =
-    "--json --ulw --max-cycles --max-waves --permission-mode --model --provider --base-url --goal --session --continue --new --title --sandbox --sandbox-network --sandbox-missing --read-outside --deny --allow --ask --cwd --effort --max-turns --no-blocking-stop";
+    "--json --ulw --max-cycles --max-waves --max-cost --permission-mode --model --provider --base-url --goal --session --continue --new --title --sandbox --sandbox-network --sandbox-missing --read-outside --deny --allow --ask --cwd --effort --max-turns --no-blocking-stop";
   const topFlags =
-    "--new --session --continue --title --json --model --provider --base-url --permission-mode --ulw --max-waves --goal --cwd --sandbox --sandbox-network --sandbox-missing --read-outside --deny --allow --ask --effort --max-turns --no-blocking-stop --help --version";
+    "--new --session --continue --title --json --model --provider --base-url --permission-mode --ulw --max-cycles --max-waves --max-cost --goal --cwd --sandbox --sandbox-network --sandbox-missing --read-outside --deny --allow --ask --effort --max-turns --no-blocking-stop --help --version";
   const sessionsActions =
     "list show path export import fork pin unpin pinned title rename delete prune search find errors untitled";
   const sessionsFlags =
@@ -187,6 +188,8 @@ export function shellCompletionScript(shell: string): string {
       'complete -c forge -l allow -d "Allow rule"',
       'complete -c forge -l ask -d "Ask rule"',
       'complete -c forge -l max-turns -d "Cap agent turns"',
+      'complete -c forge -l max-cycles -d "ULW cycle cap"',
+      'complete -c forge -l max-cost -d "Cap session spend USD"',
       'complete -c forge -l ulw -d "Ultrawork"',
       'complete -c forge -l goal -d "Arm /goal"',
       'complete -c forge -l json -d "JSON output (headless bare forge parity with run --json)"',
@@ -198,6 +201,8 @@ export function shellCompletionScript(shell: string): string {
       // run subcommand
       'complete -c forge -n "__fish_seen_subcommand_from run" -l json -d "JSON result"',
       'complete -c forge -n "__fish_seen_subcommand_from run" -l ulw -d "Ultrawork"',
+      'complete -c forge -n "__fish_seen_subcommand_from run" -l max-cycles -d "ULW cycle cap"',
+      'complete -c forge -n "__fish_seen_subcommand_from run" -l max-cost -d "Cap session spend USD"',
       'complete -c forge -n "__fish_seen_subcommand_from run" -l permission-mode -d "Permission mode" -x -a "default acceptEdits plan bypassPermissions dontAsk accept deny ask yolo"',
       'complete -c forge -n "__fish_seen_subcommand_from run" -l sandbox -d "OS sandbox" -x -a "off workspace read-only strict readonly ro ws none full"',
       'complete -c forge -n "__fish_seen_subcommand_from run" -l sandbox-network -d "Bash network"',
