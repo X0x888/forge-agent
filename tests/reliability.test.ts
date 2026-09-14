@@ -3772,6 +3772,7 @@ describe("completion script sessions hygiene", () => {
     assert.match(bash, /\berrors\b/);
     // actions list should include untitled as action
     assert.match(bash, /untitled/);
+    assert.match(bash, /prune\) COMPREPLY=.*--journals --dry/);
   });
 });
 

@@ -12,6 +12,7 @@
 import { Command } from "commander";
 import { installGroupedHelp, TOP_LEVEL_COMMANDS } from "./cli/help-groups.js";
 import { suggestTopLevelCommand } from "./cli/suggest-command.js";
+import { sanitizeUnknownDryHint, unknownOptionHint } from "./cli/unknown-option.js";
 import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
@@ -285,7 +286,7 @@ async function main(): Promise<void> {
   program.configureOutput({
     writeErr: (str) => {
       if (wantJsonCli) return; // structured path below
-      process.stderr.write(str);
+      process.stderr.write(sanitizeUnknownDryHint(str));
     },
   });
   program
@@ -309,6 +310,7 @@ Examples:
   forge "next step" --json                     # bare headless JSON (parity with run --json)
   forge setup --json · forge init --json · forge tips --json · forge completion bash --json
   forge sessions prune --keep 50
+  forge sessions prune --journals --dry
   forge sessions export <id> --format json --out ./session.json
   forge stats --days 7
   forge news
@@ -2336,6 +2338,10 @@ Docs: docs/PRODUCTION.md
       "Prune: delete mutations.jsonl (undo journals) — keeps sessions and lastError",
     )
     .option(
+      "--dry",
+      "Prune: preview what would be deleted without removing it",
+    )
+    .option(
       "-n, --limit <n>",
       "List limit (0/all/max = unlimited)",
       "30",
@@ -3076,13 +3082,20 @@ Docs: docs/PRODUCTION.md
         return;
       }
       if (act === "prune") {
+        const dry = Boolean(globalOpts.dry);
+        if (dry && !Boolean(globalOpts.journals)) {
+          failUsage("Usage: forge sessions prune --journals --dry", {
+            json: Boolean(globalOpts.json),
+          });
+        }
         if (Boolean(globalOpts.journals)) {
-          const j = pruneMutationJournals();
+          const j = pruneMutationJournals({ dry });
           if (globalOpts.json) {
             emitOkJson(
               {
                 forgeHome: forgeHome(),
                 journals: true,
+                dry,
                 scanned: j.scanned,
                 deleted: j.deleted,
                 bytesFreed: j.bytesFreed,
@@ -3092,8 +3105,9 @@ Docs: docs/PRODUCTION.md
             );
           } else {
             const kb = (j.bytesFreed / 1024).toFixed(1);
+            const verb = dry ? "Would drop" : "Dropped";
             log.success(
-              `Dropped ${j.deleted} undo journal(s) (${kb} KB); scanned ${j.scanned}` +
+              `${verb} ${j.deleted} undo journal(s) (${kb} KB); scanned ${j.scanned}` +
                 (j.skippedProtected
                   ? `; protected ${j.skippedProtected}`
                   : "") +
@@ -5194,6 +5208,9 @@ Docs: docs/PRODUCTION.md
     // writeErr already printed commander errors to stderr; only log non-commander.
     if (!code.startsWith("commander.")) {
       log.error(msg);
+    } else if (code === "commander.unknownOption") {
+      const foot = unknownOptionHint(msg.replace(/^error:\s*/i, "").trim());
+      if (foot.hint) log.error(foot.hint);
     } else if (code === "commander.excessArguments") {
       const foot = excessArgCommandHint();
       if (foot.hint) log.error(foot.hint);
@@ -5274,56 +5291,6 @@ function excessArgCommandHint(argv: string[] = process.argv): {
   }
   return {};
 }
-
-/** Recover unknown --flag typos from a stable expert allowlist. */
-function unknownOptionHint(message: string): {
-  suggestion?: string;
-  hint?: string;
-} {
-  const m = message.match(/unknown option ['"]?(-{1,2}[\w-]+)/i);
-  if (!m) return {};
-  const raw = m[1] || "";
-  const candidates = [
-    "--json",
-    "--session",
-    "--continue",
-    "--new",
-    "--title",
-    "--cwd",
-    "--provider",
-    "--model",
-    "--effort",
-    "--permission-mode",
-    "--sandbox",
-    "--sandbox-network",
-    "--sandbox-missing",
-    "--read-outside",
-    "--max-turns",
-    "--max-cycles",
-    "--max-waves",
-    "--base-url",
-    "--api-key",
-    "--ulw",
-    "--goal",
-    "--force",
-    "--help",
-    "--version",
-  ];
-  const tip = suggestName(raw.replace(/^--?/, ""), candidates.map((c) => c.replace(/^--?/, "")), {
-    minLength: 2,
-    minScore: 36,
-    requirePrefix3: false,
-  });
-  if (!tip) {
-    return { hint: "forge run --help  ·  forge --help" };
-  }
-  const flag = tip.startsWith("-") ? tip : `--${tip}`;
-  return {
-    suggestion: flag,
-    hint: `Did you mean ${flag}?  ·  forge run --help`,
-  };
-}
-
 
 function suggestToken(
   raw: string,

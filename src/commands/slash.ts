@@ -5690,22 +5690,31 @@ case "/new":
         };
       }
       if (sub === "prune") {
-        if (
+        const dry = parts.includes("--dry");
+        const journals =
           parts.includes("--journals") ||
           parts.includes("--journal") ||
-          parts.includes("--undo-journal")
-        ) {
+          parts.includes("--undo-journal");
+        if (dry && !journals) {
+          return {
+            handled: true,
+            output: "Usage: /sessions prune --journals --dry",
+          };
+        }
+        if (journals) {
           const j = pruneMutationJournals({
             protectIds: [opts.session.meta.id],
+            dry,
           });
           const kb = (j.bytesFreed / 1024).toFixed(1);
           const prot = j.skippedProtected
             ? `; protected ${j.skippedProtected} active`
             : "";
+          const verb = dry ? "Would drop" : "Dropped";
           return {
             handled: true,
             output:
-              `Dropped ${j.deleted} undo journal(s) (${kb} KB)` +
+              `${verb} ${j.deleted} undo journal(s) (${kb} KB)` +
               `${prot}. Sessions / lastError kept. CLI: forge sessions prune --journals`,
           };
         }

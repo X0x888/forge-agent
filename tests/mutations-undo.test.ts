@@ -898,4 +898,27 @@ describe("production packaging + undo safety", () => {
     assert.equal(fs.existsSync(okJournal), false);
     assert.equal(fs.existsSync(path.join(orphanDir, "mutations.jsonl")), false);
   });
+
+  it("prune --journals --dry reports would-drop and leaves the file", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-journals-dry-"));
+    process.env.FORGE_HOME = home;
+    const ws = path.join(home, "ws");
+    fs.mkdirSync(ws);
+    const s = createSession({
+      cwd: ws,
+      provider: "xai",
+      model: "grok-4",
+    });
+    const journal = path.join(home, "sessions", s.meta.id, "mutations.jsonl");
+    fs.writeFileSync(journal, "x".repeat(4096));
+    const preview = pruneMutationJournals({ dry: true });
+    assert.equal(preview.dry, true);
+    assert.equal(preview.deleted, 1);
+    assert.ok(preview.bytesFreed >= 4096);
+    assert.equal(fs.existsSync(journal), true, "dry must not unlink");
+    const dropped = pruneMutationJournals();
+    assert.equal(dropped.dry, false);
+    assert.equal(dropped.deleted, 1);
+    assert.equal(fs.existsSync(journal), false);
+  });
 });

@@ -134,25 +134,30 @@ export function mutationsJournalStats(limit = 500): MutationsJournalStats {
 export interface PruneMutationJournalsResult {
   /** Session dirs that had a mutations.jsonl. */
   scanned: number;
-  /** Journal files deleted. */
+  /** Journal files deleted (would-delete when dry). */
   deleted: number;
-  /** Bytes removed. */
+  /** Bytes removed (would-free when dry). */
   bytesFreed: number;
   /** Active/protected session journals left in place. */
   skippedProtected: number;
+  /** True when nothing was unlinked. */
+  dry: boolean;
 }
 
 /**
  * Delete mutations.jsonl across session dirs (including dirs with no
  * loadable meta). Session records and lastError stay. /undo on those
  * sessions becomes empty. Doctor Next for a large journal.
+ * `dry` previews the drop the way `tmp prune --dry` does.
  */
 export function pruneMutationJournals(opts?: {
   protectIds?: string[];
+  dry?: boolean;
 }): PruneMutationJournalsResult {
   const protect = new Set(
     (opts?.protectIds ?? []).map((id) => String(id || "").trim()).filter(Boolean),
   );
+  const dry = Boolean(opts?.dry);
   const root = path.join(forgeHome(), "sessions");
   let scanned = 0;
   let deleted = 0;
@@ -170,7 +175,7 @@ export function pruneMutationJournals(opts?: {
           skippedProtected += 1;
           continue;
         }
-        fs.unlinkSync(file);
+        if (!dry) fs.unlinkSync(file);
         deleted += 1;
         bytesFreed += st.size;
       } catch {
@@ -180,7 +185,7 @@ export function pruneMutationJournals(opts?: {
   } catch {
     /* no sessions dir */
   }
-  return { scanned, deleted, bytesFreed, skippedProtected };
+  return { scanned, deleted, bytesFreed, skippedProtected, dry };
 }
 
 /** Keep the newest tail so /undo still sees late waves. */
