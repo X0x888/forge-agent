@@ -7750,7 +7750,7 @@ export async function runDoctorCheck(
   }
   try {
     const { listSessions } = await import("../session/session.js");
-    const all = listSessions({ limit: 10_000 });
+    const all = listSessions({ limit: 0 });
     sessionsTotal = all.length;
     const errTally = tallyLastErrorProblems(all);
     sessionsWithLastError = errTally.total;

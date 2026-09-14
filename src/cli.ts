@@ -3374,28 +3374,36 @@ Docs: docs/PRODUCTION.md
         (errorsOnly || untitledOnly || pinnedOnly) && limit === 30
           ? 50
           : limit;
+      const listOpts = {
+        ...(cwdFilter ? { cwd: cwdFilter } : {}),
+        ...(queryFilter ? { query: queryFilter } : {}),
+        ...(pinnedOnly ? { pinned: true } : {}),
+        ...(untitledOnly ? { untitled: true } : {}),
+      };
       const errorMatches = errorsOnly
         ? listSessions({
             limit: 0,
             errors: true,
-            ...(cwdFilter ? { cwd: cwdFilter } : {}),
-            ...(queryFilter ? { query: queryFilter } : {}),
+            ...listOpts,
           })
         : [];
       const errorTally = errorsOnly
         ? tallyLastErrorProblems(errorMatches)
         : null;
-      let list = errorsOnly
-        ? effectiveLimit === 0
-          ? errorMatches
-          : errorMatches.slice(0, effectiveLimit)
+      const scanned = errorsOnly
+        ? errorMatches
         : listSessions({
-            limit: effectiveLimit,
-            ...(cwdFilter ? { cwd: cwdFilter } : {}),
-            ...(queryFilter ? { query: queryFilter } : {}),
-            ...(pinnedOnly ? { pinned: true } : {}),
-            ...(untitledOnly ? { untitled: true } : {}),
+            limit: 0,
+            ...listOpts,
           });
+      let list =
+        effectiveLimit === 0 ? scanned : scanned.slice(0, effectiveLimit);
+      const listUnfiltered =
+        !cwdFilter &&
+        !queryFilter &&
+        !pinnedOnly &&
+        !errorsOnly &&
+        !untitledOnly;
       if (globalOpts.json) {
         // Global inventory (unfiltered) so CI/experts can prune without doctor.
         let sessionsTotal = 0;
@@ -3404,7 +3412,9 @@ Docs: docs/PRODUCTION.md
         let sessionsLastErrorByCode: Record<string, number> = {};
         let sessionsPinned = 0;
         try {
-          const all = listSessions({ limit: 10_000 });
+          const all = listUnfiltered
+            ? scanned
+            : listSessions({ limit: 0 });
           sessionsTotal = all.length;
           sessionsUntitled = all.filter(
             (s) => !String(s.title || "").trim(),
@@ -3554,8 +3564,9 @@ Docs: docs/PRODUCTION.md
       if (untitledOnly) filterNotes.push("untitled");
       let invNote = "";
       try {
-        // Cheap inventory hint on human list (best-effort; never fail list).
-        const all = listSessions({ limit: 10_000 });
+        // Unfiltered inventory. When this list had no extra filters, reuse
+        // the rows we already walked (list -n 5 must not scan twice).
+        const all = listUnfiltered ? scanned : listSessions({ limit: 0 });
         const total = all.length;
         const untitled = all.filter((s) => !String(s.title || "").trim()).length;
         const errs = all.filter((s) => isLastErrorProblem(s.lastError)).length;

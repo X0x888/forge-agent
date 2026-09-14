@@ -1963,7 +1963,10 @@ export function listSessions(
     // Prefer sidecar meta.json — avoids parsing huge session.json histories.
     // One corrupt dir must never break the whole list (doctor /sessions).
     try {
-      const meta = loadSessionMeta(id);
+      // Directory name is the session id. Never resolveSessionId/title-search
+      // leftovers (Chrome look dirs, journal-only UUIDs) — that re-reads every
+      // real meta per junk name.
+      const meta = readSessionMetaExact(id);
       if (!meta) continue;
       if (cwdFilter) {
         if (!meta.cwd) continue;

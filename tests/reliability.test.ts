@@ -2435,6 +2435,35 @@ describe("sessions list cwd filter", () => {
     assert.equal(byCreateTitle[0]!.id, titled.meta.id);
   });
 
+  it("listSessions skips leftover dirs without resolving titles", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-list-walk-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession, listSessions, setSessionTitle, saveSession } =
+      await import("../src/session/session.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    setSessionTitle(s, "chrome-profile");
+    saveSession(s);
+    createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const root = path.join(tmp, "sessions");
+    for (const junk of [
+      "chrome-profile",
+      "hashpet-c11-look",
+      "planner-c34",
+      "Default",
+      "work",
+    ]) {
+      fs.mkdirSync(path.join(root, junk), { recursive: true });
+      fs.writeFileSync(path.join(root, junk, "mutations.jsonl"), "{}\n");
+    }
+    const listed = listSessions({ limit: 50 });
+    assert.equal(listed.length, 2);
+    assert.equal(listed.filter((m) => m.id === s.meta.id).length, 1);
+    assert.ok(listed.every((m) => /^[0-9a-f-]{36}$/i.test(m.id)));
+  });
+
   it("filters listSessions by errors and untitled before limit", async () => {
     const fs = await import("node:fs");
     const os = await import("node:os");
