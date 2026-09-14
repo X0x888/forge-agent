@@ -152,6 +152,7 @@ import { formatDiffReviewCard } from "../tui/diff-card.js";
 import {
   assembleDoctorReport,
   doctorSessionsRecoveryVerb,
+  formatDoctorPinnedLine,
   type DoctorRecommendation,
   type DoctorSurface,
 } from "../tui/doctor-card.js";
@@ -5749,7 +5750,7 @@ case "/new":
           ? `; skipped ${result.skippedPinned} pinned`
           : "";
         const errNote = result.skippedLastError
-          ? `; skipped ${result.skippedLastError} lastError (/sessions errors · prune --force-last-error)`
+          ? `; skipped ${result.skippedLastError} lastError (${doctorSessionsRecoveryVerb("errors", "repl")} · prune --force-last-error)`
           : result.deletedWithLastError
             ? `; deleted ${result.deletedWithLastError} with lastError`
             : "";
@@ -7779,17 +7780,10 @@ export async function runDoctorCheck(
         ),
       );
     }
-    if (sessionsPinned >= 10) {
+    if (sessionsPinned > 0) {
+      const pinLine = formatDoctorPinnedLine(sessionsPinned, surface);
       lines.push(
-        chalk.yellow(
-          `  ⚠ ${sessionsPinned} pinned sessions (prune-protected) — /sessions pinned · /unpin stale keepers`,
-        ),
-      );
-    } else if (sessionsPinned > 0) {
-      lines.push(
-        chalk.dim(
-          `  pinned sessions: ${sessionsPinned}  → /sessions pinned · /pin protects from prune`,
-        ),
+        sessionsPinned >= 10 ? chalk.yellow(pinLine) : chalk.dim(pinLine),
       );
     }
     if (sessionsTotal >= 100) {
@@ -7999,8 +7993,8 @@ export async function runDoctorCheck(
       id: "orphan-subagents",
       severity: "hygiene",
       detail: `${orphanSubagentSessions} nested subagent sessions with no ulw.json (max_turns mills)`,
-      replAction: "/sessions errors",
-      cliAction: "forge sessions prune --orphans",
+        replAction: doctorSessionsRecoveryVerb("errors", "repl"),
+        cliAction: "forge sessions prune --orphans",
     });
   }
   {
@@ -8013,8 +8007,8 @@ export async function runDoctorCheck(
         severity: "quality",
         detail:
           `${top[1]} sessions ended max_turns — explore default is ${defaultSubagentMaxTurns("explore")}; raising FORGE_SUBAGENT_EXPLORE_MAX_TURNS spends more on find-next-hole mills, it does not finish more`,
-        replAction: "/sessions errors",
-        cliAction: "forge sessions list --errors",
+        replAction: doctorSessionsRecoveryVerb("errors", "repl"),
+        cliAction: doctorSessionsRecoveryVerb("errors", "cli"),
       });
     }
   }

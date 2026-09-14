@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import {
   assembleDoctorReport,
   doctorSessionsRecoveryVerb,
+  doctorForceLastErrorHelp,
   formatDoctorCloser,
   formatDoctorHeader,
+  formatDoctorPinnedLine,
   formatDoctorRecommended,
 } from "../src/tui/doctor-card.js";
 
@@ -199,31 +201,28 @@ describe("doctor health card", () => {
     assert.doesNotMatch(cli, /\/sessions errors/);
   });
 
-  it("CLI recovery verbs are shell; REPL may keep slashes", () => {
-    assert.equal(
-      doctorSessionsRecoveryVerb("errors", "cli"),
-      "forge sessions errors",
-    );
-    assert.equal(
-      doctorSessionsRecoveryVerb("untitled", "cli"),
-      "forge sessions untitled",
-    );
+  it("CLI recovery catalog has no slash keys; REPL keeps /sessions errors", () => {
+    const kinds = ["errors", "untitled", "pinned", "pin", "unpin"] as const;
+    for (const kind of kinds) {
+      const cli = doctorSessionsRecoveryVerb(kind, "cli");
+      assert.doesNotMatch(cli, /^\//);
+      assert.doesNotMatch(cli, /\/sessions/);
+      assert.match(doctorSessionsRecoveryVerb(kind, "repl"), /^\//);
+    }
     assert.equal(
       doctorSessionsRecoveryVerb("errors", "repl"),
       "/sessions errors",
     );
-    assert.equal(
-      doctorSessionsRecoveryVerb("untitled", "repl"),
-      "/sessions untitled",
-    );
-    const cliBody = [
-      `  ⚠ 27 sessions with lastError — ${doctorSessionsRecoveryVerb("errors", "cli")} before prune`,
-      `  untitled sessions: 12/119  →  ${doctorSessionsRecoveryVerb("untitled", "cli")}`,
-    ].join("\n");
-    assert.match(cliBody, /forge sessions errors/);
-    assert.match(cliBody, /forge sessions untitled/);
-    assert.doesNotMatch(cliBody, /\/sessions errors/);
-    assert.doesNotMatch(cliBody, /\/sessions untitled/);
+    assert.doesNotMatch(doctorForceLastErrorHelp("cli"), /\/sessions/);
+    assert.match(doctorForceLastErrorHelp("cli"), /forge sessions errors/);
+    const pinCli = formatDoctorPinnedLine(12, "cli");
+    assert.match(pinCli, /forge sessions pinned/);
+    assert.match(pinCli, /forge sessions unpin/);
+    assert.doesNotMatch(pinCli, /\/sessions pinned/);
+    assert.doesNotMatch(pinCli, /\/unpin/);
+    const pinRepl = formatDoctorPinnedLine(3, "repl");
+    assert.match(pinRepl, /\/sessions pinned/);
+    assert.match(pinRepl, /\/pin/);
   });
 
   it("header stays scrapeable as Forge doctor", () => {

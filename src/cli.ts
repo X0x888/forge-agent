@@ -187,6 +187,7 @@ import {
   offerLoginInteractive,
   formatPostLoginOfferExit,
 } from "./tui/login-offer.js";
+import { doctorForceLastErrorHelp } from "./tui/doctor-card.js";
 import {
   collectSetupAssessment,
   formatSetupCard,
@@ -2318,7 +2319,7 @@ Docs: docs/PRODUCTION.md
     )
     .option(
       "--force-last-error",
-      "Prune: also delete sessions that still carry lastError (default: keep for /sessions errors)",
+      doctorForceLastErrorHelp("cli"),
     )
     .option(
       "--orphans",
