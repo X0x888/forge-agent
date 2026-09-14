@@ -1,14 +1,22 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   assembleDoctorReport,
-  doctorSessionsRecoveryVerb,
-  doctorForceLastErrorHelp,
   formatDoctorCloser,
   formatDoctorHeader,
-  formatDoctorPinnedLine,
   formatDoctorRecommended,
 } from "../src/tui/doctor-card.js";
+import {
+  doctorForceLastErrorHelp,
+  doctorSessionsRecoveryVerb,
+  formatDoctorPinnedLine,
+  formatPinnedEmpty,
+  formatUntitledEmpty,
+  titleSearchHelp,
+} from "../src/cli/sessions-recovery.js";
 
 const AUTH_ISSUE = "Not authenticated — run forge login or set an API key env var";
 const YOLO_ISSUE =
@@ -202,7 +210,17 @@ describe("doctor health card", () => {
   });
 
   it("CLI recovery catalog has no slash keys; REPL keeps /sessions errors", () => {
-    const kinds = ["errors", "untitled", "pinned", "pin", "unpin"] as const;
+    const kinds = [
+      "errors",
+      "untitled",
+      "pinned",
+      "pin",
+      "unpin",
+      "search",
+      "journals",
+      "prune",
+      "orphans",
+    ] as const;
     for (const kind of kinds) {
       const cli = doctorSessionsRecoveryVerb(kind, "cli");
       assert.doesNotMatch(cli, /^\//);
@@ -223,6 +241,28 @@ describe("doctor health card", () => {
     const pinRepl = formatDoctorPinnedLine(3, "repl");
     assert.match(pinRepl, /\/sessions pinned/);
     assert.match(pinRepl, /\/pin/);
+    assert.doesNotMatch(formatPinnedEmpty("cli"), /\/pin/);
+    assert.match(formatPinnedEmpty("cli"), /forge sessions pin/);
+    assert.match(formatPinnedEmpty("repl"), /\/pin/);
+    assert.doesNotMatch(formatUntitledEmpty("cli"), /\/title/);
+    assert.match(titleSearchHelp("cli"), /forge sessions list -q/);
+    assert.doesNotMatch(titleSearchHelp("cli"), /\/sessions search/);
+  });
+
+  it("slash.ts imports recovery verbs and does not own a CLI /sessions errors table", () => {
+    const slash = fs.readFileSync(
+      path.join(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../src/commands/slash.ts",
+      ),
+      "utf8",
+    );
+    assert.match(slash, /sessions-recovery\.js/);
+    assert.doesNotMatch(slash, /cli:\s*"forge sessions errors"/);
+    assert.doesNotMatch(slash, /cli:\s*"\/sessions errors"/);
+    assert.doesNotMatch(slash, /SESSIONS_RECOVERY\s*=/);
+    assert.doesNotMatch(slash, /DOCTOR_SESSIONS_RECOVERY/);
+    assert.doesNotMatch(slash, /"\/sessions errors"/);
   });
 
   it("header stays scrapeable as Forge doctor", () => {

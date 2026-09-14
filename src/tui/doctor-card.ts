@@ -1,5 +1,15 @@
 import chalk from "chalk";
 import { visibleWidth } from "../util/format.js";
+import {
+  sessionsRecoveryVerb,
+} from "../cli/sessions-recovery.js";
+
+export {
+  doctorForceLastErrorHelp,
+  doctorSessionsRecoveryVerb,
+  formatDoctorPinnedLine,
+  type DoctorSessionsRecoveryKind,
+} from "../cli/sessions-recovery.js";
 
 /** REPL `/doctor` is slash keys; `forge doctor` keeps CLI verbs. */
 export type DoctorSurface = "repl" | "cli";
@@ -74,56 +84,6 @@ function closerKeyForRec(
   return rec.replAction || null;
 }
 
-/** Recovery keys: CLI vs REPL is a parameter, not a second copy. */
-export type DoctorSessionsRecoveryKind =
-  | "errors"
-  | "untitled"
-  | "pinned"
-  | "pin"
-  | "unpin";
-
-const DOCTOR_SESSIONS_RECOVERY: Record<
-  DoctorSessionsRecoveryKind,
-  { cli: string; repl: string }
-> = {
-  errors: { cli: "forge sessions errors", repl: "/sessions errors" },
-  untitled: { cli: "forge sessions untitled", repl: "/sessions untitled" },
-  pinned: { cli: "forge sessions pinned", repl: "/sessions pinned" },
-  pin: { cli: "forge sessions pin", repl: "/pin" },
-  unpin: { cli: "forge sessions unpin", repl: "/unpin" },
-};
-
-export function doctorSessionsRecoveryVerb(
-  kind: DoctorSessionsRecoveryKind,
-  surface: DoctorSurface,
-): string {
-  const row = DOCTOR_SESSIONS_RECOVERY[kind];
-  return surface === "cli" ? row.cli : row.repl;
-}
-
-/** Commander `--force-last-error` help (CLI surface). */
-export function doctorForceLastErrorHelp(
-  surface: DoctorSurface = "cli",
-): string {
-  return (
-    "Prune: also delete sessions that still carry lastError (default: keep for " +
-    `${doctorSessionsRecoveryVerb("errors", surface)})`
-  );
-}
-
-export function formatDoctorPinnedLine(
-  n: number,
-  surface: DoctorSurface,
-): string {
-  const pinned = doctorSessionsRecoveryVerb("pinned", surface);
-  const unpin = doctorSessionsRecoveryVerb("unpin", surface);
-  const pin = doctorSessionsRecoveryVerb("pin", surface);
-  if (n >= 10) {
-    return `  ⚠ ${n} pinned sessions (prune-protected) — ${pinned} · ${unpin} stale keepers`;
-  }
-  return `  pinned sessions: ${n}  →  ${pinned} · ${pin} protects from prune`;
-}
-
 /** PATH-stale rebuild — always a shown Next when the rec is present. */
 export const DOCTOR_REBUILD_NEXT = "bash install.sh";
 const DOCTOR_CLOSER_MAX = 4;
@@ -162,14 +122,10 @@ export function formatDoctorCloser(
     push(surface === "cli" ? "forge permissions default" : "/permissions");
   }
   if (/undo journal is large/i.test(blob)) {
-    push(
-      surface === "cli"
-        ? "forge sessions prune --journals"
-        : "/sessions prune --journals",
-    );
+    push(sessionsRecoveryVerb("journals", surface));
   }
   if (/sessions on disk/i.test(blob)) {
-    push(surface === "cli" ? "forge sessions prune --keep 50" : "/sessions");
+    push(sessionsRecoveryVerb("prune", surface));
   }
   for (const rec of opts?.recommendations ?? []) {
     const k = closerKeyForRec(rec, surface);

@@ -187,7 +187,13 @@ import {
   offerLoginInteractive,
   formatPostLoginOfferExit,
 } from "./tui/login-offer.js";
-import { doctorForceLastErrorHelp } from "./tui/doctor-card.js";
+import {
+  doctorForceLastErrorHelp,
+  formatPinnedEmpty,
+  formatUntitledEmpty,
+  sessionsRecoveryVerb,
+  titleSearchHelp,
+} from "./cli/sessions-recovery.js";
 import {
   collectSetupAssessment,
   formatSetupCard,
@@ -392,7 +398,7 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
       "--continue",
       "Resume newest same-cwd session (fail-closed if none; parity with forge run --continue)",
     )
-    .option("--title <text>", "Label for a new session (searchable via list -q / /sessions search)")
+    .option("--title <text>", titleSearchHelp("cli"))
     .option(
       "--json",
       "Headless JSON result on stdout (parity with forge run --json; implies non-interactive)",
@@ -877,7 +883,7 @@ Exit codes:
 
 Empty prompts exit 1 before auth/session create (no orphan sessions, no API spend).
 --session/--new/--title work on parent or subcommand (optsWithGlobals merge).
-Label runs: --title <label> (searchable via forge sessions list -q / /sessions search).
+Label runs: --title <label> (searchable via forge sessions list -q).
 Multi-step CI without copying ids: forge run "…" --continue --json
   (--continue fails closed if no same-cwd session / all locked — omit for fresh)
 
@@ -3517,13 +3523,13 @@ Docs: docs/PRODUCTION.md
         }
         if (untitledOnly) {
           console.log(
-            "No untitled sessions. /title · --title · /goal set auto-titles new ones.",
+            formatUntitledEmpty("cli"),
           );
           return;
         }
         if (pinnedOnly) {
           console.log(
-            "No pinned sessions. forge sessions pin <id> · /pin protects from prune.",
+            formatPinnedEmpty("cli"),
           );
           return;
         }
@@ -7086,7 +7092,7 @@ async function runHeadless(opts: {
           message: "Run hit FORGE_MAX_RUN_MS wall-clock limit (exit 124)",
           tips: [
             "Raise FORGE_MAX_RUN_MS or narrow the task",
-            "forge run --continue  ·  /retry  ·  /sessions errors",
+            `forge run --continue  ·  ${sessionsRecoveryVerb("errors", "cli")}`,
           ],
         });
       } catch {

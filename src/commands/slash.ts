@@ -151,11 +151,16 @@ import { copyToClipboard } from "../util/clipboard.js";
 import { formatDiffReviewCard } from "../tui/diff-card.js";
 import {
   assembleDoctorReport,
-  doctorSessionsRecoveryVerb,
-  formatDoctorPinnedLine,
   type DoctorRecommendation,
   type DoctorSurface,
 } from "../tui/doctor-card.js";
+import {
+  doctorSessionsRecoveryVerb,
+  formatDoctorPinnedLine,
+  formatPinnedEmpty,
+  formatUntitledEmpty,
+  sessionsRecoveryVerb,
+} from "../cli/sessions-recovery.js";
 import {
   defaultBashBackgroundTimeoutMs,
   defaultBashTimeoutMs,
@@ -5974,13 +5979,13 @@ case "/new":
           return {
             handled: true,
             output:
-              "No untitled sessions. /title · --title · /goal set auto-titles new ones.",
+              formatUntitledEmpty("repl"),
           };
         }
         if (pinnedOnly) {
           return {
             handled: true,
-            output: "No pinned sessions. /pin on a session to protect it from prune.",
+            output: formatPinnedEmpty("repl"),
           };
         }
         if (query) {
@@ -7993,8 +7998,8 @@ export async function runDoctorCheck(
       id: "orphan-subagents",
       severity: "hygiene",
       detail: `${orphanSubagentSessions} nested subagent sessions with no ulw.json (max_turns mills)`,
-        replAction: doctorSessionsRecoveryVerb("errors", "repl"),
-        cliAction: "forge sessions prune --orphans",
+        replAction: sessionsRecoveryVerb("orphans", "repl"),
+        cliAction: sessionsRecoveryVerb("orphans", "cli"),
     });
   }
   {
