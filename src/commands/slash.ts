@@ -72,6 +72,7 @@ import {
   formatRetryCard,
   formatUndoCard,
   mutationsJournalStats,
+  pruneMutationJournals,
 } from "../session/mutations.js";
 // readSessionLock already imported below for /sessions list
 import type { HookRunner } from "../harness/hooks.js";
@@ -5682,6 +5683,25 @@ case "/new":
         };
       }
       if (sub === "prune") {
+        if (
+          parts.includes("--journals") ||
+          parts.includes("--journal") ||
+          parts.includes("--undo-journal")
+        ) {
+          const j = pruneMutationJournals({
+            protectIds: [opts.session.meta.id],
+          });
+          const kb = (j.bytesFreed / 1024).toFixed(1);
+          const prot = j.skippedProtected
+            ? `; protected ${j.skippedProtected} active`
+            : "";
+          return {
+            handled: true,
+            output:
+              `Dropped ${j.deleted} undo journal(s) (${kb} KB)` +
+              `${prot}. Sessions / lastError kept. CLI: forge sessions prune --journals`,
+          };
+        }
         // Accept --keep=N or --keep N (0 is valid — keep none except active/pinned/locked)
         let keepRaw: string | undefined;
         for (let i = 0; i < parts.length; i++) {
@@ -7601,7 +7621,7 @@ export async function runDoctorCheck(
       const LARGE_ENTRIES = 2_000;
       if (mj.bytes >= LARGE_BYTES || mj.entries >= LARGE_ENTRIES) {
         issues.push(
-          `Undo journal is large (~${kb} KB, ${mj.entries} entries across ${mj.sessions} session(s)) — prune old sessions (forge sessions prune) or delete stale mutations.jsonl under ~/.forge/sessions/*/`,
+          `Undo journal is large (~${kb} KB, ${mj.entries} entries across ${mj.sessions} session(s)) — forge sessions prune --journals (keeps sessions / lastError; drops mutations.jsonl)`,
         );
       }
     }

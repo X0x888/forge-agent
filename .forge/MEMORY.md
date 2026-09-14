@@ -1,19 +1,10 @@
 # Project memory
 
 > Auto-maintained by Forge. Edit carefully — agent loads this across sessions.
-> key=d54ef9c78f11c027 · updated=2026-09-14T03:59:02.344Z
-
-## constraint
-
-- blockingStopHooks defaults to true — never weaken Stop fail-closed (timeout/error keeps agent working).
+> key=d54ef9c78f11c027 · updated=2026-09-14T04:18:45.998Z
 
 ## gotcha
 
-- npm test sets TMPDIR=$PWD/.tmp — use that (or realpath outside repo) for sandboxed git/temp; bare os.tmpdir() points inside the git tree.
-- Sandboxed git init often fails chmod on .git/config.lock — prefer the real project git root for tests instead of git init in temp dirs.
-- git() in worktree.ts must not trimStart porcelain: unstaged-only is " M path". trim() made slice(3) drop first char (src→rc) and hide untracked. tests/__wt_land__/ is gitignored — worktree-land fixtures live under src/agent/__wt_land_*.
-- parsePorcelainPath / unquotePorcelainPath are public. git() uses trimEnd only — never trimStart porcelain. Unit test: " M src/agent/worktree.ts" → src/agent/worktree.ts.
-- git apply --3way stages files; land path prefers plain apply then 3way+unstage so parent index stays clean. Unstage must use git() (trimEnd only) + parsePorcelainPath — never execFileSync().trim() on porcelain.
 - Never land src/agent/worktree.ts or AGENTS.md in worktree-land tests — a failed /undo restore deletes the file. Use disposable src/agent/__wt_land_* fixtures + journalLandedPreimages unit path.
 - `/auth` empty is `auth  ·  none` with no Next — login is not a › key. `/accounts` empty still closer `/auth`. `formatAuthCard` hides Next `/auth` so the lastErr key is not circular. `printAuthStatus()` is CLI-only (`forge auth`).
 - Safety checkpoints use a temp index (untracked in, secrets out), not git stash create. Restore is git restore --source=sha overwrite + mixed reset — never git stash apply. /checkpoint restore falls back to ulw.checkpointSha. Bare /checkpoint peeks; /checkpoint snap takes the snapshot.
@@ -25,7 +16,6 @@
 
 ## convention
 
-- Preferred checks: npm run typecheck · npm test · npm run check · npm run smoke · npm run ci (cheapest first).
 - Sit-down Next at › is a slash key, never a CLI dump (`npm test`, `forge accounts switch`, `forge login`). lastErr map: 429/quota → /accounts, auth → /auth, overflow → /compact, max_cost → /budget, else /retry. Headless `forge run` keeps CLI verbs.
 - Sit-down /budget is verdict-first (HIT / ok / none). HIT Next is /budget off. Raising or clearing the cap so it no longer hits clears lastError.code=max_cost. FORGE_MAX_COST_USD / config.toml stay off ›.
 - Sit-down /doctor Next is slash keys only (/auth /permissions /setup /status). forge login and forge doctor --json stay on surface:cli (forge doctor). Default formatDoctorCloser surface is repl.
@@ -38,10 +28,9 @@
 
 ## fact
 
-- Cross-session memory: memory_write scope=project → ~/.forge/project-memory + .forge/MEMORY.md; /memory project to list/add/clear.
 - Identity: Forge is a terminal AI coding agent for people who ship in a repo and for CI that must fail closed. The job is: sign in, give a coding task in English, let the agent edit/run/verify, and when you want it not to stop, arm `/goal` or `/ulw`. Sit-down users live in the REPL; operators live on `forge doctor`, `forge run --json`, sessions, and prune.
 - Promise: Headless `forge run --json` fail-closed on empty prompt, missing auth, bad flags, `--continue` miss — kept
-- Promise: Bare `forge "…" --json` same structured fail-closed payload as `forge run --json` (README) — broken
+- Promise: Bare `forge "…" --json` same structured fail-closed payload as `forge run --json` (README) — kept
 - Promise: `forge doctor --json` exit 1 when unhealthy, no secrets in `config --json` — kept
 - Promise: Typo recovery Did you mean for CLI/slash — limited
 - Promise: `/help` first-day sit-down (1–6, Next) without a model call — kept
@@ -50,10 +39,10 @@
 - Promise: Login / OAuth / stored session (`forge login`, SuperGrok, import) — unknown
 - Promise: Blocking Stop, `/goal`, `/ulw` as a user-driven run — unknown
 - Promise: `forge setup` is the first-day hub you can act on — kept
-- Promise: CLI doctor Next keys are commands you can type at the shell that fix the issue they name — limited
+- Promise: CLI doctor Next keys are commands you can type at the shell that fix the issue they name — kept
 - Promise: Headless pure-control slash does not pollute `sessions list` / `--continue` — kept
 - Promise: Credentials never enter logs / JSON — kept
 - Promise: Session inventory, errors, show — kept
-- Promise: Designed wraps are not the errors backlog (`ulw_cycle_complete` stays out of doctor / `sessions errors`) — limited
+- Promise: Designed wraps are not the errors backlog (`ulw_cycle_complete` stays out of doctor / `sessions errors`) — kept
 - Promise: Sandbox deny of secrets and IMDS — limited
 - Promise: CLI `--help` matches behaviour (sit-down keys, verdict-first) — limited

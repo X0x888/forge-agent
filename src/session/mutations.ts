@@ -131,6 +131,58 @@ export function mutationsJournalStats(limit = 500): MutationsJournalStats {
   return { sessions, bytes, entries };
 }
 
+export interface PruneMutationJournalsResult {
+  /** Session dirs that had a mutations.jsonl. */
+  scanned: number;
+  /** Journal files deleted. */
+  deleted: number;
+  /** Bytes removed. */
+  bytesFreed: number;
+  /** Active/protected session journals left in place. */
+  skippedProtected: number;
+}
+
+/**
+ * Delete mutations.jsonl across session dirs (including dirs with no
+ * loadable meta). Session records and lastError stay. /undo on those
+ * sessions becomes empty. Doctor Next for a large journal.
+ */
+export function pruneMutationJournals(opts?: {
+  protectIds?: string[];
+}): PruneMutationJournalsResult {
+  const protect = new Set(
+    (opts?.protectIds ?? []).map((id) => String(id || "").trim()).filter(Boolean),
+  );
+  const root = path.join(forgeHome(), "sessions");
+  let scanned = 0;
+  let deleted = 0;
+  let bytesFreed = 0;
+  let skippedProtected = 0;
+  try {
+    const dirs = fs.readdirSync(root);
+    for (const id of dirs) {
+      const file = path.join(root, id, "mutations.jsonl");
+      try {
+        const st = fs.statSync(file);
+        if (!st.isFile()) continue;
+        scanned += 1;
+        if (protect.has(id)) {
+          skippedProtected += 1;
+          continue;
+        }
+        fs.unlinkSync(file);
+        deleted += 1;
+        bytesFreed += st.size;
+      } catch {
+        /* missing */
+      }
+    }
+  } catch {
+    /* no sessions dir */
+  }
+  return { scanned, deleted, bytesFreed, skippedProtected };
+}
+
 /** Keep the newest tail so /undo still sees late waves. */
 const MUTATION_JOURNAL_KEEP_BYTES = 8 * 1024 * 1024;
 

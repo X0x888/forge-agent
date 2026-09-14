@@ -13,6 +13,9 @@ import {
   forkSession,
   clearConversation,
   deleteSessionDetailed,
+  saveSession,
+  pruneSessions,
+  listSessions,
 } from "../src/session/session.js";
 import {
   appendFileMutation,
@@ -23,6 +26,7 @@ import {
   formatRetryCard,
   mutationsJournalStats,
   foldChildMutationsIntoParent,
+  pruneMutationJournals,
 } from "../src/session/mutations.js";
 import { executeTool } from "../src/agent/tools/index.js";
 import {
@@ -841,5 +845,57 @@ describe("production packaging + undo safety", () => {
     assert.equal(fs.readFileSync(target, "utf8"), "changed\n", "disk untouched");
     // Marks resynced empty (no user messages)
     assert.deepEqual(s.meta.userTurnMarks || [], []);
+  });
+
+  it("prune --journals drains lastError and orphan journals; keep 50 does not", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-journals-"));
+    process.env.FORGE_HOME = home;
+    const ws = path.join(home, "ws");
+    fs.mkdirSync(ws);
+    const fat = "x".repeat(64 * 1024);
+    const errSess = createSession({
+      cwd: ws,
+      provider: "xai",
+      model: "grok-4",
+    });
+    errSess.meta.lastError = {
+      at: new Date().toISOString(),
+      message: "rate limited",
+      code: "rate_limited",
+    };
+    saveSession(errSess);
+    const okSess = createSession({
+      cwd: ws,
+      provider: "xai",
+      model: "grok-4",
+    });
+    const errJournal = path.join(home, "sessions", errSess.meta.id, "mutations.jsonl");
+    const okJournal = path.join(home, "sessions", okSess.meta.id, "mutations.jsonl");
+    fs.writeFileSync(errJournal, fat);
+    fs.writeFileSync(okJournal, fat);
+    const orphanDir = path.join(home, "sessions", "orphan-journal-dir");
+    fs.mkdirSync(orphanDir, { recursive: true });
+    fs.writeFileSync(path.join(orphanDir, "mutations.jsonl"), fat);
+
+    const before = mutationsJournalStats();
+    assert.ok(before.bytes >= fat.length * 3);
+    assert.equal(before.sessions, 3);
+
+    const kept = pruneSessions({ keep: 50 });
+    assert.equal(kept.deleted.length, 0, "two sessions: keep 50 deletes none");
+    assert.ok(fs.existsSync(errJournal), "lastError journal survives keep 50");
+    assert.equal(mutationsJournalStats().bytes, before.bytes);
+
+    const drained = pruneMutationJournals();
+    assert.equal(drained.deleted, 3);
+    assert.ok(drained.bytesFreed >= fat.length * 3);
+    assert.equal(mutationsJournalStats().bytes, 0);
+    assert.ok(
+      listSessions({ limit: 10_000 }).some((s) => s.id === errSess.meta.id),
+      "lastError session remains after journal prune",
+    );
+    assert.equal(fs.existsSync(errJournal), false);
+    assert.equal(fs.existsSync(okJournal), false);
+    assert.equal(fs.existsSync(path.join(orphanDir, "mutations.jsonl")), false);
   });
 });

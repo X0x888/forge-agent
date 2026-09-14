@@ -160,6 +160,23 @@ describe("doctor health card", () => {
     assert.ok(recLines.some((l) => /forge tmp prune/.test(l)));
   });
 
+  it("journal issue Next is prune --journals, not --keep 50", () => {
+    const issue =
+      "Undo journal is large (~720145.1 KB, 20587 entries across 175 session(s)) — forge sessions prune --journals (keeps sessions / lastError; drops mutations.jsonl)";
+    const cli = formatDoctorCloser([issue], { surface: "cli" });
+    assert.match(cli, /forge sessions prune --journals/);
+    assert.doesNotMatch(cli, /--keep 50/);
+    const repl = formatDoctorCloser([issue]);
+    assert.match(repl, /\/sessions prune --journals/);
+    assert.doesNotMatch(repl, /--keep 50/);
+    const countIssue =
+      "120 sessions on disk — consider forge sessions prune --keep 50";
+    assert.match(
+      formatDoctorCloser([countIssue], { surface: "cli" }),
+      /forge sessions prune --keep 50/,
+    );
+  });
+
   it("header stays scrapeable as Forge doctor", () => {
     assert.match(formatDoctorHeader([], { color: false }), /Forge doctor/);
     assert.match(

@@ -251,7 +251,7 @@ import {
   sandboxLogPath,
   sandboxLogStats,
 } from "./agent/sandbox-log.js";
-import { mutationsJournalStats } from "./session/mutations.js";
+import { mutationsJournalStats, pruneMutationJournals } from "./session/mutations.js";
 const VERSION = getForgeVersion();
 
 async function main(): Promise<void> {
@@ -2325,6 +2325,10 @@ Docs: docs/PRODUCTION.md
       "Prune: nested subagent: sessions with no ulw.json (max_turns mills; ULW parents kept)",
     )
     .option(
+      "--journals",
+      "Prune: delete mutations.jsonl (undo journals) — keeps sessions and lastError",
+    )
+    .option(
       "-n, --limit <n>",
       "List limit (0/all/max = unlimited)",
       "30",
@@ -3065,6 +3069,32 @@ Docs: docs/PRODUCTION.md
         return;
       }
       if (act === "prune") {
+        if (Boolean(globalOpts.journals)) {
+          const j = pruneMutationJournals();
+          if (globalOpts.json) {
+            emitOkJson(
+              {
+                forgeHome: forgeHome(),
+                journals: true,
+                scanned: j.scanned,
+                deleted: j.deleted,
+                bytesFreed: j.bytesFreed,
+                skippedProtected: j.skippedProtected,
+              },
+              true,
+            );
+          } else {
+            const kb = (j.bytesFreed / 1024).toFixed(1);
+            log.success(
+              `Dropped ${j.deleted} undo journal(s) (${kb} KB); scanned ${j.scanned}` +
+                (j.skippedProtected
+                  ? `; protected ${j.skippedProtected}`
+                  : "") +
+                ` — sessions / lastError kept`,
+            );
+          }
+          return;
+        }
         // maxAgeDays: 0 = no age filter; omit → undefined (keep-only prune).
         // Explicit invalid/empty fails closed (parity with --keep).
         // all|none|off → 0 (no age filter) for expert muscle-memory.

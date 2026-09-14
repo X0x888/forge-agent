@@ -51,7 +51,11 @@ export function rewriteDoctorIssueForSurface(
     .replace(/\bforge login --from-copilot\b/gi, "/auth")
     .replace(/\bforge login --api-key\b/gi, "/auth")
     .replace(/\bforge login\b/gi, "/auth")
-    .replace(/\bforge doctor --json\b/gi, "/doctor");
+    .replace(/\bforge doctor --json\b/gi, "/doctor")
+    .replace(
+      /\bforge sessions prune --journals\b/gi,
+      "/sessions prune --journals",
+    );
 }
 
 function isCliSlashKey(k: string): boolean {
@@ -93,7 +97,14 @@ export function formatDoctorCloser(
   if (/bypassPermissions|yolo|dontAsk|permission mode/i.test(blob)) {
     push(surface === "cli" ? "forge permissions default" : "/permissions");
   }
-  if (/undo journal is large|sessions on disk/i.test(blob)) {
+  if (/undo journal is large/i.test(blob)) {
+    push(
+      surface === "cli"
+        ? "forge sessions prune --journals"
+        : "/sessions prune --journals",
+    );
+  }
+  if (/sessions on disk/i.test(blob)) {
     push(surface === "cli" ? "forge sessions prune --keep 50" : "/sessions");
   }
   for (const rec of opts?.recommendations ?? []) {
