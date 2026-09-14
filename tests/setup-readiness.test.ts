@@ -30,6 +30,10 @@ import {
   formatPostLoginOfferExit,
 } from "../src/tui/login-offer.js";
 import { helpFor, parseHelpTopic, HELP_START, HELP_ALL } from "../src/commands/help-text.js";
+import { setupJsonPayload } from "../src/commands/setup.js";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const base = {
   authenticated: true,
@@ -103,15 +107,51 @@ describe("assessSetupReadiness", () => {
     assert.doesNotMatch(card, /\/permissions/);
     assert.doesNotMatch(card, /○ 2\s+spend cap/);
     assert.match(card, /→\s+forge login/);
-    assert.match(card, /forge --max-cost 5/);
+    assert.match(card, /forge setup budget/);
+    assert.doesNotMatch(card, /forge --max-cost/);
+    assert.match(card, /forge setup model/);
     assert.match(card, /forge init/);
     assert.match(card, /forge lsp ensure/);
     assert.match(card, /Next  /);
     assert.doesNotMatch(card, /Next  \//);
     assert.deepEqual(r.items.map((i) => i.id), setupItemIds());
     assert.equal(r.items.find((i) => i.id === "budget")?.action, "/budget 5");
-    assert.equal(setupCliAction("budget"), "forge --max-cost 5");
-    assert.equal(setupCliAction("attention"), undefined);
+    assert.equal(setupCliAction("budget"), "forge setup budget");
+    assert.equal(setupCliAction("provider_model"), "forge setup model");
+    assert.equal(setupCliAction("attention"), "forge setup notify");
+  });
+
+  it("CLI setup --json actions are shell verbs; REPL json keeps slash", () => {
+    const r = assessSetupReadiness({ ...base, authenticated: false });
+    const cli = setupJsonPayload(r, {}, { surface: "cli" });
+    const items = cli.items as { id: string; action: string }[];
+    assert.equal(items.find((i) => i.id === "budget")?.action, "forge setup budget");
+    assert.equal(
+      items.find((i) => i.id === "provider_model")?.action,
+      "forge setup model",
+    );
+    assert.doesNotMatch(
+      items.find((i) => i.id === "budget")!.action,
+      /^\//,
+    );
+    const repl = setupJsonPayload(r);
+    const replItems = repl.items as { id: string; action: string }[];
+    assert.equal(replItems.find((i) => i.id === "budget")?.action, "/budget 5");
+    assert.equal(
+      replItems.find((i) => i.id === "provider_model")?.action,
+      "/setup model",
+    );
+  });
+
+  it("GETTING-STARTED names forge setup verbs, not 1–6 at the shell", () => {
+    const md = fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "../docs/GETTING-STARTED.md"),
+      "utf8",
+    );
+    assert.match(md, /forge setup budget/);
+    assert.match(md, /forge setup model/);
+    assert.doesNotMatch(md, /forge setup 1/);
+    assert.doesNotMatch(md, /type 1–6 at `?forge setup/);
   });
 
   it("marks blocking auth with ⚠ and keeps forge login on that row", () => {

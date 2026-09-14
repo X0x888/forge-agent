@@ -183,6 +183,8 @@ import {
   markSetupSeen,
   markSetupSkipped,
   parseSetupAction,
+  persistSetupBudget,
+  resolveSetupBudgetAmount,
   setupCliAction,
   setupJsonPayload,
 } from "./setup.js";
@@ -3938,10 +3940,28 @@ const stats = collectUsageStats({
         };
       }
       if (action.kind === "budget") {
+        const resolved = resolveSetupBudgetAmount(action.amount);
+        if (!resolved.ok) {
+          const result = runBudget({
+            session: opts.session,
+            config: opts.config,
+            arg: action.amount || "",
+            color: Boolean(process.stdout.isTTY),
+            persist: true,
+            notify: true,
+          });
+          return {
+            handled: true,
+            output: result.output,
+            failed: true,
+            session: result.session ?? opts.session,
+          };
+        }
+        persistSetupBudget(resolved.amount);
         const result = runBudget({
           session: opts.session,
           config: opts.config,
-          arg: action.amount || "",
+          arg: String(resolved.amount),
           color: Boolean(process.stdout.isTTY),
           persist: true,
           notify: true,

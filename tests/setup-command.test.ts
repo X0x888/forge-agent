@@ -11,6 +11,7 @@ import {
   loadPreferences,
   savePreferences,
 } from "../src/config/preferences.js";
+import { persistSetupBudget } from "../src/commands/setup.js";
 import { formatUnknownSlash } from "../src/commands/slash.js";
 import { runForgeInit } from "../src/commands/init-scaffold.js";
 
@@ -92,7 +93,7 @@ describe("/setup slash", () => {
     assert.equal(loadPreferences().seenProviderModelConfirm, true);
   });
 
-  it("/setup budget 5 sets session cap", async () => {
+  it("/setup budget 5 sets session cap and persists sticky cap", async () => {
     const s = session();
     const r = await handleSlash("/setup budget 5", {
       session: s,
@@ -101,6 +102,29 @@ describe("/setup slash", () => {
     });
     assert.match(String(r.output), /\$5/);
     assert.equal(s.meta.maxCostUsd, 5);
+    assert.equal(loadPreferences().maxCostUsd, 5);
+  });
+
+  it("persistSetupBudget is seen by loadConfig as a finite cap", async () => {
+    persistSetupBudget(5);
+    assert.equal(loadPreferences().maxCostUsd, 5);
+    const { loadConfig } = await import("../src/config/load.js");
+    const cfg = loadConfig();
+    assert.equal(cfg.maxCostUsd, 5);
+  });
+
+  it("/setup model then the card drops (not confirmed)", async () => {
+    await handleSlash("/setup model", {
+      session: session(),
+      config: { ...DEFAULT_CONFIG, workspace: cwd, model: "grok-4.6" },
+      hooks: new HookRunner(DEFAULT_CONFIG, cwd),
+    });
+    const r = await handleSlash("/setup", {
+      session: session(),
+      config: { ...DEFAULT_CONFIG, workspace: cwd, model: "grok-4.6" },
+      hooks: new HookRunner(DEFAULT_CONFIG, cwd),
+    });
+    assert.doesNotMatch(String(r.output), /not confirmed/);
   });
 
   it("/setup init forwards AGENTS.md prompt", async () => {

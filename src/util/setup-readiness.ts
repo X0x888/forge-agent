@@ -158,13 +158,13 @@ export function setupCliAction(
     case "auth":
       return "forge login";
     case "provider_model":
-      return "forge config";
+      return "forge setup model";
     case "budget":
-      return "forge --max-cost 5";
+      return "forge setup budget";
     case "project_rules":
       return "forge init";
     case "attention":
-      return undefined;
+      return "forge setup notify";
     case "lsp":
       return "forge lsp ensure";
     case "scaffold":

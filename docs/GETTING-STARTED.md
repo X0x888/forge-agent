@@ -48,20 +48,24 @@ A bare `forge` on a TTY also offers this picker if you are not signed in. Type *
 
 Type a coding task. You do not need a slash command. On the first-run card, **1–6** run that setup item (same as `/setup 1` … `/setup 6`). Empty Tab offers first-day starters (`/help`, `/setup`, `/plan`, …); type `/` then Tab for the full catalog. **Ctrl+R** searches previous prompts. Permission prompts: **Enter** or `y` allows once.
 
-## 4. Finish settings (`/setup`)
+## 4. Finish settings (`/setup` or `forge setup`)
 
-`/setup` (or `forge setup`) is the one hub for the knobs first-timers miss:
+`/setup` (or `forge setup`) is the one hub for the knobs first-timers miss.
 
-| Item | Why | Command |
-|---|---|---|
-| Provider / model | Confirm you are on the right family | `/setup model` or `/provider` `/model` |
-| Spend cap | Unattended ULW can spend unbounded | `/setup budget 5` |
-| Project rules | Agent has no repo conventions | `/init` |
-| Turn-end notify | Long runs finish silently | `/setup notify` |
-| Language servers | Diagnostics | `/lsp ensure` |
-| File scaffold | `config.toml`, MCP, stub AGENTS.md | `/setup scaffold` or `forge init` |
+At ›, **1–6** run that item.
 
-`/setup skip` hides the compact banner line. The full first-run card stays until you take a `/setup` action (just seeing it does not count as done). `FORGE_SETUP=0` disables the auto card.
+At the shell, type `forge setup model` and `forge setup budget 5`. Those verbs persist. Do not type numbered keys after the `setup` subcommand.
+
+| Item | Why | › | Shell |
+|---|---|---|---|
+| Provider / model | Confirm you are on the right family | `/setup model` | `forge setup model` |
+| Spend cap | Unattended ULW can spend unbounded | `/setup budget 5` | `forge setup budget 5` |
+| Project rules | Agent has no repo conventions | `/init` | `forge init` |
+| Turn-end notify | Long runs finish silently | `/setup notify` | `forge setup notify` |
+| Language servers | Diagnostics | `/lsp ensure` | `forge lsp ensure` |
+| File scaffold | `config.toml`, MCP, stub AGENTS.md | `/setup scaffold` | `forge init` |
+
+`forge setup budget 5` persists the cap (`forge config --json` shows a finite `maxCostUsd`). `forge setup model` confirms the current provider/model. `/setup skip` hides the compact banner line. The full first-run card stays until you take a setup action (just seeing it does not count as done). `FORGE_SETUP=0` disables the auto card.
 
 ## 5. Useful first-day commands
 
@@ -82,7 +86,7 @@ Type a coding task. You do not need a slash command. On the first-run card, **1�
 - **`forge init`** — writes files (no model): `~/.forge/config.toml`, `mcp.json`, stub `AGENTS.md`, example Stop hook, LSP ensure.
 - **`/init`** — model-driven research that writes a real `AGENTS.md` for this repo.
 
-`/setup` item 3 is `/init`. Item 6 is `forge init`.
+Project-rules at › is `/init`. File scaffold at the shell is `forge init`.
 
 ## 7. When you want the agent to not stop
 

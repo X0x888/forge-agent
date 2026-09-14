@@ -185,7 +185,12 @@ import {
 import {
   collectSetupAssessment,
   formatSetupCard,
+  markProviderModelConfirmed,
+  parseSetupAction,
+  persistSetupBudget,
+  resolveSetupBudgetAmount,
   setupJsonPayload,
+  SETUP_CLI_USAGE,
 } from "./commands/setup.js";
 import { runForgeInit } from "./commands/init-scaffold.js";
 import { editDistance } from "./util/string-distance.js";
@@ -3550,36 +3555,178 @@ Docs: docs/PRODUCTION.md
   program
     .command("setup")
     .description("First-day checklist: auth, model, budget, notify, AGENTS.md, LSP")
+    .argument(
+      "[tokens...]",
+      "Verb: model | budget [N] | notify | lsp | init | scaffold | json",
+    )
     .option("--json", "Machine-readable JSON ({ ok, ready, total, items[] })")
     .action(
       async (
+        tokens: string[] | undefined,
         opts: { json?: boolean },
         command?: { optsWithGlobals?: () => Record<string, unknown> },
       ) => {
         const wantJson = flagJson(opts as Record<string, unknown>, command);
+        const arg = (tokens ?? []).map((t) => String(t)).join(" ").trim();
         ensureHome();
-        const config = loadConfig();
-        const auth = await resolveAuthFresh(config);
-        const assessed = await collectSetupAssessment({
-          config,
-          auth: auth ?? null,
-        });
-        if (wantJson) {
+        let config = loadConfig();
+        let auth = await resolveAuthFresh(config);
+
+        const emitCard = async () => {
+          const assessed = await collectSetupAssessment({
+            config,
+            auth: auth ?? null,
+          });
+          if (wantJson) {
+            emitOkJson(
+              setupJsonPayload(
+                assessed,
+                {
+                  forgeHome: forgeHome(),
+                  provider: config.provider,
+                  model: config.model,
+                  authenticated: Boolean(auth),
+                },
+                { surface: "cli" },
+              ),
+              true,
+            );
+            return;
+          }
+          console.log(formatSetupCard(assessed, { surface: "cli" }));
+          if (!auth) {
+            log.dim("Not signed in — forge login  ·  then forge setup");
+          }
+        };
+
+        if (!arg) {
+          await emitCard();
+          return;
+        }
+
+        const action = parseSetupAction(arg);
+        if (action.kind === "help") {
+          failUsage(SETUP_CLI_USAGE, { json: wantJson });
+        }
+        if (action.kind === "json") {
+          const assessed = await collectSetupAssessment({
+            config,
+            auth: auth ?? null,
+          });
           emitOkJson(
-            setupJsonPayload(assessed, {
-              forgeHome: forgeHome(),
-              provider: config.provider,
-              model: config.model,
-              authenticated: Boolean(auth),
-            }),
+            setupJsonPayload(
+              assessed,
+              {
+                forgeHome: forgeHome(),
+                provider: config.provider,
+                model: config.model,
+                authenticated: Boolean(auth),
+              },
+              { surface: "cli" },
+            ),
             true,
           );
           return;
         }
-        console.log(formatSetupCard(assessed, { surface: "cli" }));
-        if (!auth) {
-          log.dim("Not signed in — forge login  ·  then forge setup");
+        if (action.kind === "card") {
+          await emitCard();
+          return;
         }
+        if (action.kind === "skip") {
+          savePreferences({
+            setupSkipped: true,
+            seenSetup: true,
+            seenWelcomeTip: true,
+          });
+          if (wantJson) {
+            await emitCard();
+            return;
+          }
+          log.info("Setup compact line hidden. forge setup still works anytime.");
+          return;
+        }
+        if (action.kind === "model") {
+          markProviderModelConfirmed();
+          if (!wantJson) {
+            log.info(
+              `Provider/model confirmed: ${config.provider}/${config.model}`,
+            );
+          }
+          await emitCard();
+          return;
+        }
+        if (action.kind === "budget") {
+          const resolved = resolveSetupBudgetAmount(action.amount);
+          if (!resolved.ok) {
+            failInvalidFlag(
+              "invalid_budget",
+              `Invalid spend cap "${resolved.raw}". Pass a USD amount (e.g. 5) or off.`,
+              { amount: resolved.raw },
+              { json: wantJson },
+            );
+          }
+          persistSetupBudget(resolved.amount);
+          config = loadConfig();
+          if (!wantJson) {
+            log.info(
+              resolved.amount === 0
+                ? "Spend cap cleared (unlimited, persisted)."
+                : `Spend cap set to $${resolved.amount} (persisted).`,
+            );
+          }
+          await emitCard();
+          return;
+        }
+        if (action.kind === "notify") {
+          savePreferences({ notifyOnTurnEnd: true, seenSetup: true });
+          if (!wantJson) {
+            log.info(
+              "Turn-end desktop notify ON (persisted). FORGE_NOTIFY=0 overrides.",
+            );
+          }
+          await emitCard();
+          return;
+        }
+        if (action.kind === "lsp") {
+          const workspace = config.workspace || process.cwd();
+          const { ensureLspServers, formatEnsureResult } = await import(
+            "./lsp/ensure.js"
+          );
+          const lines: string[] = [];
+          const result = await ensureLspServers({
+            workspace,
+            forceInstall: true,
+            onLog: (line) => lines.push(line),
+          });
+          if (!wantJson) {
+            if (lines.length) console.log(lines.join("\n"));
+            console.log(formatEnsureResult(result));
+          }
+          await emitCard();
+          return;
+        }
+        if (action.kind === "init" || action.kind === "scaffold") {
+          const result = await runForgeInit({
+            cwd: config.workspace || process.cwd(),
+            quiet: true,
+          });
+          const { formatInitScaffoldSummary } = await import(
+            "./commands/init-scaffold.js"
+          );
+          savePreferences({ seenSetup: true });
+          if (!wantJson) {
+            console.log(formatInitScaffoldSummary(result));
+            if (action.kind === "init") {
+              log.dim(
+                "File stub only — at ›, /init researches a real AGENTS.md.",
+              );
+            }
+          }
+          config = loadConfig();
+          await emitCard();
+          return;
+        }
+        failUsage(SETUP_CLI_USAGE, { json: wantJson });
       },
     );
 

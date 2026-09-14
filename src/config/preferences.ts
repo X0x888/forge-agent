@@ -52,6 +52,11 @@ export interface UserPreferences {
   setupSkipped?: boolean;
   /** User confirmed provider/model in /setup. */
   seenProviderModelConfirm?: boolean;
+  /**
+   * Sticky session spend cap (USD estimate, not a bill). Applied after
+   * config.toml, before env / CLI. 0 = unlimited. Missing = do not override.
+   */
+  maxCostUsd?: number;
   /** Dismissed first-day hint ids (no_agents, no_budget, …). */
   dismissedHints?: string[];
   /** Opt-in format-on-write after file tools (OpenCode-inspired). */
@@ -100,6 +105,14 @@ export function loadPreferences(): UserPreferences {
   }
   if (typeof raw.seenProviderModelConfirm === "boolean") {
     out.seenProviderModelConfirm = raw.seenProviderModelConfirm;
+  }
+  if (
+    typeof raw.maxCostUsd === "number" &&
+    Number.isFinite(raw.maxCostUsd) &&
+    raw.maxCostUsd >= 0 &&
+    raw.maxCostUsd <= 1_000_000
+  ) {
+    out.maxCostUsd = Math.round(raw.maxCostUsd * 10_000) / 10_000;
   }
   if (Array.isArray(raw.dismissedHints)) {
     const hints = raw.dismissedHints
@@ -150,6 +163,8 @@ export function savePreferences(patch: {
   seenProviderModelConfirm?: boolean;
   dismissedHints?: string[];
   formatOnWrite?: boolean;
+  /** Sticky spend cap. `null` clears the preference. */
+  maxCostUsd?: number | null;
   /** When setting model, also record lastModelByProvider[provider]. */
   modelProvider?: string;
 }): UserPreferences {
@@ -233,6 +248,18 @@ export function savePreferences(patch: {
     if (patch.formatOnWrite !== undefined) {
       cur.formatOnWrite = Boolean(patch.formatOnWrite);
     }
+    if (patch.maxCostUsd !== undefined) {
+      if (patch.maxCostUsd === null) {
+        delete cur.maxCostUsd;
+      } else if (
+        typeof patch.maxCostUsd === "number" &&
+        Number.isFinite(patch.maxCostUsd) &&
+        patch.maxCostUsd >= 0 &&
+        patch.maxCostUsd <= 1_000_000
+      ) {
+        cur.maxCostUsd = Math.round(patch.maxCostUsd * 10_000) / 10_000;
+      }
+    }
     cur.version = 1;
     cur.updatedAt = nowIso();
     writeJsonFile(preferencesPath(), cur, 0o600);
@@ -303,6 +330,7 @@ export function applyPreferences<
     model: string;
     permissionMode: PermissionMode;
     reasoningEffort?: ReasoningEffort;
+    maxCostUsd?: number;
     providers?: Record<string, { defaultModel?: string } | undefined>;
   },
 >(cfg: T, prefs: UserPreferences = loadPreferences()): T {
@@ -319,5 +347,12 @@ export function applyPreferences<
   if (prefs.model) cfg.model = prefs.model;
   if (prefs.permissionMode) cfg.permissionMode = prefs.permissionMode;
   if (prefs.reasoningEffort) cfg.reasoningEffort = prefs.reasoningEffort;
+  if (
+    typeof prefs.maxCostUsd === "number" &&
+    Number.isFinite(prefs.maxCostUsd) &&
+    prefs.maxCostUsd >= 0
+  ) {
+    cfg.maxCostUsd = prefs.maxCostUsd;
+  }
   return cfg;
 }

@@ -9,7 +9,7 @@ import {
   savePreferences,
 } from "../config/preferences.js";
 import { isBellEnabled, isNotifyEnabled } from "../util/attention.js";
-import { resolveMaxCostUsd } from "../util/cost-budget.js";
+import { parseCostUsd, resolveMaxCostUsd } from "../util/cost-budget.js";
 import {
   assessSetupReadiness,
   formatSetupCard,
@@ -82,10 +82,22 @@ export async function collectSetupAssessment(
   });
 }
 
+export const SETUP_DEFAULT_BUDGET_USD = 5;
+
+export const SETUP_CLI_USAGE =
+  "Usage: forge setup [model|budget [N]|notify|lsp|init|scaffold|json]\n" +
+  "  forge setup              first-day card\n" +
+  "  forge setup model        confirm provider/model\n" +
+  "  forge setup budget 5     persist spend cap (omit N → $5)\n" +
+  "  forge setup notify       turn-end desktop notify\n" +
+  "  forge setup --json";
+
 export function setupJsonPayload(
   r: SetupAssessment,
   extra?: Record<string, unknown>,
+  opts?: { surface?: "repl" | "cli" },
 ): Record<string, unknown> {
+  const surface = opts?.surface ?? "repl";
   return {
     ok: true,
     ready: r.ready,
@@ -97,11 +109,32 @@ export function setupJsonPayload(
       ready: i.ready,
       label: i.label,
       detail: i.detail,
-      action: i.action,
+      action:
+        surface === "cli" ? (setupCliAction(i.id) ?? i.action) : i.action,
       severity: i.severity,
     })),
     ...extra,
   };
+}
+
+/** Parse `/setup budget` / `forge setup budget` amount. Empty → first-day $5. */
+export function resolveSetupBudgetAmount(
+  raw?: string,
+): { ok: true; amount: number } | { ok: false; raw: string } {
+  const t = String(raw ?? "").trim();
+  if (!t) return { ok: true, amount: SETUP_DEFAULT_BUDGET_USD };
+  const n = parseCostUsd(t);
+  if (n == null) return { ok: false, raw: t };
+  return { ok: true, amount: n };
+}
+
+/** Sticky spend cap so `forge config --json` / the next `forge setup` see it. */
+export function persistSetupBudget(amount: number): void {
+  try {
+    savePreferences({ maxCostUsd: amount, seenSetup: true });
+  } catch {
+    /* */
+  }
 }
 
 export {

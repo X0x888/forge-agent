@@ -1,7 +1,7 @@
 # Project memory
 
 > Auto-maintained by Forge. Edit carefully — agent loads this across sessions.
-> key=d54ef9c78f11c027 · updated=2026-09-14T00:49:19.859Z
+> key=d54ef9c78f11c027 · updated=2026-09-14T01:21:29.947Z
 
 ## constraint
 
@@ -44,13 +44,14 @@
 - Promise: `forge doctor --json` exit 1 when unhealthy, no secrets in `config --json` — kept
 - Promise: Typo recovery Did you mean for CLI/slash — kept
 - Promise: `/help` first-day sit-down (1–6, Next) without a model call — kept
-- Promise: Bare `forge` on a TTY offers a login picker when unsigned — limited
-- Promise: Interactive REPL, first-run banner, live keys, prompt editor — limited
+- Promise: Bare `forge` on a TTY offers a login picker when unsigned — unknown
+- Promise: Interactive REPL, first-run banner, live keys, prompt editor — unknown
 - Promise: Login / OAuth / stored session (`forge login`, SuperGrok, import) — unknown
 - Promise: Blocking Stop, `/goal`, `/ulw` as a user-driven run — unknown
 - Promise: `forge setup` is the first-day hub you can act on — broken
-- Promise: CLI doctor Next keys are commands you can type at the shell — broken
-- Promise: Headless pure-control slash does not pollute `sessions list` / `--continue` — broken
+- Promise: CLI doctor Next keys are commands you can type at the shell — kept
+- Promise: Headless pure-control slash does not pollute `sessions list` / `--continue` — kept
 - Promise: Credentials never enter logs / JSON — kept
 - Promise: Session inventory, errors, show — kept
-- Promise: Sandbox deny of secrets and IMDS — kept
+- Promise: Sandbox deny of secrets and IMDS — unknown
+- Promise: CLI `--help` matches behaviour (sit-down keys, verdict-first) — broken
