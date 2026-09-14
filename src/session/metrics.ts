@@ -556,7 +556,11 @@ export interface UsageStats {
   byModel: Record<string, number>;
   /** Top workspaces by run count (basename → count). */
   byProject: Record<string, number>;
-  /** Failure codes from run_end.lastErrorCode (never bodies). */
+  /**
+   * Problem lastError codes from run_end (never bodies). Designed wraps
+   * (`ulw_done` / `ulw_cycle_complete`) are omitted — same Set as doctor /
+   * `sessions errors`.
+   */
   byLastErrorCode: Record<string, number>;
   /**
    * Harness overhead across the window: how much of the conversation the
@@ -683,7 +687,9 @@ export function collectUsageStats(opts?: {
     byModel[model] = (byModel[model] || 0) + 1;
     if (e.lastErrorCode) {
       const code = String(e.lastErrorCode).slice(0, 64);
-      byLastErrorCode[code] = (byLastErrorCode[code] || 0) + 1;
+      if (isLastErrorProblem({ code })) {
+        byLastErrorCode[code] = (byLastErrorCode[code] || 0) + 1;
+      }
     }
     if (e.cwd) {
       try {

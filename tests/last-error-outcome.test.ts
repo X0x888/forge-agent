@@ -288,6 +288,46 @@ describe("lastError tally", () => {
     assert.match(header, /^sessions  ·  4 errors/);
     assert.match(header, /3 max_turns · 1 rate_limited/);
   });
+
+  it("stats byLastErrorCode omits designed wraps", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-stats-lasterr-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      appendSessionMetrics,
+      collectUsageStats,
+      formatUsageStats,
+    } = await import("../src/session/metrics.js");
+    appendSessionMetrics({
+      ts: new Date().toISOString(),
+      type: "run_end",
+      sessionId: "wrap",
+      lastErrorCode: "ulw_done",
+      ok: true,
+    });
+    appendSessionMetrics({
+      ts: new Date().toISOString(),
+      type: "run_end",
+      sessionId: "old-wrap",
+      lastErrorCode: "ulw_cycle_complete",
+      ok: true,
+    });
+    appendSessionMetrics({
+      ts: new Date().toISOString(),
+      type: "run_end",
+      sessionId: "fail",
+      lastErrorCode: "rate_limited",
+      ok: false,
+    });
+    const stats = collectUsageStats();
+    assert.equal(stats.byLastErrorCode.ulw_done, undefined);
+    assert.equal(stats.byLastErrorCode.ulw_cycle_complete, undefined);
+    assert.equal(stats.byLastErrorCode.rate_limited, 1);
+    const text = formatUsageStats(stats);
+    assert.match(text, /By lastError code/);
+    assert.match(text, /rate_limited/);
+    assert.doesNotMatch(text, /ulw_done/);
+    assert.doesNotMatch(text, /ulw_cycle_complete/);
+  });
 });
 
 describe("sessions errors card", () => {
