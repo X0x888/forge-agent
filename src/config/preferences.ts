@@ -267,6 +267,11 @@ export function savePreferences(patch: {
   });
 }
 
+/** Sticky `/permissions` / `forge permissions` — same preferences.json write. */
+export function persistPermissionMode(mode: PermissionMode): UserPreferences {
+  return savePreferences({ permissionMode: mode });
+}
+
 /**
  * Push a model id to the front of recentModels[provider] (deduped, capped).
  */

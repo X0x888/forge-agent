@@ -1,7 +1,7 @@
 # Project memory
 
 > Auto-maintained by Forge. Edit carefully — agent loads this across sessions.
-> key=d54ef9c78f11c027 · updated=2026-09-14T02:53:42.651Z
+> key=d54ef9c78f11c027 · updated=2026-09-14T03:15:55.500Z
 
 ## constraint
 
@@ -49,10 +49,10 @@
 - Promise: Login / OAuth / stored session (`forge login`, SuperGrok, import) — unknown
 - Promise: Blocking Stop, `/goal`, `/ulw` as a user-driven run — unknown
 - Promise: `forge setup` is the first-day hub you can act on — kept
-- Promise: CLI doctor Next keys are commands you can type at the shell — kept
+- Promise: CLI doctor Next keys are commands you can type at the shell that fix the issue they name — broken
 - Promise: Headless pure-control slash does not pollute `sessions list` / `--continue` — kept
 - Promise: Credentials never enter logs / JSON — kept
 - Promise: Session inventory, errors, show — kept
 - Promise: Designed wraps are not the errors backlog (`ulw_cycle_complete` stays out of doctor / `sessions errors`) — kept
 - Promise: Sandbox deny of secrets and IMDS — limited
-- Promise: CLI `--help` matches behaviour (sit-down keys, verdict-first) — broken
+- Promise: CLI `--help` matches behaviour (sit-down keys, verdict-first) — kept

@@ -46,7 +46,11 @@ import {
   materializeFallbackModels,
   parseFallbackModels,
 } from "./config/model-fallback.js";
-import { loadPreferences, savePreferences } from "./config/preferences.js";
+import {
+  loadPreferences,
+  persistPermissionMode,
+  savePreferences,
+} from "./config/preferences.js";
 import { resolveAuth, resolveAuthFresh, describeAuth } from "./auth/resolve.js";
 import { loginInteractive, logout, printAuthStatus, supportsOAuth } from "./auth/login.js";
 import {
@@ -4426,6 +4430,90 @@ Docs: docs/PRODUCTION.md
         }),
       );
     });
+
+  program
+    .command("permissions")
+    .description(
+      "Sticky permission mode — same as REPL /permissions (not --permission-mode)",
+    )
+    .argument(
+      "[mode]",
+      "default | acceptEdits | plan | bypassPermissions | dontAsk (omit to peek)",
+    )
+    .option("--json", "Machine-readable JSON")
+    .action(
+      async (
+        modeArg: string | undefined,
+        opts: { json?: boolean },
+        command?: { optsWithGlobals?: () => Record<string, unknown> },
+      ) => {
+        const wantJson = flagJson(opts as Record<string, unknown>, command);
+        await ensureHome();
+        const raw = String(modeArg ?? "").trim();
+        if (!raw) {
+          const sticky = loadPreferences().permissionMode ?? null;
+          const effective = loadConfig().permissionMode;
+          if (wantJson) {
+            emitOkJson(
+              {
+                forgeHome: forgeHome(),
+                permissionMode: effective,
+                sticky,
+                persisted: false,
+              },
+              true,
+            );
+            return;
+          }
+          const stickyBit = sticky ? `sticky ${sticky}` : "no sticky pref";
+          console.log(`Permission mode  ${effective}  ·  ${stickyBit}`);
+          if (sticky === "bypassPermissions" || effective === "bypassPermissions") {
+            log.dim("Next  forge permissions default");
+          }
+          return;
+        }
+        const mode = normalizePermissionMode(raw);
+        if (!mode) {
+          failInvalidFlag(
+            "invalid_permission_mode",
+            `Invalid permission mode "${raw}". Pass default, acceptEdits, plan, bypassPermissions, or dontAsk.`,
+            { permissionMode: raw },
+            { json: wantJson },
+          );
+        }
+        try {
+          persistPermissionMode(mode);
+        } catch (err) {
+          failInvalidFlag(
+            "permissions_persist_failed",
+            `Could not persist permission mode: ${err instanceof Error ? err.message : String(err)}`,
+            {},
+            { json: wantJson },
+          );
+        }
+        const effective = loadConfig().permissionMode;
+        if (wantJson) {
+          emitOkJson(
+            {
+              forgeHome: forgeHome(),
+              permissionMode: effective,
+              sticky: mode,
+              persisted: true,
+            },
+            true,
+          );
+          return;
+        }
+        log.info(
+          `Permission mode: ${mode}${mode === "bypassPermissions" ? " (always approve)" : ""} (saved for future sessions)`,
+        );
+        if (effective !== mode) {
+          log.dim(
+            `Effective this process: ${effective} (env / --permission-mode still win)`,
+          );
+        }
+      },
+    );
 
   program
     .command("stats")

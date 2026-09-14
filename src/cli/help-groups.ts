@@ -17,6 +17,7 @@ export const TOP_LEVEL_COMMANDS = [
   "sessions",
   "init",
   "setup",
+  "permissions",
   "lsp",
   "models",
   "completion",

@@ -91,7 +91,7 @@ export function formatDoctorCloser(
     push(surface === "cli" ? "forge login" : "/auth");
   }
   if (/bypassPermissions|yolo|dontAsk|permission mode/i.test(blob)) {
-    push(surface === "cli" ? "forge --permission-mode default" : "/permissions");
+    push(surface === "cli" ? "forge permissions default" : "/permissions");
   }
   if (/undo journal is large|sessions on disk/i.test(blob)) {
     push(surface === "cli" ? "forge sessions prune --keep 50" : "/sessions");

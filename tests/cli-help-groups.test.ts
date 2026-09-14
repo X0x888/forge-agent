@@ -69,9 +69,10 @@ describe("installGroupedHelp", () => {
 });
 
 describe("TOP_LEVEL_COMMANDS", () => {
-  it("includes help, lsp, and tmp so typo recovery and Tab match --help", () => {
+  it("includes help, lsp, tmp, and permissions so typo recovery and Tab match --help", () => {
     assert.ok(TOP_LEVEL_COMMANDS.includes("help"));
     assert.ok(TOP_LEVEL_COMMANDS.includes("lsp"));
     assert.ok(TOP_LEVEL_COMMANDS.includes("tmp"));
+    assert.ok(TOP_LEVEL_COMMANDS.includes("permissions"));
   });
 });

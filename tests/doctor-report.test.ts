@@ -60,13 +60,17 @@ describe("doctor health card", () => {
     assert.doesNotMatch(report, /\/permissions/);
   });
 
-  it("yolo closer is /permissions at › and a shell flag on CLI", () => {
+  it("yolo closer is /permissions at › and forge permissions default on CLI", () => {
     assert.match(formatDoctorCloser([YOLO_ISSUE]), /\/permissions/);
     assert.doesNotMatch(
       formatDoctorCloser([YOLO_ISSUE], { surface: "cli" }),
       /\/permissions/,
     );
     assert.match(
+      formatDoctorCloser([YOLO_ISSUE], { surface: "cli" }),
+      /forge permissions default/,
+    );
+    assert.doesNotMatch(
       formatDoctorCloser([YOLO_ISSUE], { surface: "cli" }),
       /forge --permission-mode default/,
     );

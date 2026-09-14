@@ -6,6 +6,7 @@ import path from "node:path";
 import { loadConfig, defaultConfigToml } from "../src/config/load.js";
 import {
   loadPreferences,
+  persistPermissionMode,
   savePreferences,
   preferencesPath,
 } from "../src/config/preferences.js";
@@ -131,6 +132,17 @@ describe("auth + config", () => {
     }
   });
 
+
+  it("persistPermissionMode unsticks sticky yolo", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-perm-"));
+    process.env.FORGE_HOME = tmp;
+    delete process.env.FORGE_PERMISSION_MODE;
+    savePreferences({ permissionMode: "bypassPermissions" });
+    assert.equal(loadConfig({}, tmp).permissionMode, "bypassPermissions");
+    persistPermissionMode("default");
+    assert.equal(loadPreferences().permissionMode, "default");
+    assert.equal(loadConfig({}, tmp).permissionMode, "default");
+  });
 
   it("persists /model and /permissions via preferences across folders", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-prefs-"));

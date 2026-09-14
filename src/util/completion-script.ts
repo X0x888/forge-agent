@@ -146,6 +146,9 @@ export function shellCompletionScript(shell: string): string {
       "        config)",
       "          _values 'config' --json --provider --model --cwd --max-turns --sandbox --sandbox-missing --sandbox-network --read-outside --permission-mode --no-blocking-stop",
       "          ;;",
+      "        permissions)",
+      "          _values 'permissions' default acceptEdits plan bypassPermissions dontAsk --json",
+      "          ;;",
       "        login)",
       "          _values 'login' --api-key --oauth --device --from-grok --from-copilot --from-cursor --add --label --provider --json",
       "          ;;",
@@ -275,6 +278,8 @@ export function shellCompletionScript(shell: string): string {
       'complete -c forge -n "__fish_seen_subcommand_from prune-tool-output" -l keep -d "Keep newest N" -x -a "0 all max unlimited 10 50 80 100"',
       'complete -c forge -n "__fish_seen_subcommand_from prune-metrics" -l json -d "JSON"',
       'complete -c forge -n "__fish_seen_subcommand_from prune-metrics" -l keep -d "Keep newest N" -x -a "0 all max unlimited 50 100 500"',
+      'complete -c forge -n "__fish_seen_subcommand_from permissions" -a "default acceptEdits plan bypassPermissions dontAsk"',
+      'complete -c forge -n "__fish_seen_subcommand_from permissions" -l json -d "JSON"',
       "",
     ].join("\n");
   }
@@ -373,6 +378,7 @@ export function shellCompletionScript(shell: string): string {
     '    news|changelog) COMPREPLY=( $(compgen -W "--json 1 2 3" -- "$cur") ) ;;',
     '    logs) COMPREPLY=( $(compgen -W "--json --path --lines -n" -- "$cur") ) ;;',
     '    config) COMPREPLY=( $(compgen -W "--json --provider --model --cwd --max-turns --sandbox --sandbox-missing --sandbox-network --read-outside --permission-mode --no-blocking-stop" -- "$cur") ) ;;',
+    '    permissions) COMPREPLY=( $(compgen -W "default acceptEdits plan bypassPermissions dontAsk --json" -- "$cur") ) ;;',
     `    run) COMPREPLY=( $(compgen -W "${runFlags}" -- "$cur") ) ;;`,
     '    login) COMPREPLY=( $(compgen -W "--api-key --oauth --device --from-grok --from-copilot --from-cursor --add --label --provider --json" -- "$cur") ) ;;',
     '    logout) COMPREPLY=( $(compgen -W "--provider --json" -- "$cur") ) ;;',
