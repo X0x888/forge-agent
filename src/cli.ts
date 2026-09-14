@@ -3702,7 +3702,7 @@ Docs: docs/PRODUCTION.md
           return;
         }
 
-        const action = parseSetupAction(arg);
+        const action = parseSetupAction(arg, { surface: "cli" });
         if (action.kind === "help") {
           failUsage(SETUP_CLI_USAGE, { json: wantJson });
         }

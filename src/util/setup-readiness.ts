@@ -301,11 +301,18 @@ export function rewriteIdleSetupShortcut(
   return line;
 }
 
-export function parseSetupAction(arg: string): SetupAction {
+export function parseSetupAction(
+  arg: string,
+  opts?: { surface?: SetupSurface },
+): SetupAction {
   const raw = String(arg || "").trim();
   if (!raw) return { kind: "card" };
   const tokens = raw.split(/\s+/);
   const head = tokens[0].toLowerCase();
+  // Numbered 1–6 stay on the REPL card. CLI `--help` is verbs-only.
+  if ((opts?.surface ?? "repl") === "cli" && /^[1-6]$/.test(head)) {
+    return { kind: "help" };
+  }
   const kind = VERB_ALIASES[head];
   if (!kind) return { kind: "help" };
   if (kind === "budget") {

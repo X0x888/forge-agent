@@ -190,6 +190,14 @@ describe("parseSetupAction", () => {
     assert.equal(parseSetupAction("6").kind, "scaffold");
     assert.equal(parseSetupAction("nope").kind, "help");
   });
+
+  it("CLI surface does not map leftover digits to verbs", () => {
+    assert.equal(parseSetupAction("1", { surface: "cli" }).kind, "help");
+    assert.equal(parseSetupAction("6", { surface: "cli" }).kind, "help");
+    assert.equal(parseSetupAction("3 CI", { surface: "cli" }).kind, "help");
+    assert.equal(parseSetupAction("model", { surface: "cli" }).kind, "model");
+    assert.equal(parseSetupAction("1").kind, "model");
+  });
 });
 
 describe("rewriteIdleSetupShortcut", () => {

@@ -1,8 +1,10 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { handleSlash, classifyLiveSlash, completeSlash } from "../src/commands/slash.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { HookRunner } from "../src/harness/hooks.js";
@@ -85,6 +87,16 @@ describe("/setup slash", () => {
     });
     assert.match(String(r.output), /hidden/i);
     assert.equal(loadPreferences().setupSkipped, true);
+  });
+
+  it("/setup 1 still confirms provider", async () => {
+    const r = await handleSlash("/setup 1", {
+      session: session(),
+      config: { ...DEFAULT_CONFIG, workspace: cwd, model: "grok-4.6" },
+      hooks: new HookRunner(DEFAULT_CONFIG, cwd),
+    });
+    assert.match(String(r.output), /confirmed/);
+    assert.equal(loadPreferences().seenProviderModelConfirm, true);
   });
 
   it("/setup model confirms provider", async () => {
@@ -235,6 +247,29 @@ describe("/setup slash", () => {
     assert.equal(p.setupSkipped, true);
     assert.equal(p.seenProviderModelConfirm, true);
     assert.deepEqual(p.dismissedHints, ["no_budget"]);
+  });
+
+  it("CLI forge setup 1 does not persist; setup model does", () => {
+    const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+    const tsx = path.join(repo, "node_modules", ".bin", "tsx");
+    const cli = path.join(repo, "src", "cli.ts");
+    const run = (args: string[]) =>
+      spawnSync(tsx, [cli, ...args], {
+        encoding: "utf8",
+        cwd: repo,
+        env: { ...process.env, FORGE_HOME: home, FORCE_COLOR: "0", NO_COLOR: "1" },
+        timeout: 20_000,
+      });
+    const digit = run(["setup", "1"]);
+    assert.notEqual(digit.status, 0);
+    assert.doesNotMatch(`${digit.stdout}${digit.stderr}`, /confirmed/i);
+    assert.match(`${digit.stdout}${digit.stderr}`, /Usage: forge setup/);
+    assert.equal(loadPreferences().seenProviderModelConfirm, undefined);
+
+    const model = run(["setup", "model"]);
+    assert.equal(model.status, 0, model.stderr);
+    assert.match(`${model.stdout}${model.stderr}`, /confirmed/i);
+    assert.equal(loadPreferences().seenProviderModelConfirm, true);
   });
 
   it("runForgeInit writes config + AGENTS stub once", async () => {

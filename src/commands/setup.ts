@@ -90,7 +90,8 @@ export const SETUP_CLI_USAGE =
   "  forge setup model        confirm provider/model\n" +
   "  forge setup budget 5     persist spend cap (omit N → peek)\n" +
   "  forge setup notify       turn-end desktop notify\n" +
-  "  forge setup --json";
+  "  forge setup --json\n" +
+  "  Numbered 1–6 are /setup at ›, not forge setup 1";
 
 export function setupJsonPayload(
   r: SetupAssessment,
