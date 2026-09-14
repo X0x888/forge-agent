@@ -107,7 +107,7 @@ describe("assessSetupReadiness", () => {
     assert.doesNotMatch(card, /\/permissions/);
     assert.doesNotMatch(card, /○ 2\s+spend cap/);
     assert.match(card, /→\s+forge login/);
-    assert.match(card, /forge setup budget/);
+    assert.match(card, /forge setup budget 5/);
     assert.doesNotMatch(card, /forge --max-cost/);
     assert.match(card, /forge setup model/);
     assert.match(card, /forge init/);
@@ -116,7 +116,7 @@ describe("assessSetupReadiness", () => {
     assert.doesNotMatch(card, /Next  \//);
     assert.deepEqual(r.items.map((i) => i.id), setupItemIds());
     assert.equal(r.items.find((i) => i.id === "budget")?.action, "/budget 5");
-    assert.equal(setupCliAction("budget"), "forge setup budget");
+    assert.equal(setupCliAction("budget"), "forge setup budget 5");
     assert.equal(setupCliAction("provider_model"), "forge setup model");
     assert.equal(setupCliAction("attention"), "forge setup notify");
   });
@@ -125,7 +125,7 @@ describe("assessSetupReadiness", () => {
     const r = assessSetupReadiness({ ...base, authenticated: false });
     const cli = setupJsonPayload(r, {}, { surface: "cli" });
     const items = cli.items as { id: string; action: string }[];
-    assert.equal(items.find((i) => i.id === "budget")?.action, "forge setup budget");
+    assert.equal(items.find((i) => i.id === "budget")?.action, "forge setup budget 5");
     assert.equal(
       items.find((i) => i.id === "provider_model")?.action,
       "forge setup model",
@@ -182,6 +182,14 @@ describe("parseSetupAction", () => {
     assert.equal(parseSetupAction("json").kind, "json");
     assert.equal(parseSetupAction("skip").kind, "skip");
     assert.equal(parseSetupAction("1").kind, "model");
+    assert.deepEqual(parseSetupAction("2"), {
+      kind: "budget",
+      amount: "5",
+    });
+    assert.deepEqual(parseSetupAction("budget"), {
+      kind: "budget",
+      amount: undefined,
+    });
     assert.deepEqual(parseSetupAction("budget 5"), {
       kind: "budget",
       amount: "5",

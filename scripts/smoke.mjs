@@ -101,6 +101,10 @@ mustInclude("invalid_deny empty", ["run", "x", "--deny", "", "--json"], "invalid
 mustInclude("invalid_goal empty", ["run", "x", "--goal", "", "--json"], "invalid_goal");
 mustInclude("invalid_query empty", ["sessions", "list", "-q", "", "--json"], "invalid_query");
 mustInclude("command_typo", ["sesions", "--json"], "command_typo");
+mustInclude("help json reason", ["help", "--json"], '"reason": "help"');
+mustInclude("help unsigned usage", ["help"], "Usage:");
+mustInclude("help examples", ["help"], "Examples:");
+mustInclude("hello is a run", ["hello", "--json"], "unauthenticated");
 mustInclude("unknown_session_action", ["sessions", "prun", "--json"], "unknown_session_action");
 mustInclude("auth logout footgun", ["auth", "logout", "--json"], "forge logout");
 mustInclude("sessions login footgun", ["sessions", "login", "--json"], "forge login");

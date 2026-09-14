@@ -20,7 +20,7 @@ export function unknownOptionHint(message: string): {
   const raw = m[1] || "";
   if (/^--?dry(-run)?$/i.test(raw)) {
     return {
-      hint: "Hygiene preview: forge tmp prune --dry  ·  forge sessions prune --journals --dry",
+      hint: "Hygiene preview: forge tmp prune --dry  ·  forge sessions prune --journals --dry  ·  forge sessions prune --keep 50 --dry",
     };
   }
   const candidates = [

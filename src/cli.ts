@@ -10,7 +10,12 @@
  *  - Multi-provider: xAI, Anthropic, OpenAI, OpenRouter, Google
  */
 import { Command } from "commander";
-import { installGroupedHelp, TOP_LEVEL_COMMANDS } from "./cli/help-groups.js";
+import {
+  CLI_AFTER_HELP,
+  formatForgeHelp,
+  installGroupedHelp,
+  TOP_LEVEL_COMMANDS,
+} from "./cli/help-groups.js";
 import { suggestTopLevelCommand } from "./cli/suggest-command.js";
 import { sanitizeUnknownDryHint, unknownOptionHint } from "./cli/unknown-option.js";
 import chalk from "chalk";
@@ -295,37 +300,7 @@ async function main(): Promise<void> {
       "Forge — AI coding agent with blocking Stop hooks, /goal driver, and multi-provider auth",
     )
     .version(VERSION)
-    .addHelpText(
-      "after",
-      `
-Examples:
-  forge login
-  forge login --add
-  forge login -p cursor --oauth --add
-  forge doctor --json
-  forge run "fix CI" --permission-mode acceptEdits --json
-  forge run "continue" --session <id> --json
-  forge run "next step" --continue --json
-  forge "next step" --continue                 # bare headless same-cwd resume (fail-closed if none)
-  forge "next step" --json                     # bare headless JSON (parity with run --json)
-  forge setup --json · forge init --json · forge tips --json · forge completion bash --json
-  forge sessions prune --keep 50
-  forge sessions prune --journals --dry
-  forge sessions export <id> --format json --out ./session.json
-  forge stats --days 7
-  forge news
-  forge tips
-  forge logs
-  forge config --json
-  forge prune-tool-output --keep 80
-  forge prune-metrics --keep 500
-  forge tmp prune
-  forge sessions prune --orphans
-  eval "$(forge completion bash)"
-
-Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
-`,
-    )
+    .addHelpText("after", CLI_AFTER_HELP)
     .option("-m, --model <model>", "Model id")
     .option("--fallback-models <models>", "Same-provider fallbacks after 429/5xx (off by default; on|list; floor grok-4.5 high)")
     .option("-p, --provider <provider>", "Provider: xai|anthropic|openai|openrouter|deepseek|google|copilot|cursor|custom")
@@ -423,7 +398,7 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
         command?: { optsWithGlobals?: () => Record<string, unknown> },
       ) => {
         const wantJson = flagJson(opts as Record<string, unknown>, command);
-        const text = program.helpInformation();
+        const text = formatForgeHelp(program);
         if (wantJson) {
           emitOkJson(
             {
@@ -435,7 +410,7 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
           );
           return;
         }
-        process.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
+        process.stdout.write(text);
       },
     );
   program
@@ -847,7 +822,7 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
       "Resume newest same-cwd session (≤14d; skips foreign locks; fail-closed if none). Conflicts with --new",
     )
     .option("--new", "Force a new session (default when --session/--continue omitted)")
-    .option("--title <text>", "Label for a new session (CI-friendly; searchable via list -q)")
+    .option("--title <text>", titleSearchHelp("cli"))
     .option("--json", "Emit JSON result on stdout")
     .option(
       "--no-blocking-stop",
@@ -2374,6 +2349,13 @@ Docs: docs/PRODUCTION.md
         );
       }
       const act = (action || "list").toLowerCase();
+      const dry = Boolean(globalOpts.dry || globalOpts.dryRun);
+      if (dry && act !== "prune") {
+        failUsage(
+          "Usage: forge sessions prune --dry  (preview keep / orphans / journals)",
+          { json: Boolean(globalOpts.json) },
+        );
+      }
       if (act === "delete" || act === "rm" || act === "remove") {
         const target = id || "";
         if (!target) {
@@ -3082,7 +3064,6 @@ Docs: docs/PRODUCTION.md
         return;
       }
       if (act === "prune") {
-        const dry = Boolean(globalOpts.dry || globalOpts.dryRun);
         if (Boolean(globalOpts.journals)) {
           const j = pruneMutationJournals({ dry });
           if (globalOpts.json) {
@@ -5182,7 +5163,7 @@ Docs: docs/PRODUCTION.md
               : code === "commander.excessArguments"
                 ? "excess_arguments"
                 : "cli_error";
-      const clean = msg.replace(/^error:\s*/i, "").trim();
+      const clean = sanitizeUnknownDryHint(msg.replace(/^error:\s*/i, "").trim());
       const foot =
         reason === "excess_arguments"
           ? excessArgCommandHint()

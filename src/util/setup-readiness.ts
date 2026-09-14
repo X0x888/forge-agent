@@ -17,6 +17,9 @@ export type SetupSeverity = "blocking" | "recommended" | "optional";
 /** REPL `/setup` is numbered 1–6; `forge setup` is shell verbs. */
 export type SetupSurface = "repl" | "cli";
 
+/** First-day spend cap written by numbered `/setup 2` / CLI Next `forge setup budget 5`. */
+export const SETUP_DEFAULT_BUDGET_USD = 5;
+
 export interface SetupItem {
   id: SetupItemId;
   ready: boolean;
@@ -160,7 +163,7 @@ export function setupCliAction(
     case "provider_model":
       return "forge setup model";
     case "budget":
-      return "forge setup budget";
+      return `forge setup budget ${SETUP_DEFAULT_BUDGET_USD}`;
     case "project_rules":
       return "forge init";
     case "attention":
@@ -316,7 +319,12 @@ export function parseSetupAction(
   const kind = VERB_ALIASES[head];
   if (!kind) return { kind: "help" };
   if (kind === "budget") {
-    return { kind: "budget", amount: tokens.slice(1).join(" ") || undefined };
+    const rest = tokens.slice(1).join(" ");
+    // Numbered card item 2 writes the first-day cap. Bare `budget` peeks.
+    if (head === "2" && !rest) {
+      return { kind: "budget", amount: String(SETUP_DEFAULT_BUDGET_USD) };
+    }
+    return { kind: "budget", amount: rest || undefined };
   }
   if (kind === "init") {
     return { kind: "init", focus: tokens.slice(1).join(" ") || undefined };

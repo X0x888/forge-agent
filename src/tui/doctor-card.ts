@@ -4,13 +4,6 @@ import {
   sessionsRecoveryVerb,
 } from "../cli/sessions-recovery.js";
 
-export {
-  doctorForceLastErrorHelp,
-  doctorSessionsRecoveryVerb,
-  formatDoctorPinnedLine,
-  type DoctorSessionsRecoveryKind,
-} from "../cli/sessions-recovery.js";
-
 /** REPL `/doctor` is slash keys; `forge doctor` keeps CLI verbs. */
 export type DoctorSurface = "repl" | "cli";
 

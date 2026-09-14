@@ -4,6 +4,44 @@
  */
 import { Help, type Command, type Option } from "commander";
 
+/** Trailing Examples/Docs block on `forge --help` / `forge help`. */
+export const CLI_AFTER_HELP = `
+Examples:
+  forge login
+  forge login --add
+  forge login -p cursor --oauth --add
+  forge doctor --json
+  forge run "fix CI" --permission-mode acceptEdits --json
+  forge run "continue" --session <id> --json
+  forge run "next step" --continue --json
+  forge "next step" --continue                 # bare headless same-cwd resume (fail-closed if none)
+  forge "next step" --json                     # bare headless JSON (parity with run --json)
+  forge setup --json · forge init --json · forge tips --json · forge completion bash --json
+  forge sessions prune --keep 50
+  forge sessions prune --journals --dry
+  forge sessions export <id> --format json --out ./session.json
+  forge stats --days 7
+  forge news
+  forge tips
+  forge logs
+  forge config --json
+  forge prune-tool-output --keep 80
+  forge prune-metrics --keep 500
+  forge tmp prune
+  forge sessions prune --orphans
+  eval "$(forge completion bash)"
+
+Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
+`;
+
+/** `helpInformation()` plus the after-text `--help` prints via `addHelpText`. */
+export function formatForgeHelp(program: Command): string {
+  const body = program.helpInformation();
+  const after = CLI_AFTER_HELP.replace(/^\n/, "");
+  const joined = body.endsWith("\n") ? `${body}${after}` : `${body}\n${after}`;
+  return joined.endsWith("\n") ? joined : `${joined}\n`;
+}
+
 /**
  * Top-level subcommands Commander registers (plus `help`).
  * Typo recovery and shell completion share this list so Tab matches `--help`.

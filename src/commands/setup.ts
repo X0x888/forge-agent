@@ -16,6 +16,7 @@ import {
   formatSetupCompactLine,
   parseSetupAction,
   setupCliAction,
+  SETUP_DEFAULT_BUDGET_USD,
   type SetupAssessment,
 } from "../util/setup-readiness.js";
 
@@ -82,8 +83,6 @@ export async function collectSetupAssessment(
   });
 }
 
-export const SETUP_DEFAULT_BUDGET_USD = 5;
-
 export const SETUP_CLI_USAGE =
   "Usage: forge setup [model|budget [N]|notify|lsp|init|scaffold|json]\n" +
   "  forge setup              first-day card\n" +
@@ -142,6 +141,7 @@ export {
   formatSetupCompactLine,
   parseSetupAction,
   setupCliAction,
+  SETUP_DEFAULT_BUDGET_USD,
 };
 
 export function markSetupSeen(): void {

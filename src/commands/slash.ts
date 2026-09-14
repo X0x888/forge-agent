@@ -5654,6 +5654,14 @@ case "/new":
     case "/sessions": {
       const parts = arg.split(/\s+/).filter(Boolean);
       const sub = (parts[0] || "").toLowerCase();
+      const dryArg = parts.includes("--dry") || parts.includes("--dry-run");
+      if (dryArg && sub !== "prune") {
+        return {
+          handled: true,
+          output:
+            "Usage: /sessions prune --dry  (preview keep / orphans / journals). --dry does not delete.",
+        };
+      }
       if (sub === "delete" || sub === "rm" || sub === "remove") {
         const target = parts[1] || "";
         if (!target) {

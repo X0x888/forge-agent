@@ -89,6 +89,17 @@ describe("/setup slash", () => {
     assert.equal(loadPreferences().setupSkipped, true);
   });
 
+  it("/setup 2 persists the first-day spend cap", async () => {
+    const s = session();
+    const r = await handleSlash("/setup 2", {
+      session: s,
+      config: { ...DEFAULT_CONFIG, workspace: cwd },
+      hooks: new HookRunner(DEFAULT_CONFIG, cwd),
+    });
+    assert.match(String(r.output), /\$5/);
+    assert.equal(loadPreferences().maxCostUsd, 5);
+  });
+
   it("/setup 1 still confirms provider", async () => {
     const r = await handleSlash("/setup 1", {
       session: session(),
@@ -270,6 +281,44 @@ describe("/setup slash", () => {
     assert.equal(model.status, 0, model.stderr);
     assert.match(`${model.stdout}${model.stderr}`, /confirmed/i);
     assert.equal(loadPreferences().seenProviderModelConfirm, true);
+  });
+
+  it("CLI forge setup budget peeks; budget 5 persists", () => {
+    const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+    const tsx = path.join(repo, "node_modules", ".bin", "tsx");
+    const cli = path.join(repo, "src", "cli.ts");
+    const run = (args: string[]) =>
+      spawnSync(tsx, [cli, ...args], {
+        encoding: "utf8",
+        cwd: repo,
+        env: { ...process.env, FORGE_HOME: home, FORCE_COLOR: "0", NO_COLOR: "1" },
+        timeout: 20_000,
+      });
+    const peek = run(["setup", "budget"]);
+    assert.equal(peek.status, 0, peek.stderr);
+    assert.equal(loadPreferences().maxCostUsd, undefined);
+    const five = run(["setup", "budget", "5"]);
+    assert.equal(five.status, 0, five.stderr);
+    assert.match(`${five.stdout}${five.stderr}`, /persisted/i);
+    assert.equal(loadPreferences().maxCostUsd, 5);
+  });
+
+  it("CLI forge setup budget 5 fails closed when preferences cannot be written", () => {
+    const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+    const tsx = path.join(repo, "node_modules", ".bin", "tsx");
+    const cli = path.join(repo, "src", "cli.ts");
+    const bad = path.join(home, "not-a-dir");
+    fs.writeFileSync(bad, "x");
+    const r = spawnSync(tsx, [cli, "setup", "budget", "5"], {
+      encoding: "utf8",
+      cwd: repo,
+      env: { ...process.env, FORGE_HOME: bad, FORCE_COLOR: "0", NO_COLOR: "1" },
+      timeout: 20_000,
+    });
+    assert.notEqual(r.status, 0);
+    assert.doesNotMatch(`${r.stdout}${r.stderr}`, /persisted/i);
+    process.env.FORGE_HOME = home;
+    assert.equal(loadPreferences().maxCostUsd, undefined);
   });
 
   it("runForgeInit writes config + AGENTS stub once", async () => {

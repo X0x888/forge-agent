@@ -247,7 +247,9 @@ describe("doctor health card", () => {
     assert.match(pinRepl, /\/pin/);
     assert.doesNotMatch(formatPinnedEmpty("cli"), /\/pin/);
     assert.match(formatPinnedEmpty("cli"), /forge sessions pin/);
-    assert.match(formatPinnedEmpty("repl"), /\/pin/);
+    assert.match(formatPinnedEmpty("repl"), /\/pin protects this session/);
+    assert.match(formatPinnedEmpty("repl"), /\/sessions pin <id>/);
+    assert.doesNotMatch(formatPinnedEmpty("repl"), /\/pin <id>/);
     assert.doesNotMatch(formatUntitledEmpty("cli"), /\/title/);
     assert.match(titleSearchHelp("cli"), /forge sessions list -q/);
     assert.doesNotMatch(titleSearchHelp("cli"), /\/sessions search/);

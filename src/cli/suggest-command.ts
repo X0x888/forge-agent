@@ -50,6 +50,8 @@ export function suggestTopLevelCommand(prompt: string): string | null {
     // command as a prefix of English (`hello` starts with `help`).
     if (name.startsWith(q)) score = 80;
     else {
+      // Extra letters beyond one (`helper` / `runner`) are English, not typos.
+      if (q.length > name.length + 1) continue;
       const d = editDistance(q, name);
       // Length ≤5: at most one edit so `helpp` recovers and `hello` does not.
       const maxD = q.length <= 5 ? 1 : q.length <= 9 ? 3 : 4;

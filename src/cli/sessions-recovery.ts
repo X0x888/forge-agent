@@ -75,7 +75,10 @@ export function formatDoctorPinnedLine(
 }
 
 export function formatPinnedEmpty(surface: SitDownSurface): string {
-  return `No pinned sessions. ${sessionsRecoveryVerb("pin", surface)} <id> protects from prune.`;
+  if (surface === "cli") {
+    return `No pinned sessions. ${sessionsRecoveryVerb("pin", "cli")} <id> protects from prune.`;
+  }
+  return "No pinned sessions. /pin protects this session from prune. /sessions pin <id> protects another.";
 }
 
 export function titleSearchHelp(surface: SitDownSurface = "cli"): string {

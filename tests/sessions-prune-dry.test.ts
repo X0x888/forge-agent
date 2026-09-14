@@ -153,6 +153,42 @@ describe("forge sessions prune --journals --dry", () => {
     const stats = forge(home, ["stats", "--dry"]);
     assert.notEqual(stats.status, 0);
     assert.doesNotMatch(stats.stdout + stats.stderr, /Did you mean `--deny`|Did you mean --deny/);
+    const doctorJson = forge(home, ["doctor", "--dry", "--json"]);
+    assert.notEqual(doctorJson.status, 0);
+    assert.doesNotMatch(
+      doctorJson.stdout + doctorJson.stderr,
+      /Did you mean `--deny`|Did you mean --deny/,
+    );
+    assert.match(doctorJson.stdout, /Hygiene preview/);
+  });
+});
+
+describe("sessions delete --dry does not delete", () => {
+  it("CLI and REPL --dry are usage; the dir stays", async () => {
+    const prev = process.env.FORGE_HOME;
+    const home = tmpHome();
+    try {
+      const ws = path.join(home, "ws");
+      fs.mkdirSync(ws);
+      const extra = createSession({ cwd: ws, provider: "xai", model: "m", title: "extra" });
+      const active = createSession({ cwd: ws, provider: "xai", model: "m", title: "active" });
+      const dry = forge(home, ["sessions", "delete", extra.meta.id, "--dry", "--json"]);
+      assert.notEqual(dry.status, 0);
+      assert.match(dry.stdout + dry.stderr, /prune --dry/);
+      assert.doesNotMatch(dry.stdout + dry.stderr, /"deleted":\s*true/);
+      assert.equal(fs.existsSync(sessionDir(extra.meta.id)), true);
+      const hooks = new HookRunner(DEFAULT_CONFIG, ws);
+      const slash = await handleSlash(
+        `/sessions delete ${extra.meta.id} --dry`,
+        { session: active, config: DEFAULT_CONFIG, hooks },
+      );
+      assert.equal(slash.handled, true);
+      assert.match(String(slash.output || ""), /prune --dry/);
+      assert.equal(fs.existsSync(sessionDir(extra.meta.id)), true);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+    }
   });
 });
 

@@ -12,6 +12,13 @@ describe("suggestTopLevelCommand", () => {
     assert.equal(suggestTopLevelCommand("helpp"), "help");
   });
 
+  it("longer English is a task, not a command typo", () => {
+    assert.equal(suggestTopLevelCommand("helper"), null);
+    assert.equal(suggestTopLevelCommand("helpers"), null);
+    assert.equal(suggestTopLevelCommand("runner"), null);
+    assert.equal(suggestTopLevelCommand("author"), null);
+  });
+
   it("multi-word English is a run", () => {
     assert.equal(suggestTopLevelCommand("hello world"), null);
     assert.equal(suggestTopLevelCommand("fix the tests"), null);

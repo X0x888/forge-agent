@@ -2,6 +2,8 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { Command } from "commander";
 import {
+  CLI_AFTER_HELP,
+  formatForgeHelp,
   groupOptionsByHelpSection,
   installGroupedHelp,
   TOP_LEVEL_COMMANDS,
@@ -65,6 +67,21 @@ describe("installGroupedHelp", () => {
     assert.doesNotMatch(help, /^Options:/m);
     // implicit --help lands in Output, not a leftover dump
     assert.match(help, /--help/);
+  });
+
+  it("formatForgeHelp includes the Examples footer --help prints", () => {
+    const p = new Command();
+    p.name("forge").description("test agent");
+    p.option("-m, --model <model>", "Model id");
+    p.option("--json", "JSON");
+    p.command("login").description("store credentials");
+    installGroupedHelp(p);
+    p.addHelpText("after", CLI_AFTER_HELP);
+    const help = formatForgeHelp(p);
+    assert.match(help, /Usage:/);
+    assert.match(help, /Examples:/);
+    assert.match(help, /forge login/);
+    assert.match(help, /docs\/GETTING-STARTED\.md/);
   });
 });
 
