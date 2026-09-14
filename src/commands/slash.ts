@@ -8046,6 +8046,21 @@ export async function runDoctorCheck(
       });
     }
   }
+  try {
+    const { assessStaleDist } = await import("../util/stale-dist.js");
+    const stale = assessStaleDist();
+    if (stale.stale) {
+      recommendations.push({
+        id: "stale-dist",
+        severity: "hygiene",
+        detail:
+          "Built dist/cli.js is older than src/cli.ts — PATH forge lags this checkout",
+        cliAction: "bash install.sh",
+      });
+    }
+  } catch {
+    /* */
+  }
 
   return {
     report: assembleDoctorReport(lines, issues, {
