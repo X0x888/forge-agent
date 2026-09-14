@@ -71,6 +71,8 @@ describe("install link (bash install.sh)", () => {
     assert.match(src, /exec "\$NODE"/);
     assert.ok(src.includes(shQuote("/opt/node bin/node")));
     assert.ok(src.includes(shQuote(cliPath(root))));
+    assert.match(src, /\[ "\$CLI" -ot "\$SRC" \]/);
+    assert.match(src, /bash install\.sh/);
   });
 
   it("writeLauncher replaces a symlink instead of clobbering its target", () => {
@@ -204,6 +206,32 @@ describe("install link (bash install.sh)", () => {
     assert.ok(r.notes.some((n: string) => /export PATH=/.test(n)));
     assert.equal(listForgeOnPath(binDir).length, 1);
     assert.equal(BIN_NAMES.includes("forge-agent"), true);
+  });
+
+  it("launcher warns on stderr when dist lags src, then still execs", () => {
+    const root = fakeRepo();
+    const srcFile = path.join(root, "src", "cli.ts");
+    fs.mkdirSync(path.dirname(srcFile), { recursive: true });
+    fs.writeFileSync(srcFile, "// newer than dist\n");
+    const distFile = path.join(root, "dist", "cli.js");
+    const dest = path.join(tmp("forge-il-lag-"), "forge");
+    writeLauncher(dest, root, process.execPath);
+
+    const older = new Date(Date.now() - 120_000);
+    const newer = new Date();
+    fs.utimesSync(distFile, older, older);
+    fs.utimesSync(srcFile, newer, newer);
+    const lag = spawnSync(dest, [], { encoding: "utf8" });
+    assert.equal(lag.status, 0, lag.stderr);
+    assert.match(lag.stdout, /forge-il-ok/);
+    assert.match(lag.stderr, /bash install\.sh/);
+
+    fs.utimesSync(distFile, newer, newer);
+    fs.utimesSync(srcFile, older, older);
+    const current = spawnSync(dest, [], { encoding: "utf8" });
+    assert.equal(current.status, 0, current.stderr);
+    assert.match(current.stdout, /forge-il-ok/);
+    assert.doesNotMatch(current.stderr, /bash install\.sh/);
   });
 
   it("install.sh is bash-3.2-safe and no longer dies on npm link", () => {

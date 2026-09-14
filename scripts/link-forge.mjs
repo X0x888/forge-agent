@@ -28,8 +28,13 @@ export function shQuote(s) {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
 }
 
+export function srcCliPath(root) {
+  return path.join(root, "src", "cli.ts");
+}
+
 export function launcherSource(root, nodePath = process.execPath) {
   const cli = cliPath(root);
+  const src = srcCliPath(root);
   return `#!/usr/bin/env bash
 # Forge launcher — written by install.sh. Exec this clone, not a stale global.
 NODE=${shQuote(nodePath)}
@@ -40,7 +45,13 @@ if [ -z "$NODE" ]; then
   echo "forge: Node.js 20+ not found on PATH. Re-run: bash install.sh" >&2
   exit 127
 fi
-exec "$NODE" ${shQuote(cli)} "$@"
+CLI=${shQuote(cli)}
+SRC=${shQuote(src)}
+# bash 3.2: -ot is true when dist is older than src (git pull without rebuild).
+if [ -f "$CLI" ] && [ -f "$SRC" ] && [ "$CLI" -ot "$SRC" ]; then
+  echo "forge: dist/cli.js lags src/cli.ts — bash install.sh" >&2
+fi
+exec "$NODE" "$CLI" "$@"
 `;
 }
 
