@@ -194,7 +194,10 @@ is cycle N+1." Those belong in `Items:` now, or under `leave it` with why.
 
 **One item.** Isolated kernel or a bounded investigation. Then `One item:`
 must say why the other `Considered:` winners are a different job or leave-it —
-not the next cycle. A missing `One item:` does not parse.
+not the next cycle. Write it after every `Items:` row, never between them.
+A missing `One item:` does not parse. A one-item plan may keep **at most one**
+`Out of scope:` entry (a different job or a lease). Two or more is a parking
+lot and does not parse — those belong in `Items:` now, or under `leave it`.
 
 **Highest leverage, not nearest file.** Plan the class you saw while using
 the product. If the record's last several cycles touched the same copy/rename
@@ -254,5 +257,6 @@ cycle:`, `Verify:`, `Items:`, `One item:` when there is only one item,
 `./build.sh && ./bin/app --self-test`), or `none — <why>`; prose under it is
 refused. A `continue` plan without `Considered:` (with `leave it`), with an
 item missing `serves:` or `red now:`, with more than five items, or with
-exactly one item and no `One item:`, does not parse and comes back to you
-once with what was missing.
+exactly one item and no `One item:`, with two or more `Out of scope:`
+entries on a one-item plan, or with numbered item lines under `One item:`,
+does not parse and comes back to you once with what was missing.

@@ -1286,6 +1286,38 @@ Items:
     assert.doesNotMatch(synth.raw, /One item:/);
   });
 
+  it("synth from a one-item plan that parked the class under Out of scope packs Considered", () => {
+    const s = newCycleState({ sessionId: "synth-lot", mandate: null });
+    const considered = [
+      "broken promise: first-run card — first thing a user meets",
+      "rough edge: --dry deletes — same CLI hygiene class",
+      "missing: pin empty state — same class",
+      "leave it — it runs",
+    ];
+    const raw = `# Cycle 1 plan — slice
+Verdict: continue
+Looked: ran --help
+Considered:
+${considered.map((c) => `- ${c}`).join("\n")}
+Direction: first-run
+Worth the cycle: x
+Verify: npm test
+Items:
+1. ${ITEM("the card", "a.ts")}
+${ONE_ITEM}
+Out of scope:
+- keep-50 cull
+- --dry preview
+`;
+    const synth = synthesizeWorkPlan(
+      s,
+      { raw, parsed: { looked: "ran --help", considered, promises: [] }, path: "scout.md" },
+      "no-plan",
+    );
+    assert.equal(synth.plan.items.length, 3, "the parked class becomes the session, not the one slice");
+    assert.equal(synth.plan.oneItem, undefined);
+  });
+
   it("a plan that declares an isolate is gated by the suite when the cycle closes", async () => {
     const sid = "orch-isolate-gate";
     const { rt, calls } = fakeRuntime(cwd, {

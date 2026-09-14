@@ -614,7 +614,7 @@ export function synthesizeWorkPlan(
     `Items:`,
     ...items.map((it, i) => `${i + 1}. ${it.title}${it.files.length ? ` — files: ${it.files.join(", ")}` : ""} — serves: ${it.serves ?? ""} — red now: ${it.redNow ?? ""} — proof: ${it.proof ?? ""}`),
     items.length === 1
-      ? "One item: synthesized from the scout — this kernel is the session; other Considered entries are leave-it or a different job, not sequels"
+      ? "One item: synthesized — this kernel is the session; other Considered entries are leave-it or a different job, not sequels"
       : "",
     promises.length ? `Promises:\n${promises.map((p) => `- ${p.text} — ${p.state}${p.seen ? ` — ${p.seen}` : ""}`).join("\n")}` : "",
   ]
@@ -631,7 +631,7 @@ export function synthesizeWorkPlan(
     worthClaim,
     oneItem:
       items.length === 1
-        ? "synthesized from the scout — this kernel is the session; other Considered entries are leave-it or a different job, not sequels"
+        ? "synthesized — this kernel is the session; other Considered entries are leave-it or a different job, not sequels"
         : undefined,
     promises,
     verifyCommand,
@@ -850,6 +850,7 @@ async function admitPlan(
   s.items = plan.items;
   // `Guidelines: fix: …` is the plan's first item unless the Planner already
   // wrote one (a guideline file among an item's files, or a Guidelines title).
+  // MAX_CYCLE_PLAN_ITEMS caps the Planner's Items: list; this prepend may make the board one longer.
   const guidelinesItem = s.items.some(
     (i) =>
       /^guidelines\b/i.test(i.title) ||
@@ -1646,7 +1647,7 @@ function itemsFromScout(scout: ScoutResult | undefined): CyclePlanItem[] {
   if (!scout) return [];
   const parsed = scout.raw ? parsePlanArtifact(scout.raw) : null;
   if (parsed?.verdict === "continue" && parsed.items.length) {
-    return parsed.items.slice(0, MAX_CYCLE_PLAN_ITEMS);
+    return parsed.items;
   }
   const considered = scout.parsed?.considered ?? [];
   const candidates = considered.filter((c) => !isLeaveItEntry(c));

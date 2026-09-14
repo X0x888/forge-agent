@@ -300,6 +300,7 @@ describe("Planner plan brief (turn 2)", () => {
       assert.match(b, /Prevented data loss/);
       assert.match(b, /the scout already spent/);
       assert.match(b, /Out of scope is a different job or a lease limit/);
+      assert.match(b, /A one-item plan may keep at most one Out of scope entry/);
       assert.match(b, /fulfilled releases a run only when its explicit mandate is met/);
       assert.match(b, /An investigation may conclude no change is justified/);
       assert.match(b, /Never invent defects or edits to keep running/);
@@ -568,10 +569,13 @@ describe("Reviewer review brief (turn 2)", () => {
       "Items:",
       "1. overlay z-index — files: a.ts — serves: hunt — red now: overlay ate the click — proof: npm test",
       "One item: isolated kernel — cooldown is a different job",
+      "Out of scope:",
+      "- Steamworks — a different job",
     ].join("\n");
     const b = buildReviewerReviewBrief({ ...input(), planText, lookText: "# Cycle 2 look\nLooked: tapped a star" });
     assert.match(b, /This plan has 1 item and 2 Considered candidates besides leave it/);
     assert.match(b, /A one-item plan of a class already in Considered is Worth: no unless One item: names a real isolation/);
+    assert.match(b, /Out of scope on a one-item plan is one different job or a lease limit/);
   });
 
   it("turn 2 is the document: Must-fix revises the tree, not write access", () => {

@@ -309,6 +309,22 @@ describe("plan artifact parser", () => {
     assert.equal(parsePlanArtifact(over), null);
     assert.match(explainPlanParseFailure(over), new RegExp(`session \\(${MAX_CYCLE_PLAN_ITEMS}\\)`));
   });
+
+  it("a one-item plan may keep one Out of scope entry; two is a parking lot", () => {
+    const one = `# Cycle 2 plan — x\nVerdict: continue\n${LOOK_DIR_WORTH}\n${CONSIDERED}\nVerify: npm test\nItems:\n1. ${ITEM("a thing", "a.ts", "npm test")}\n${ONE_ITEM}\nOut of scope:\n- Steamworks — a different job\n`;
+    const p = parsePlanArtifact(one);
+    assert.ok(p);
+    assert.equal(p.outOfScope.length, 1);
+    const lot = `# Cycle 2 plan — x\nVerdict: continue\n${LOOK_DIR_WORTH}\n${CONSIDERED}\nVerify: npm test\nItems:\n1. ${ITEM("a thing", "a.ts", "npm test")}\n${ONE_ITEM}\nOut of scope:\n- keep-50 cull\n- --dry preview\n`;
+    assert.equal(parsePlanArtifact(lot), null);
+    assert.match(explainPlanParseFailure(lot), /parking lot/);
+  });
+
+  it("numbered item lines under One item: do not parse (they would be dropped)", () => {
+    const stolen = `# Cycle 2 plan — x\nVerdict: continue\n${LOOK_DIR_WORTH}\n${CONSIDERED}\nVerify: npm test\nItems:\n1. ${ITEM("a thing", "a.ts", "npm test")}\nOne item: isolated kernel\n2. ${ITEM("another", "b.ts", "npm test")}\n`;
+    assert.equal(parsePlanArtifact(stolen), null);
+    assert.match(explainPlanParseFailure(stolen), /numbered item lines/);
+  });
 });
 
 const SCOUT = `

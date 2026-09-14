@@ -212,6 +212,11 @@ function paragraph(lines: string[] | undefined): string | undefined {
   return body || undefined;
 }
 
+/** Numbered `2.` / `3)` lines under `One item:` are Items: that the section split stole. */
+function sectionHasNumberedItems(lines: string[] | undefined): boolean {
+  return (lines ?? []).some((l) => /^\s*\d+[.)]\s+\S/.test(l));
+}
+
 function bullets(lines: string[] | undefined): string[] {
   if (!lines) return [];
   const out: string[] = [];
@@ -358,6 +363,16 @@ export function explainPlanParseFailure(text: string): string {
       "One item: missing or empty (required when Items has one entry — why the other Considered candidates are a different job or leave-it, not sequels)",
     );
   }
+  if (items.length === 1 && bullets(sections.get("out-of-scope")).length >= 2) {
+    problems.push(
+      "Out of scope: two or more entries on a one-item plan is a parking lot — pack the class into Items:, or leave it in Considered:; one different job or lease may stay",
+    );
+  }
+  if (sectionHasNumberedItems(sections.get("one-item"))) {
+    problems.push(
+      "One item: contains numbered item lines — list every Items: entry under Items:, then One item:",
+    );
+  }
   items.forEach((it, i) => {
     const missing = [!it.serves ? "serves:" : "", !it.redNow ? "red now:" : ""].filter(Boolean);
     if (missing.length) problems.push(`item ${i + 1} (${it.title.slice(0, 60)}) has no ${missing.join(" / ")}`);
@@ -400,6 +415,7 @@ function parsePlanArtifactFromSections(text: string): ParsedPlan | null {
   const direction = paragraph(sections.get("direction"));
   const worthClaim = paragraph(sections.get("worth-the-cycle"));
   const oneItem = paragraph(sections.get("one-item"));
+  const outOfScope = bullets(sections.get("out-of-scope"));
   const verifyRaw = firstLine(sections.get("verify"));
   let verifyCommand: string | undefined;
   let verifyNone: string | undefined;
@@ -425,6 +441,8 @@ function parsePlanArtifactFromSections(text: string): ParsedPlan | null {
     if (items.length === 0) return null;
     if (items.length > MAX_CYCLE_PLAN_ITEMS) return null;
     if (items.length === 1 && !oneItem) return null;
+    if (items.length === 1 && outOfScope.length >= 2) return null;
+    if (sectionHasNumberedItems(sections.get("one-item"))) return null;
     if (!looked || !direction || !worthClaim) return null;
     if (considered.length < 2 || !considered.some((c) => LEAVE_IT_RE.test(c))) return null;
     if (items.some((i) => !i.serves || !i.redNow)) return null;
@@ -444,7 +462,7 @@ function parsePlanArtifactFromSections(text: string): ParsedPlan | null {
     verifyNone,
     verifyRefused,
     items,
-    outOfScope: bullets(sections.get("out-of-scope")),
+    outOfScope,
     guidelines: paragraph(sections.get("guidelines")),
     operator: bullets(sections.get("operator")),
   };
@@ -900,9 +918,9 @@ export function planArtifactContract(cycle: number): string {
     `Items:`,
     `1. <item title> — files: <path>, <path> — serves: <the job in Identity this serves> — red now: <observed defect, limitation, regression risk or evidence gap; or unchecked — why> — proof: <command or observable distinguishing improvement or resolving the question>`,
     `2. <same theme — default is two to five items, a natural executor session; at most ${MAX_CYCLE_PLAN_ITEMS}>`,
-    `One item: <required when Items has one entry: why the other Considered candidates are a different job or leave-it, not sequels for the next cycle>`,
+    `One item: <required when Items has one entry, after every Items: row: why the other Considered candidates are a different job or leave-it, not sequels for the next cycle>`,
     `Out of scope:`,
-    `- <a different job or a lease limit (no TTY, do not rebuild dist) — not the rest of this Looked: class parked for cycle N+1>`,
+    `- <a different job or a lease limit (no TTY, do not rebuild dist) — not the rest of this Looked: class parked for cycle N+1; a one-item plan may keep at most one entry here>`,
     `Guidelines: ok | fix: <what AGENTS.md-class file needs and why>`,
     `Operator: <only a secret, an irreversible action, an external blocker, or an identity change — else omit>`,
   ].join("\n");
