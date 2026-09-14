@@ -74,6 +74,31 @@ function closerKeyForRec(
   return rec.replAction || null;
 }
 
+/** CLI twin of `/sessions errors` / `/sessions untitled`. */
+export function doctorSessionsRecoveryVerb(
+  kind: "errors" | "untitled",
+  surface: DoctorSurface,
+): string {
+  if (kind === "errors") {
+    return surface === "cli" ? "forge sessions errors" : "/sessions errors";
+  }
+  return surface === "cli" ? "forge sessions untitled" : "/sessions untitled";
+}
+
+/** PATH-stale rebuild — always a shown Next when the rec is present. */
+export const DOCTOR_REBUILD_NEXT = "bash install.sh";
+const DOCTOR_CLOSER_MAX = 4;
+
+/** Cap Next keys; keep the rebuild when it would otherwise fall off. */
+export function takeDoctorCloserKeys(keys: string[]): string[] {
+  if (keys.length <= DOCTOR_CLOSER_MAX) return keys;
+  if (!keys.includes(DOCTOR_REBUILD_NEXT)) {
+    return keys.slice(0, DOCTOR_CLOSER_MAX);
+  }
+  const rest = keys.filter((k) => k !== DOCTOR_REBUILD_NEXT);
+  return [...rest.slice(0, DOCTOR_CLOSER_MAX - 1), DOCTOR_REBUILD_NEXT];
+}
+
 /** Next command after the dump — login / permissions / setup / recs. */
 export function formatDoctorCloser(
   issues: string[],
@@ -117,14 +142,14 @@ export function formatDoctorCloser(
   if (!keys.length) {
     push(surface === "cli" ? "forge doctor --json" : "/status");
   }
-  const line = `Next  ${keys.slice(0, 4).join("  ·  ")}`;
+  const tokens = takeDoctorCloserKeys(keys);
+  const line = `Next  ${tokens.join("  ·  ")}`;
   const cols = Math.max(
     24,
     opts?.columns ??
       (process.stdout.isTTY ? process.stdout.columns || 80 : 80),
   );
   if (visibleWidth(line) <= cols) return line;
-  const tokens = keys.slice(0, 4);
   return [`Next  ${tokens[0]}`, ...tokens.slice(1).map((k) => `  ·  ${k}`)].join(
     "\n",
   );

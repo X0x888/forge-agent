@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   assembleDoctorReport,
+  doctorSessionsRecoveryVerb,
   formatDoctorCloser,
   formatDoctorHeader,
   formatDoctorRecommended,
@@ -175,6 +176,54 @@ describe("doctor health card", () => {
       formatDoctorCloser([countIssue], { surface: "cli" }),
       /forge sessions prune --keep 50/,
     );
+  });
+
+  it("crowded closer still prints bash install.sh", () => {
+    const recs = [
+      {
+        id: "stale-dist",
+        severity: "hygiene" as const,
+        detail: "Built dist/cli.js is older than src/cli.ts",
+        cliAction: "bash install.sh",
+      },
+    ];
+    const issues = [
+      AUTH_ISSUE,
+      YOLO_ISSUE,
+      "Undo journal is large (~720145.1 KB, 20587 entries across 175 session(s)) — forge sessions prune --journals",
+      "120 sessions on disk — consider forge sessions prune --keep 50",
+    ];
+    const cli = formatDoctorCloser(issues, { surface: "cli", recommendations: recs });
+    assert.match(cli, /bash install\.sh/);
+    assert.match(cli, /forge login/);
+    assert.doesNotMatch(cli, /\/sessions errors/);
+  });
+
+  it("CLI recovery verbs are shell; REPL may keep slashes", () => {
+    assert.equal(
+      doctorSessionsRecoveryVerb("errors", "cli"),
+      "forge sessions errors",
+    );
+    assert.equal(
+      doctorSessionsRecoveryVerb("untitled", "cli"),
+      "forge sessions untitled",
+    );
+    assert.equal(
+      doctorSessionsRecoveryVerb("errors", "repl"),
+      "/sessions errors",
+    );
+    assert.equal(
+      doctorSessionsRecoveryVerb("untitled", "repl"),
+      "/sessions untitled",
+    );
+    const cliBody = [
+      `  ⚠ 27 sessions with lastError — ${doctorSessionsRecoveryVerb("errors", "cli")} before prune`,
+      `  untitled sessions: 12/119  →  ${doctorSessionsRecoveryVerb("untitled", "cli")}`,
+    ].join("\n");
+    assert.match(cliBody, /forge sessions errors/);
+    assert.match(cliBody, /forge sessions untitled/);
+    assert.doesNotMatch(cliBody, /\/sessions errors/);
+    assert.doesNotMatch(cliBody, /\/sessions untitled/);
   });
 
   it("header stays scrapeable as Forge doctor", () => {

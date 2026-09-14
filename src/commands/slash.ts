@@ -151,6 +151,7 @@ import { copyToClipboard } from "../util/clipboard.js";
 import { formatDiffReviewCard } from "../tui/diff-card.js";
 import {
   assembleDoctorReport,
+  doctorSessionsRecoveryVerb,
   type DoctorRecommendation,
   type DoctorSurface,
 } from "../tui/doctor-card.js";
@@ -7763,16 +7764,18 @@ export async function runDoctorCheck(
     if (sessionsWithLastError > 0) {
       const codes = formatLastErrorTally(errTally);
       const codeBit = codes ? ` (${codes})` : "";
+      const errorsKey = doctorSessionsRecoveryVerb("errors", surface);
       const backlog =
         sessionsWithLastError >= 5
-          ? `  ⚠ ${sessionsWithLastError} sessions with lastError${codeBit} — /sessions errors before prune`
-          : `  sessions with lastError: ${sessionsWithLastError}${codeBit}  → /sessions errors · forge sessions list --errors · prune keeps them until --force-last-error`;
+          ? `  ⚠ ${sessionsWithLastError} sessions with lastError${codeBit} — ${errorsKey} before prune`
+          : `  sessions with lastError: ${sessionsWithLastError}${codeBit}  →  ${errorsKey} · prune keeps them until --force-last-error`;
       lines.push(chalk.yellow(backlog));
     }
     if (sessionsUntitled >= 5) {
+      const untitledKey = doctorSessionsRecoveryVerb("untitled", surface);
       lines.push(
         chalk.dim(
-          `  untitled sessions: ${sessionsUntitled}/${sessionsTotal}  → /title · --title · /goal set auto-titles · /sessions untitled`,
+          `  untitled sessions: ${sessionsUntitled}/${sessionsTotal}  →  ${untitledKey}`,
         ),
       );
     }
