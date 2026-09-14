@@ -10,9 +10,13 @@
 /**
  * Codes that mean the run ended as designed — keep on meta, not as lastErr.
  * `ulw_done`: the plan-cycle driver released on fulfilled / /cycle 0 /
- * max_cycles. `ulw_released` (blocked, fix-cap, stuck, runtime) is a problem.
+ * max_cycles. `ulw_cycle_complete`: the same wrap on older sessions (still
+ * on disk). `ulw_released` (blocked, fix-cap, stuck, runtime) is a problem.
  */
-export const LAST_ERROR_OUTCOME_CODES = new Set(["ulw_done"]);
+export const LAST_ERROR_OUTCOME_CODES = new Set([
+  "ulw_done",
+  "ulw_cycle_complete",
+]);
 
 export function isLastErrorProblem(
   err?: { code?: string; message?: string } | null,

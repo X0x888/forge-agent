@@ -56,6 +56,17 @@ describe("isLastErrorProblem", () => {
     assert.equal(isLastErrorProblem(undefined), false);
     assert.equal(isLastErrorProblem({ code: "", message: "" }), false);
   });
+
+  it("treats ulw_cycle_complete as a designed wrap, not a crash", () => {
+    assert.ok(LAST_ERROR_OUTCOME_CODES.has("ulw_cycle_complete"));
+    assert.equal(
+      isLastErrorProblem({
+        code: "ulw_cycle_complete",
+        message: "ULW last cycle attested complete — released.",
+      }),
+      false,
+    );
+  });
 });
 
 describe("status + picker after Cycle complete", () => {
@@ -251,9 +262,14 @@ describe("lastError tally", () => {
       { lastError: { code: "max_turns", message: "cap" } },
       { lastError: { code: "rate_limited", message: "429" } },
       { lastError: { code: "ulw_done", message: "released" } },
+      { lastError: { code: "ulw_cycle_complete", message: "Cycle complete" } },
       { lastError: null },
     ]);
     assert.equal(tally.total, 4);
+    assert.equal(
+      tally.byCode.some((r) => r.code === "ulw_cycle_complete"),
+      false,
+    );
     assert.deepEqual(tally.byCode, [
       { code: "max_turns", count: 3 },
       { code: "rate_limited", count: 1 },
