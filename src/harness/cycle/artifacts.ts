@@ -24,6 +24,13 @@ import type {
 export const PLAN_COMPLETE_RE = /\*{0,2}Plan complete\.?\*{0,2}/i;
 
 /**
+ * A cycle is one executor session, not one tiny task and not a laundry list.
+ * Live continue plans that exceed this do not parse (no silent slice).
+ * Synthesized keep-promise / scout salvage may cap at this number.
+ */
+export const MAX_CYCLE_PLAN_ITEMS = 5;
+
+/**
  * The executor's declared tokens in its closers, read as labelled lines,
  * never as intent: the same-line remainder and any bullet lines directly
  * under a bare label.
@@ -98,6 +105,11 @@ export interface ParsedPlan {
   /** Raw Verify: text that failed the strict harvest. */
   verifyRefused?: string;
   items: CyclePlanItem[];
+  /**
+   * Required when `Items:` has exactly one entry: why the other Considered
+   * candidates are a different job or leave-it — not sequels for the next cycle.
+   */
+  oneItem?: string;
   outOfScope: string[];
   guidelines?: string;
   operator: string[];
@@ -114,7 +126,7 @@ export interface ParsedScout {
 }
 
 const SECTION_RE =
-  /^\s*(?:#{1,6}\s*)?\*{0,2}(Verdict|Identity|Direction|Looked|Considered|Worth the cycle|Promises|Verify|Items|Out of scope|Guidelines|Operator|Title|Fulfillment|Revisions|Must-fix|Architecture|Worth|Notes|Summary)\*{0,2}\s*[:.]\s*(.*)$/i;
+  /^\s*(?:#{1,6}\s*)?\*{0,2}(Verdict|Identity|Direction|Looked|Considered|Worth the cycle|One item|Promises|Verify|Items|Out of scope|Guidelines|Operator|Title|Fulfillment|Revisions|Must-fix|Architecture|Worth|Notes|Summary)\*{0,2}\s*[:.]\s*(.*)$/i;
 
 const LEAVE_IT_RE = /^\*{0,2}leave\s+it\b/i;
 
@@ -336,6 +348,16 @@ export function explainPlanParseFailure(text: string): string {
   if (!paragraph(sections.get("worth-the-cycle"))) {
     problems.push("Worth the cycle: missing or empty (why this beats leaving it for the user in Identity)");
   }
+  if (items.length > MAX_CYCLE_PLAN_ITEMS) {
+    problems.push(
+      `Items: ${items.length} is more than a session (${MAX_CYCLE_PLAN_ITEMS}) — pack the class, do not laundry-list`,
+    );
+  }
+  if (items.length === 1 && !paragraph(sections.get("one-item"))) {
+    problems.push(
+      "One item: missing or empty (required when Items has one entry — why the other Considered candidates are a different job or leave-it, not sequels)",
+    );
+  }
   items.forEach((it, i) => {
     const missing = [!it.serves ? "serves:" : "", !it.redNow ? "red now:" : ""].filter(Boolean);
     if (missing.length) problems.push(`item ${i + 1} (${it.title.slice(0, 60)}) has no ${missing.join(" / ")}`);
@@ -377,6 +399,7 @@ function parsePlanArtifactFromSections(text: string): ParsedPlan | null {
   const looked = paragraph(sections.get("looked"));
   const direction = paragraph(sections.get("direction"));
   const worthClaim = paragraph(sections.get("worth-the-cycle"));
+  const oneItem = paragraph(sections.get("one-item"));
   const verifyRaw = firstLine(sections.get("verify"));
   let verifyCommand: string | undefined;
   let verifyNone: string | undefined;
@@ -400,6 +423,8 @@ function parsePlanArtifactFromSections(text: string): ParsedPlan | null {
     // roads not taken, leave-it among them; forge-surface: every item
     // traceable to the job; forge-redgreen: every item red before it is planned.
     if (items.length === 0) return null;
+    if (items.length > MAX_CYCLE_PLAN_ITEMS) return null;
+    if (items.length === 1 && !oneItem) return null;
     if (!looked || !direction || !worthClaim) return null;
     if (considered.length < 2 || !considered.some((c) => LEAVE_IT_RE.test(c))) return null;
     if (items.some((i) => !i.serves || !i.redNow)) return null;
@@ -413,6 +438,7 @@ function parsePlanArtifactFromSections(text: string): ParsedPlan | null {
     looked,
     considered,
     worthClaim,
+    oneItem,
     promises: parsePromiseLines(sections.get("promises")),
     verifyCommand,
     verifyNone,
@@ -869,13 +895,14 @@ export function planArtifactContract(cycle: number): string {
     `Considered:`,
     `- <credible alternatives weighed after the record — and always: leave it — <why it lost, or why it wins>>`,
     `Direction: <this cycle's intended benefit or consequential question, in your words after using the product — never a paraphrase of the mandate's adjectives>`,
-    `Worth the cycle: <concrete benefit to this product's user, operator or maintainer; why its evidence justifies the cost and risk over leave it>`,
+    `Worth the cycle: <whether this session beats leave it — the scout already spent; pack the class, do not price one 15-line slice as a whole cycle>`,
     `Verify: <the one command that proves the cycle, e.g. \`npm test\`> | none — <why this repo has no check>`,
     `Items:`,
     `1. <item title> — files: <path>, <path> — serves: <the job in Identity this serves> — red now: <observed defect, limitation, regression risk or evidence gap; or unchecked — why> — proof: <command or observable distinguishing improvement or resolving the question>`,
-    `2. …`,
+    `2. <same theme — default is two to five items, a natural executor session; at most ${MAX_CYCLE_PLAN_ITEMS}>`,
+    `One item: <required when Items has one entry: why the other Considered candidates are a different job or leave-it, not sequels for the next cycle>`,
     `Out of scope:`,
-    `- <what was deliberately passed on and why>`,
+    `- <a different job or a lease limit (no TTY, do not rebuild dist) — not the rest of this Looked: class parked for cycle N+1>`,
     `Guidelines: ok | fix: <what AGENTS.md-class file needs and why>`,
     `Operator: <only a secret, an irreversible action, an external blocker, or an identity change — else omit>`,
   ].join("\n");

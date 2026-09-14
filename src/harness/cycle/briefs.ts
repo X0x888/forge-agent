@@ -22,6 +22,9 @@ import path from "node:path";
 import { playwrightLookStatus } from "../../mcp/manager.js";
 import { categorySkillFor } from "../../util/product-kind.js";
 import {
+  isLeaveItEntry,
+  MAX_CYCLE_PLAN_ITEMS,
+  parsePlanArtifact,
   planArtifactContract,
   recurringArchitectureClass,
   reviewArtifactContract,
@@ -139,6 +142,7 @@ function cycleLine(c: CycleRecord): string {
     c.worth ? `worth found: ${clipBlock(c.worth, 160).replace(/\n/g, " ")}` : "",
     c.commitSha ? `commit ${c.commitSha}` : c.endedAt ? "no commit" : "",
     files,
+    c.itemsTotal > 0 ? `${c.itemsTotal} item${c.itemsTotal === 1 ? "" : "s"}` : "",
   ].filter(Boolean);
   return bits.join(" · ");
 }
@@ -149,6 +153,7 @@ function cycleLineCollapsed(c: CycleRecord): string {
     `cycle ${c.n}${c.title ? ` — ${c.title}` : ""}`,
     c.reviewVerdict ?? "",
     c.commitSha ? "commit" : c.endedAt ? "no-commit" : "",
+    c.itemsTotal > 0 ? `${c.itemsTotal} item${c.itemsTotal === 1 ? "" : "s"}` : "",
   ].filter(Boolean);
   return bits.join(" · ");
 }
@@ -262,8 +267,8 @@ const SCOUT_PROCEDURE = [
 /** Steps 7–11: the record arrives; harmonize, price, verdict. */
 const PLAN_PROCEDURE = [
   `7. Strike what is done. Read the record below; drop the candidates it already covers. If the record shows the same kind of change twice, investigate whether a shared cause remains and whether one decision resolves the remaining instances. Similar labels alone do not prove a shared cause; independent defects need not become an abstraction. The record is not a thread; it tells you what is done, not what to continue.`,
-  `8. Harmonize: one coherent theme, as many items as it needs. Direction: is the cycle's intended benefit in your words after using the product — never a restatement of the mandate. Each item names its files; serves: the job in Identity it serves; red now: an observed defect, measured limitation, concrete regression risk or consequential evidence gap (unchecked — <why> only when you could not look); proof: the command or observable that would distinguish improvement from no improvement. Existing behavior may already pass while its regression protection is missing: a test-only item must identify the plausible fault its new check catches. An investigation may conclude no change is justified. A vocabulary, copy or consistency gap is one item across its affected surfaces, or Out of scope. The last review's Must-fix and unfinished items come first.`,
-  `9. Worth the cycle: identify the benefit to this product's user, operator or maintainer and the evidence for it; weigh added complexity, compatibility risk and ongoing cost against leave it. Prevented data loss, safer behavior, recovery, reduced resource use and effective regression protection can be valuable without a visible feature. A general practice earns a cycle through a concrete problem here, not its reputation. The spend so far is above.`,
+  `8. Harmonize: one theme, one executor session. Direction: is the cycle's intended benefit in your words after using the product — never a restatement of the mandate. Default is two to five Items of that theme (at most ${MAX_CYCLE_PLAN_ITEMS}) — pack every evidenced candidate of this class from Considered / Looked into this plan. One item is the exception: then One item: must say why the other Considered winners are a different job or leave-it, not sequels for the next cycle. Each item names its files; serves: the job in Identity it serves; red now: an observed defect, measured limitation, concrete regression risk or consequential evidence gap (unchecked — <why> only when you could not look); proof: the command or observable that would distinguish improvement from no improvement. Existing behavior may already pass while its regression protection is missing: a test-only item must identify the plausible fault its new check catches. An investigation may conclude no change is justified. A vocabulary, copy or consistency gap is one item across its affected surfaces, or Out of scope. Out of scope is a different job or a lease limit (no TTY, do not rebuild dist) — not the rest of this Looked: class parked for cycle N+1. The last review's Must-fix and unfinished items come first.`,
+  `9. Worth the cycle: the scout already spent. Price this session against leave it, not whether a single typed defect is "worth a cycle." Packing one 15-line slice while Considered still holds the same class is not a plan. Prevented data loss, safer behavior, recovery, reduced resource use and effective regression protection can be valuable without a visible feature. A general practice earns a cycle through a concrete problem here, not its reputation. The spend so far is above.`,
   `10. Guidelines: does the AGENTS.md-class file describe this product and carry the conventions an executor needs? Fact defects and missing conventions are the plan's first item; removing existing doctrine is a proposal, not an edit.`,
   `11. Verdict: fulfilled releases a run only when its explicit mandate is met. An explicit mandate is fulfilled when the job they pointed at is met at veteran quality, not when every adjective is ticked. With no mandate the run continues investigating: kept promises and a clean first session are not proof of excellence. If no change is justified, plan a bounded investigation of the most consequential remaining uncertainty with a decision it can inform; leave that area unchanged when the evidence supports it. A no-mandate fulfilled is redirected into further work by the harness. Never invent defects or edits to keep running. Use blocked only when an external dependency or user-only decision prevents meaningful progress across the available work.`,
 ];
@@ -327,6 +332,7 @@ function recordLines(input: PlannerPlanInput): string[] {
     lines.push(...shippedCycleLines(s.cycles));
     lines.push(
       `If the last several cycles' files are the same copy/rename surface, the next cycle is a different class you just saw while using the product, or leave it — never the easiest remaining string.`,
+      `A cycle is one executor session of a theme (two to five items). A ledger row that shows \`1 item\` is the exception — pack this Looked: class, or One item: a real isolation, not another slice of the same job.`,
     );
     // "The last review" is the last cycle a Reviewer read, not the last record.
     const last = [...s.cycles].reverse().find((c) => c.reviewVerdict) ?? s.cycles[s.cycles.length - 1];
@@ -404,7 +410,7 @@ export function buildPlannerPlanBrief(input: PlannerPlanInput): string {
   const next = s.cycle + 1;
   const lines: string[] = [
     `[Forge cycle planner — cycle ${next}, turn 2 of 2: the plan]`,
-    `Your scout is below, then the record of this run. Strike what is done, find the class if there is one, harmonize one theme, price it against leave it, write the plan. You do not implement.`,
+    `Your scout is below, then the record of this run. Strike what is done, find the class if there is one, pack that class into one session-sized plan (two to five items; one item is the exception and needs One item:), price the session against leave it, write the plan. You do not implement.`,
     ...lookPathLines({
       lookProfileUdd: "lookProfileUdd" in input ? input.lookProfileUdd : undefined,
       workspace: input.workspace,
@@ -597,15 +603,37 @@ const REVIEWER_DUTY = [
   `- Persisted data and public surface: a storage key, schema, exported API, CLI flag or wire format that changed needs a migration or a compatibility path in this diff, or a Must-fix that names the break.`,
   `- Class: use the record to investigate recurring defects and their shared cause. Require evidence before demanding an abstraction or another repair; repeated labels alone are not a defect.`,
   `- You do not edit this turn; Must-fix is how the tree changes. Repairable unresolved defects belong under Must-fix with Verdict: ship-with-revisions: the harness withholds commit, lets the executor fix them in this cycle, then runs a fresh review. Partial or missing items cannot ship. Reserve blocked for an unavailable review, an external constraint or a direction that requires replanning. Nonblocking observations and future improvements belong under Architecture for the next Planner to weigh.`,
-  `- Worth: judge the benefit to this product's user, operator or maintainer from evidence, not visibility or the diff's effort. Judge against a demanding user of this product, not against whether the diff matches the mandate's adjectives. Reliability, security, accessibility, performance, recovery, compatibility, maintainability and regression protection can justify a cycle. Name the actual failure avoided, cost reduced or uncertainty resolved and weigh complexity and risk. Compare the plan's Considered: alternatives with leave it. A useful investigation may produce no code change. Worth: no means the benefit was not established or did not justify the cost; explain how the next Planner should reassess it without demanding cosmetic work. Repeated low-value cycles call for a different question or approach, not an arbitrary count-based defect.`,
+  `- Worth: judge the benefit to this product's user, operator or maintainer from evidence, not visibility or the diff's effort. Judge against a demanding user of this product, not against whether the diff matches the mandate's adjectives. Reliability, security, accessibility, performance, recovery, compatibility, maintainability and regression protection can justify a cycle. Name the actual failure avoided, cost reduced or uncertainty resolved and weigh complexity and risk. Compare the plan's Considered: alternatives with leave it. A cycle whose Items: is one slice while Considered already listed other evidenced candidates of the same Looked: job is Worth: no — pack the class, or One item: a different job; Out of scope that parks the rest of this look as the next cycle is the same miss. A useful investigation may produce no code change, and may be one item when One item: names a real isolation. Worth: no means the benefit was not established or did not justify the cost; explain how the next Planner should reassess it without demanding cosmetic work. Repeated low-value cycles call for a different question or approach, not an arbitrary count-based defect.`,
   `- Do not widen scope. Do not start the next cycle's work.`,
 ];
 
+/**
+ * Countable facts from the admitted plan — presence and shape, not a
+ * judgment. A Reviewer that can see "1 item / 4 Considered" does not have
+ * to rediscover the slice attractor in the prose.
+ */
+function planSessionFacts(planText: string): string[] {
+  const plan = parsePlanArtifact(planText);
+  if (!plan || plan.verdict !== "continue" || plan.items.length === 0) return [];
+  const considered = plan.considered.filter((c) => !isLeaveItEntry(c)).length;
+  const n = plan.items.length;
+  const line = `This plan has ${n} item${n === 1 ? "" : "s"} and ${considered} Considered candidate${considered === 1 ? "" : "s"} besides leave it.`;
+  if (n === 1 && considered >= 2) {
+    return [
+      line,
+      "A one-item plan of a class already in Considered is Worth: no unless One item: names a real isolation.",
+    ];
+  }
+  return [line];
+}
+
 function reviewerBodyLines(input: ReviewerBriefInput): string[] {
   const s = input.state;
+  const shape = planSessionFacts(input.planText);
   return [
     `## The plan this cycle executed (read its Considered: — the alternatives it weighed)`,
     clipBlock(input.planText, 6_000),
+    ...(shape.length ? ["", ...shape] : []),
     ``,
     `## Files changed this cycle (${input.changedFiles.length})`,
     input.changedFiles.length ? input.changedFiles.map((f) => `- ${f}`).join("\n") : "- (no tracked changes — check untracked files)",
@@ -744,7 +772,7 @@ export function formatPlanAdmission(opts: {
     opts.planText.trim(),
     ``,
     ...(opts.lastReview ? [formatReviewNotesForExecutor(opts.lastReview), ``] : []),
-    `You are the executor. Complete the items in order: implement or investigate as planned, run the item's proof, mark it done with todo_write. An investigation can conclude no edit is justified; record its evidence and decision. Cancel an item only with a reason. Ship at veteran quality — the mandate's wording does not license a sloppy ship or extra unplanned scope. Close with "Plan complete." when every item is done or cancelled. The harness then runs ${opts.verifyCommand ? `\`${opts.verifyCommand}\`` : "the project check"} (only failures that were not already failing before the cycle count), a fresh reviewer writes the review (Must-fix is how the tree changes), the check runs once more and changes commit only after an accepting review and green verification. ${budget}`,
+    `You are the executor. This cycle is one session of a theme, not one tiny task: complete every item in order — implement or investigate as planned, run the item's proof, mark it done with todo_write. An investigation can conclude no edit is justified; record its evidence and decision. Cancel an item only with a reason. Ship at veteran quality — the mandate's wording does not license a sloppy ship or extra unplanned scope. Close with "Plan complete." when every item is done or cancelled. The harness then runs ${opts.verifyCommand ? `\`${opts.verifyCommand}\`` : "the project check"} (only failures that were not already failing before the cycle count), a fresh reviewer writes the review (Must-fix is how the tree changes), the check runs once more and changes commit only after an accepting review and green verification. ${budget}`,
     board,
     `Do not stop mid-item, do not ask the user to choose; Operator: lines are for a secret, an irreversible action, or an external blocker only. What you notice and leave alone goes on one \`Serendipity:\` line in your closer; the next Planner reads it. Live controls: /cycle 0 · /replan · /ulw-off.`,
   ].join("\n");

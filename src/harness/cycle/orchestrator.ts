@@ -26,6 +26,7 @@ import { appendRoleRunLine } from "../../session/subagent-usage.js";
 import {
   architectureHoldMessage,
   continueWorthHold,
+  MAX_CYCLE_PLAN_ITEMS,
   explainPlanParseFailure,
   explainReviewParseFailure,
   extractDisputeLines,
@@ -519,7 +520,7 @@ export function synthesizeWorkPlan(
     title = "Keep the promises still broken or unverified";
     direction =
       "The inventory contains broken, absent, or unverified promises. Reproduce confirmed gaps and repair them; investigate unknown promises before deciding whether a change is needed. Preserve working behavior.";
-    items = unkept.slice(0, 5).map((p, i) => ({
+    items = unkept.slice(0, MAX_CYCLE_PLAN_ITEMS).map((p, i) => ({
       id: `i${i + 1}`,
       title: `${p.state === "unknown" ? "Investigate the promise" : "Keep the promise"}: ${p.text}${p.seen ? ` — today: ${p.seen}` : ""}${p.state === "unknown" ? ". Establish whether it holds before editing; record the evidence or the remaining limit if it cannot be exercised." : ""}`,
       files: [],
@@ -585,7 +586,7 @@ export function synthesizeWorkPlan(
     };
     if (architectureClassMustCollapse(s.cycles, cls)) {
       if (!planCollapsesArchitectureClass(preview, cls)) {
-        items = [architectureClassItem(cls), ...items];
+        items = [architectureClassItem(cls), ...items].slice(0, MAX_CYCLE_PLAN_ITEMS);
         if (!mustFix.includes(hold)) mustFix.push(hold);
       }
     } else if (!planAddressesArchitectureClass(preview, cls)) {
@@ -612,6 +613,9 @@ export function synthesizeWorkPlan(
     verifyCommand ? `Verify: \`${verifyCommand}\`` : "",
     `Items:`,
     ...items.map((it, i) => `${i + 1}. ${it.title}${it.files.length ? ` — files: ${it.files.join(", ")}` : ""} — serves: ${it.serves ?? ""} — red now: ${it.redNow ?? ""} — proof: ${it.proof ?? ""}`),
+    items.length === 1
+      ? "One item: synthesized from the scout — this kernel is the session; other Considered entries are leave-it or a different job, not sequels"
+      : "",
     promises.length ? `Promises:\n${promises.map((p) => `- ${p.text} — ${p.state}${p.seen ? ` — ${p.seen}` : ""}`).join("\n")}` : "",
   ]
     .filter(Boolean)
@@ -625,6 +629,10 @@ export function synthesizeWorkPlan(
     looked: looked || undefined,
     considered: consideredOut,
     worthClaim,
+    oneItem:
+      items.length === 1
+        ? "synthesized from the scout — this kernel is the session; other Considered entries are leave-it or a different job, not sequels"
+        : undefined,
     promises,
     verifyCommand,
     items,
@@ -1637,10 +1645,12 @@ function unnamedBrokenOrUnknownPromises(s: CycleState, plan: ParsedPlan): CycleP
 function itemsFromScout(scout: ScoutResult | undefined): CyclePlanItem[] {
   if (!scout) return [];
   const parsed = scout.raw ? parsePlanArtifact(scout.raw) : null;
-  if (parsed?.verdict === "continue" && parsed.items.length) return parsed.items.slice(0, 5);
+  if (parsed?.verdict === "continue" && parsed.items.length) {
+    return parsed.items.slice(0, MAX_CYCLE_PLAN_ITEMS);
+  }
   const considered = scout.parsed?.considered ?? [];
   const candidates = considered.filter((c) => !isLeaveItEntry(c));
-  return candidates.slice(0, 3).map((c, i) => ({
+  return candidates.slice(0, MAX_CYCLE_PLAN_ITEMS).map((c, i) => ({
     id: `i${i + 1}`,
     title: c.split(/\s+(?:—|–)\s+/)[0]?.trim().slice(0, 200) || c.slice(0, 200),
     files: [],

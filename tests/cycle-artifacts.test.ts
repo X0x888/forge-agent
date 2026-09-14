@@ -30,6 +30,7 @@ import {
   reviewArtifactContract,
   scoutArtifactContract,
   PLAN_COMPLETE_RE,
+  MAX_CYCLE_PLAN_ITEMS,
 } from "../src/harness/cycle/artifacts.js";
 
 /** The alternatives block every `continue` plan has to carry. */
@@ -73,9 +74,13 @@ const LOOK_DIR_WORTH = [
   "Worth the cycle: a new user should see a card without the docs",
 ].join("\n");
 
+/** Required when Items has one entry. */
+const ONE_ITEM =
+  "One item: isolated kernel — other Considered entries are a different job or leave-it, not the next cycle";
+
 /** The smallest continue plan the parser accepts. */
 const MINIMAL = (extra = "") =>
-  `# Cycle 2 plan — x\nVerdict: continue\n${LOOK_DIR_WORTH}\n${CONSIDERED}\nVerify: npm test\nItems:\n1. ${ITEM("a thing", "a.ts", "npm test")}\n${extra}`;
+  `# Cycle 2 plan — x\nVerdict: continue\n${LOOK_DIR_WORTH}\n${CONSIDERED}\nVerify: npm test\nItems:\n1. ${ITEM("a thing", "a.ts", "npm test")}\n${ONE_ITEM}\n${extra}`;
 
 describe("plan artifact parser", () => {
   it("parses verdict, identity, looked, considered, direction, worth claim, verify, items, out-of-scope, guidelines", () => {
@@ -106,7 +111,7 @@ describe("plan artifact parser", () => {
 
   it("refuses prose under Verify: and reports it", () => {
     const p = parsePlanArtifact(
-      `# Cycle 2 plan — x\nVerdict: continue\n${LOOK_DIR_WORTH}\n${CONSIDERED}\nVerify: the login flow works end to end\nItems:\n1. ${ITEM("a thing", "a.ts", "npm test")}`,
+      `# Cycle 2 plan — x\nVerdict: continue\n${LOOK_DIR_WORTH}\n${CONSIDERED}\nVerify: the login flow works end to end\nItems:\n1. ${ITEM("a thing", "a.ts", "npm test")}\n${ONE_ITEM}`,
     );
     assert.ok(p);
     assert.equal(p.verifyCommand, undefined);
@@ -115,7 +120,7 @@ describe("plan artifact parser", () => {
 
   it("accepts Verify: none — why", () => {
     const p = parsePlanArtifact(
-      `# Cycle 2 plan — x\nVerdict: continue\n${LOOK_DIR_WORTH}\n${CONSIDERED}\nVerify: none — this repo has no test runner yet\nItems:\n1. ${ITEM("add one", "a.ts", "npm test")}`,
+      `# Cycle 2 plan — x\nVerdict: continue\n${LOOK_DIR_WORTH}\n${CONSIDERED}\nVerify: none — this repo has no test runner yet\nItems:\n1. ${ITEM("add one", "a.ts", "npm test")}\n${ONE_ITEM}`,
     );
     assert.ok(p);
     assert.equal(p.verifyCommand, undefined);
@@ -147,7 +152,7 @@ describe("plan artifact parser", () => {
     assert.equal(parsePlanArtifact(noLeaveIt), null);
     assert.match(explainPlanParseFailure(noLeaveIt), /leave it/);
     // A bold leave-it entry counts.
-    const bold = `# Cycle 1 plan\nVerdict: continue\n${LOOK_DIR_WORTH}\nConsidered:\n- rough edge: x — y\n- **leave it** — fine as is\nVerify: npm test\nItems:\n1. ${ITEM("a", "a.ts", "npm test")}`;
+    const bold = `# Cycle 1 plan\nVerdict: continue\n${LOOK_DIR_WORTH}\nConsidered:\n- rough edge: x — y\n- **leave it** — fine as is\nVerify: npm test\nItems:\n1. ${ITEM("a", "a.ts", "npm test")}\n${ONE_ITEM}`;
     assert.ok(parsePlanArtifact(bold));
   });
 
@@ -159,7 +164,7 @@ describe("plan artifact parser", () => {
     assert.equal(parsePlanArtifact(noRed), null);
     assert.match(explainPlanParseFailure(noRed), /item 1 .*red now:/);
     // `red now: unchecked — why` is a valid labelled line.
-    const unchecked = `# Cycle 1 plan\nVerdict: continue\n${LOOK_DIR_WORTH}\n${CONSIDERED}\nVerify: npm test\nItems:\n1. a thing — files: a.ts — serves: the job — red now: unchecked, needs a browser — proof: npm test`;
+    const unchecked = `# Cycle 1 plan\nVerdict: continue\n${LOOK_DIR_WORTH}\n${CONSIDERED}\nVerify: npm test\nItems:\n1. a thing — files: a.ts — serves: the job — red now: unchecked, needs a browser — proof: npm test\n${ONE_ITEM}`;
     assert.ok(parsePlanArtifact(unchecked));
   });
 
@@ -178,7 +183,7 @@ describe("plan artifact parser", () => {
     const noWorth = `# Cycle 1 plan\nVerdict: continue\nLooked: ran it\n${CONSIDERED}\nDirection: first-run card\nVerify: npm test\nItems:\n1. ${ITEM("a", "a.ts", "npm test")}`;
     assert.equal(parsePlanArtifact(noWorth), null);
     assert.match(explainPlanParseFailure(noWorth), /Worth the cycle:/);
-    const failedSit = `# Cycle 1 plan\nVerdict: continue\nLooked: could not run — Playwright MCP never initialized; Godot grey\n${CONSIDERED}\nDirection: first-run card\nWorth the cycle: x\nVerify: npm test\nItems:\n1. ${ITEM("a", "a.ts", "npm test")}`;
+    const failedSit = `# Cycle 1 plan\nVerdict: continue\nLooked: could not run — Playwright MCP never initialized; Godot grey\n${CONSIDERED}\nDirection: first-run card\nWorth the cycle: x\nVerify: npm test\nItems:\n1. ${ITEM("a", "a.ts", "npm test")}\n${ONE_ITEM}`;
     const p = parsePlanArtifact(failedSit);
     assert.ok(p);
     assert.match(p.looked ?? "", /could not run/);
@@ -214,6 +219,7 @@ describe("plan artifact parser", () => {
         `**Verify.** \`cargo test -p game_core --offline && godot --path godot --headless --script res://scripts/smoke.gd\``,
         `**Items.**`,
         `1. Restow the title door — files: godot/scripts/main.gd — serves: sit down without a toolbar — red now: stock StartButton — proof: smoke calls _on_start`,
+        `One item: isolated kernel — leave it is the other Considered entry`,
       ].join("\n"),
     );
     assert.ok(p);
@@ -252,6 +258,7 @@ describe("plan artifact parser", () => {
       "Worth the cycle:",
       "Verify:",
       "Items:",
+      "One item:",
       "serves:",
       "red now:",
       "proof:",
@@ -263,6 +270,44 @@ describe("plan artifact parser", () => {
     }
     assert.ok(c.includes("# Cycle 4 plan"));
     assert.match(c, /never a paraphrase of the mandate's adjectives/);
+    assert.match(c, /at most 5/);
+  });
+
+  it("a continue plan with one item and no One item: does not parse", () => {
+    const no = `# Cycle 2 plan — x\nVerdict: continue\n${LOOK_DIR_WORTH}\n${CONSIDERED}\nVerify: npm test\nItems:\n1. ${ITEM("a thing", "a.ts", "npm test")}\n`;
+    assert.equal(parsePlanArtifact(no), null);
+    assert.match(explainPlanParseFailure(no), /One item:/);
+  });
+
+  it("a continue plan with one item and One item: parses", () => {
+    const p = parsePlanArtifact(MINIMAL());
+    assert.ok(p);
+    assert.equal(p.items.length, 1);
+    assert.match(p.oneItem ?? "", /isolated kernel/);
+  });
+
+  it("a continue plan with two items does not need One item:", () => {
+    const two = `# Cycle 2 plan — x\nVerdict: continue\n${LOOK_DIR_WORTH}\n${CONSIDERED}\nVerify: npm test\nItems:\n1. ${ITEM("a thing", "a.ts", "npm test")}\n2. ${ITEM("another", "b.ts", "npm test")}\n`;
+    const p = parsePlanArtifact(two);
+    assert.ok(p);
+    assert.equal(p.items.length, 2);
+    assert.equal(p.oneItem, undefined);
+  });
+
+  it("a continue plan at the session cap parses; one more does not (no silent slice)", () => {
+    const mk = (n: number) => {
+      const items = Array.from(
+        { length: n },
+        (_, i) => `${i + 1}. ${ITEM(`thing ${i + 1}`, `a${i}.ts`, "npm test")}`,
+      ).join("\n");
+      return `# Cycle 2 plan — x\nVerdict: continue\n${LOOK_DIR_WORTH}\n${CONSIDERED}\nVerify: npm test\nItems:\n${items}\n`;
+    };
+    const atCap = parsePlanArtifact(mk(MAX_CYCLE_PLAN_ITEMS));
+    assert.ok(atCap);
+    assert.equal(atCap.items.length, MAX_CYCLE_PLAN_ITEMS);
+    const over = mk(MAX_CYCLE_PLAN_ITEMS + 1);
+    assert.equal(parsePlanArtifact(over), null);
+    assert.match(explainPlanParseFailure(over), new RegExp(`session \\(${MAX_CYCLE_PLAN_ITEMS}\\)`));
   });
 });
 
@@ -433,7 +478,7 @@ describe("surface sit classifier", () => {
 describe("architecture class tokens", () => {
   const continuePlan = (opts: { title?: string; item?: string; serves?: string; leave?: string }) =>
     parsePlanArtifact(
-      `# Cycle 3 plan — ${opts.title ?? "theme"}\nVerdict: continue\nLooked: ran it\nConsidered:\n- rough edge: theme\n- leave it — ${opts.leave ?? "the tree runs; the theme is what a user meets first"}\nDirection: theme\nWorth the cycle: x\nItems:\n1. ${opts.item ?? "item"} — files: a.ts — serves: ${opts.serves ?? "first minute"} — red now: not there — proof: npm test\n`,
+      `# Cycle 3 plan — ${opts.title ?? "theme"}\nVerdict: continue\nLooked: ran it\nConsidered:\n- rough edge: theme\n- leave it — ${opts.leave ?? "the tree runs; the theme is what a user meets first"}\nDirection: theme\nWorth the cycle: x\nItems:\n1. ${opts.item ?? "item"} — files: a.ts — serves: ${opts.serves ?? "first minute"} — red now: not there — proof: npm test\n${ONE_ITEM}\n`,
     );
 
   it("two shipped reviews sharing chew/Stay pile yield that class; a leave-it or item addresses it", () => {
@@ -461,7 +506,7 @@ describe("architecture class tokens", () => {
     assert.ok(slice);
     assert.equal(planAddressesArchitectureClass(slice, cls!), false);
     const split = parsePlanArtifact(
-      `# Cycle 3 plan — pause verbs\nVerdict: continue\nLooked: ran it\nConsidered:\n- leave it — keeps MEMORY's Steam promise broken\n- Extract the copied walk() in \`routing.test.ts\` / save.test.ts — leave that class\nDirection: pause\nWorth the cycle: x\nItems:\n1. keyboard pause — files: a.ts — serves: first minute — red now: click-only — proof: npm test\nOut of scope:\n- Copied walk() in \`routing.test.ts\` — named class, left\n`,
+      `# Cycle 3 plan — pause verbs\nVerdict: continue\nLooked: ran it\nConsidered:\n- leave it — keeps MEMORY's Steam promise broken\n- Extract the copied walk() in \`routing.test.ts\` / save.test.ts — leave that class\nDirection: pause\nWorth the cycle: x\nItems:\n1. keyboard pause — files: a.ts — serves: first minute — red now: click-only — proof: npm test\n${ONE_ITEM}\nOut of scope:\n- Copied walk() in \`routing.test.ts\` — named class, left\n`,
     );
     assert.ok(split);
     assert.equal(
@@ -470,7 +515,7 @@ describe("architecture class tokens", () => {
       "Out of scope that names the class addresses it",
     );
     const loose = parsePlanArtifact(
-      `# Cycle 3 plan — pause verbs\nVerdict: continue\nLooked: ran it\nConsidered:\n- leave it — pin is Operator\n- Extract the copied walk() in \`routing.test.ts\` — messy, maybe later\nDirection: pause\nWorth the cycle: x\nItems:\n1. keyboard pause — files: a.ts — serves: first minute — red now: click-only — proof: npm test\nOut of scope:\n- Steamworks\n`,
+      `# Cycle 3 plan — pause verbs\nVerdict: continue\nLooked: ran it\nConsidered:\n- leave it — pin is Operator\n- Extract the copied walk() in \`routing.test.ts\` — messy, maybe later\nDirection: pause\nWorth the cycle: x\nItems:\n1. keyboard pause — files: a.ts — serves: first minute — red now: click-only — proof: npm test\n${ONE_ITEM}\nOut of scope:\n- Steamworks\n`,
     );
     assert.ok(loose);
     assert.equal(

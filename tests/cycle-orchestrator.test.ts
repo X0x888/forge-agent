@@ -30,11 +30,13 @@ const CONSIDERED = `Considered:\n- rough edge: theme — cheap and visible\n- le
 const ITEM = (title: string, file: string) =>
   `${title} — files: ${file} — serves: the user's first minute — red now: ran it, not there yet — proof: npm test`;
 
+const ONE_ITEM =
+  "One item: isolated kernel — the other Considered entry is leave it, not a sequel";
 const PLAN_OK = (n: number, items = 2) =>
   `# Cycle ${n} plan — theme ${n}\nVerdict: continue\nIdentity: a CLI for tests\nLooked: ran the binary\n${CONSIDERED}\nDirection: theme ${n}\nWorth the cycle: theme ${n} beats leaving it because a user meets it first\nVerify: \`npm test\`\nItems:\n${Array.from(
     { length: items },
     (_, i) => `${i + 1}. ${ITEM(`item ${n}.${i + 1}`, `src/f${i}.ts`)}`,
-  ).join("\n")}\nOut of scope:\n- nothing`;
+  ).join("\n")}\n${items === 1 ? `${ONE_ITEM}\n` : ""}Out of scope:\n- nothing`;
 const PLAN_FULFILLED = `# Cycle 2 plan\nVerdict: fulfilled — the widget exists and is tested`;
 const REVIEW_OK = `# Cycle 1 review\nVerdict: ship\nFulfillment:\n- item — done\nRevisions:\n- none\nMust-fix:\n- none\nWorth: yes — the card shows`;
 const REVIEW_MUSTFIX = `# Cycle 1 review\nVerdict: ship-with-revisions\nMust-fix:\n- the flag prints nothing\nWorth: yes — the rest of the cycle landed`;
@@ -1233,11 +1235,62 @@ describe("cycle orchestrator", () => {
     assert.equal(continuePlanHold(three, synth3.plan), "");
   });
 
+  it("a 1-item synthesized plan carries One item:; a packed keep-promise does not", () => {
+    const s = newCycleState({ sessionId: "synth-session", mandate: null });
+    const deep = synthesizeWorkPlan(s, undefined, "go-deeper");
+    assert.equal(deep.plan.items.length, 1);
+    assert.ok(deep.plan.oneItem);
+    assert.match(deep.raw, /One item:/);
+
+    s.promises = [
+      { text: "a first-run card", state: "broken", seen: "bare prompt" },
+      { text: "--help lists every command", state: "broken", seen: "missing" },
+    ];
+    const packed = synthesizeWorkPlan(s, undefined, "keep-promise");
+    assert.equal(packed.plan.items.length, 2);
+    assert.equal(packed.plan.oneItem, undefined);
+    assert.doesNotMatch(packed.raw, /One item:/);
+
+    const one = synthesizeWorkPlan(s, undefined, "keep-promise", { targets: [s.promises[0]!] });
+    assert.equal(one.plan.items.length, 1);
+    assert.ok(one.plan.oneItem);
+    assert.match(one.raw, /One item:/);
+  });
+
+  it("synth from a 1-item plan that does not parse packs Considered, not the slice", () => {
+    const s = newCycleState({ sessionId: "synth-pack", mandate: null });
+    const considered = [
+      "broken promise: first-run card — first thing a user meets",
+      "rough edge: --dry deletes — same CLI hygiene class",
+      "missing: pin empty state — same class",
+      "leave it — it runs",
+    ];
+    const raw = `# Cycle 1 plan — slice
+Verdict: continue
+Looked: ran --help
+Considered:
+${considered.map((c) => `- ${c}`).join("\n")}
+Direction: first-run
+Worth the cycle: x
+Verify: npm test
+Items:
+1. ${ITEM("the card", "a.ts")}
+`;
+    const synth = synthesizeWorkPlan(
+      s,
+      { raw, parsed: { looked: "ran --help", considered, promises: [] }, path: "scout.md" },
+      "no-plan",
+    );
+    assert.equal(synth.plan.items.length, 3, "the class, not the one slice that failed One item:");
+    assert.equal(synth.plan.oneItem, undefined);
+    assert.doesNotMatch(synth.raw, /One item:/);
+  });
+
   it("a plan that declares an isolate is gated by the suite when the cycle closes", async () => {
     const sid = "orch-isolate-gate";
     const { rt, calls } = fakeRuntime(cwd, {
       planner: [
-        `# Cycle 1 plan — x\nVerdict: continue\nLooked: ran it\n${CONSIDERED}\nDirection: isolate\nWorth the cycle: x\nVerify: \`npx tsx --test tests/one.test.ts\`\nItems:\n1. ${ITEM("thing", "a.ts")}`,
+        `# Cycle 1 plan — x\nVerdict: continue\nLooked: ran it\n${CONSIDERED}\nDirection: isolate\nWorth the cycle: x\nVerify: \`npx tsx --test tests/one.test.ts\`\nItems:\n1. ${ITEM("thing", "a.ts")}\n${ONE_ITEM}`,
       ],
       reviewer: [REVIEW_OK],
     });
@@ -1461,6 +1514,7 @@ describe("cycle orchestrator — two turns per role", () => {
     assert.match(retry, /Worth the cycle: missing/);
     assert.match(retry, /Considered: missing/);
     assert.match(retry, /item 1 \(thing\) has no serves: \/ red now:/);
+    assert.match(retry, /One item:/);
     assert.doesNotMatch(retry, /## What this run has shipped/, "the retry is a short resumed turn, not the brief again");
     assert.match(retry, /# Cycle 1 plan — <short title>/, "the contract is reprinted");
     assert.equal(calls.filter((c) => c.startsWith("cleanup:")).length, 1, "the kept session is released once, after the retry");

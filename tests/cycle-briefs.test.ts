@@ -268,6 +268,12 @@ describe("Planner plan brief (turn 2)", () => {
     assert.ok(b.includes("# Cycle 3 plan"), "ends with the plan contract");
     assert.ok(b.includes("Worth the cycle:"));
     assert.ok(b.includes("same kind of change twice"), "the class rule is stated");
+    assert.match(b, /session-sized plan/);
+    assert.match(b, /One item:/);
+    assert.match(b, /two to five items/);
+    assert.match(b, /not sequels/);
+    assert.match(b, / · 2 items/, "the ledger shows how big the last session was");
+    assert.match(b, /ledger row that shows `1 item` is the exception/);
   });
 
   it("prices the spend only when a dollar figure is given", () => {
@@ -292,6 +298,8 @@ describe("Planner plan brief (turn 2)", () => {
       assert.match(b, /Existing behavior may already pass while its regression protection is missing/);
       assert.match(b, /a test-only item must identify the plausible fault its new check catches/);
       assert.match(b, /Prevented data loss/);
+      assert.match(b, /the scout already spent/);
+      assert.match(b, /Out of scope is a different job or a lease limit/);
       assert.match(b, /fulfilled releases a run only when its explicit mandate is met/);
       assert.match(b, /An investigation may conclude no change is justified/);
       assert.match(b, /Never invent defects or edits to keep running/);
@@ -540,8 +548,30 @@ describe("Reviewer review brief (turn 2)", () => {
       assert.match(b, /Reserve blocked for an unavailable review/);
       assert.match(b, /Nonblocking observations and future improvements belong under Architecture/);
       assert.match(b, /not against whether the diff matches the mandate's adjectives/);
+      assert.match(b, /one slice while Considered already listed other evidenced candidates/);
       assert.doesNotMatch(b, /test-only change with no production body|stop planning invisible cycles|first minute, first day/);
     }
+  });
+
+  it("a parseable one-item plan is counted against Considered so Worth: no is a fact, not a reread", () => {
+    const planText = [
+      "# Cycle 2 plan — Stars stay tappable",
+      "Verdict: continue",
+      "Looked: tapped a star — overlay ate the click",
+      "Considered:",
+      "- rough edge: overlay z-index — one line",
+      "- missing: hunt cooldown — same first-hour job",
+      "- leave it — the hunt is blocked",
+      "Direction: stars",
+      "Worth the cycle: the hunt is the product's verb",
+      "Verify: npm test",
+      "Items:",
+      "1. overlay z-index — files: a.ts — serves: hunt — red now: overlay ate the click — proof: npm test",
+      "One item: isolated kernel — cooldown is a different job",
+    ].join("\n");
+    const b = buildReviewerReviewBrief({ ...input(), planText, lookText: "# Cycle 2 look\nLooked: tapped a star" });
+    assert.match(b, /This plan has 1 item and 2 Considered candidates besides leave it/);
+    assert.match(b, /A one-item plan of a class already in Considered is Worth: no unless One item: names a real isolation/);
   });
 
   it("turn 2 is the document: Must-fix revises the tree, not write access", () => {
@@ -573,6 +603,7 @@ describe("plan admission", () => {
     });
     assert.match(text, /mandate's wording does not license a sloppy ship/);
     assert.match(text, /extra unplanned scope/);
+    assert.match(text, /one session of a theme, not one tiny task/);
     assert.doesNotMatch(text, /reads the cycle diff and revises/);
     assert.match(text, /writes the review \(Must-fix is how the tree changes\)/);
   });

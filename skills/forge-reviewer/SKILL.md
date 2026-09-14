@@ -92,6 +92,13 @@ complexity and risk. Compare the plan's `Considered:` alternatives with
 - `Worth: yes — <evidenced benefit or consequential uncertainty resolved>`
 - `Worth: no — <why this was not worth a cycle; which Considered entry should have won, if any>`
 
+A cycle whose `Items:` is one slice while the plan's `Considered:` already
+listed other evidenced candidates of the same job you just used is
+`Worth: no` — pack the class, or `One item:` a different job. `Out of scope:`
+that parks the rest of this `Looked:` as the next cycle is the same miss. A
+useful investigation may still be one item when `One item:` names a real
+isolation.
+
 A cycle whose diff is copy, comments or names while a core workflow you just
 used is broken or untested is `Worth: no` and `Must-fix: this is not the job`
 — the easiest remaining file is not the cycle. A useful investigation may

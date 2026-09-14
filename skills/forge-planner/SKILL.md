@@ -161,11 +161,19 @@ If the last two shipped reviews named the same architecture class, this
 continue plan's items, a `leave it` in `Considered:`, or `Out of scope:`
 must name that class.
 
-### 8. Harmonize — one coherent theme
+### 8. Harmonize — one session, one theme
 
-One theme, as many items as it needs (one or nine). `Direction:` is the
-cycle's intended benefit in your words after using the product — never a
-restatement of the mandate. Each item names the files
+The cycle is a natural agent session: one `Direction:`, then as many items as
+that theme needs so the executor can finish them in one round. Default is
+**two to five** items (at most 5). One item is the exception, not the default.
+
+The scout already paid. Pack every evidenced candidate of this theme from
+`Considered:` / `Looked:` into `Items:`. Do not spend a whole
+Planner+Reviewer+verify+commit on a 15-line slice while the same look still
+holds four more of the class.
+
+`Direction:` is the cycle's intended benefit in your words after using the
+product — never a restatement of the mandate. Each item names the files
 it lives in, the job in `Identity:` it **serves** (in words — `forge-surface`:
 every decision traceable to subject, audience and job), what you saw that
 shows it is **red now**: an observed defect, measured limitation, concrete
@@ -180,22 +188,33 @@ is justified. The last review's `Must-fix` and unfinished items come first.
 every surface it touches, or it goes under `Out of scope:` — never one string
 per cycle.
 
-**Highest leverage, not nearest file.** Plan the defect you saw while using
+**Out of scope is not a sequel.** Park a different job or a lease limit (no
+TTY, do not rebuild dist from here). Do not write "the rest of this Looked:
+is cycle N+1." Those belong in `Items:` now, or under `leave it` with why.
+
+**One item.** Isolated kernel or a bounded investigation. Then `One item:`
+must say why the other `Considered:` winners are a different job or leave-it —
+not the next cycle. A missing `One item:` does not parse.
+
+**Highest leverage, not nearest file.** Plan the class you saw while using
 the product. If the record's last several cycles touched the same copy/rename
 surface, the next cycle is a different class — a core workflow you just used —
 or leave it. Do not ship the easiest remaining string so the run looks busy.
 
 **The record is not a thread.** It tells you what is done so you do not repeat
-it. It is not a theme to continue.
+it. It is not a theme to continue, and it is not a queue of slices you
+parked last time.
 
 ### 9. Worth the cycle — the boss's sentence
 
-Before the spend, write `Worth the cycle:` with the concrete benefit to this
-product's user, operator or maintainer and the evidence for it. Weigh added
-complexity, compatibility risk and ongoing cost against `leave it`. Preventing
-data loss, enabling recovery, reducing resource use or catching regressions
-can matter without a visible feature. A general practice earns a cycle through
-a concrete problem here, not its reputation. Account for the run's spend.
+The spend is already above — a scout, then a Reviewer, then the suite.
+`Worth the cycle:` is whether this *session* beats `leave it`, not whether a
+single typed defect is "worth a cycle." Pricing one Next key as the whole
+cycle while `Considered:` still holds the same class is not a plan. Weigh
+added complexity, compatibility risk and ongoing cost. Preventing data loss,
+enabling recovery, reducing resource use or catching regressions can matter
+without a visible feature. A general practice earns a cycle through a
+concrete problem here, not its reputation.
 
 ### 10. Guidelines — is the map right
 
@@ -229,9 +248,11 @@ Turn 1 ends with the scout and nothing else (`# Cycle N scout`, `Identity:`,
 `Looked:`, `Promises:`, `Considered:`). Turn 2 ends with the plan and nothing
 else, in exactly the shape the brief reprints (`# Cycle N plan — <title>`,
 `Verdict:`, `Identity:`, `Looked:`, `Considered:`, `Direction:`, `Worth the
-cycle:`, `Verify:`, `Items:`, `Out of scope:`, `Guidelines:`, `Operator:`).
+cycle:`, `Verify:`, `Items:`, `One item:` when there is only one item,
+`Out of scope:`, `Guidelines:`, `Operator:`).
 `Verify:` is one shell command that can fail (`npm test`, `cargo test`,
 `./build.sh && ./bin/app --self-test`), or `none — <why>`; prose under it is
-refused. A `continue` plan without `Considered:` (with `leave it`), or with an
-item missing `serves:` or `red now:`, does not parse and comes back to you
+refused. A `continue` plan without `Considered:` (with `leave it`), with an
+item missing `serves:` or `red now:`, with more than five items, or with
+exactly one item and no `One item:`, does not parse and comes back to you
 once with what was missing.
