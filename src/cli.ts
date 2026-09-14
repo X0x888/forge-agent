@@ -2338,7 +2338,7 @@ Docs: docs/PRODUCTION.md
       "Prune: delete mutations.jsonl (undo journals) — keeps sessions and lastError",
     )
     .option(
-      "--dry",
+      "--dry, --dry-run",
       "Prune: preview what would be deleted without removing it",
     )
     .option(
@@ -3082,7 +3082,7 @@ Docs: docs/PRODUCTION.md
         return;
       }
       if (act === "prune") {
-        const dry = Boolean(globalOpts.dry);
+        const dry = Boolean(globalOpts.dry || globalOpts.dryRun);
         if (Boolean(globalOpts.journals)) {
           const j = pruneMutationJournals({ dry });
           if (globalOpts.json) {
@@ -3152,19 +3152,26 @@ Docs: docs/PRODUCTION.md
             if (parsed !== undefined) maxAgeDays = parsed;
           }
         }
-        const keep = requireCliKeepCount(
-          globalOpts.keep,
-          50,
-          "--keep",
-          "invalid_keep",
-          { json: Boolean(globalOpts.json) },
-        );
+        const keepExplicit = command.getOptionValueSource?.("keep") === "cli";
+        const orphans = Boolean(globalOpts.orphans);
+        // Omitted --keep is 50 for the session-count cull; omitted --keep
+        // with --orphans is mills only (do not pass 50 into overKeep).
+        const keep =
+          keepExplicit || !orphans
+            ? requireCliKeepCount(
+                globalOpts.keep,
+                50,
+                "--keep",
+                "invalid_keep",
+                { json: Boolean(globalOpts.json) },
+              )
+            : undefined;
         const result = pruneSessions({
           // 0 is valid (keep none); Number(x)||50 wrongly treated 0 as missing
-          keep,
+          ...(keep !== undefined ? { keep } : {}),
           maxAgeDays,
           forceLastError: Boolean(globalOpts.forceLastError),
-          orphans: Boolean(globalOpts.orphans),
+          orphans,
           dry,
         });
         if (globalOpts.json) {
@@ -3181,8 +3188,8 @@ Docs: docs/PRODUCTION.md
               deletedWithLastError: result.deletedWithLastError,
               deletedOrphans: result.deletedOrphans,
               forceLastError: Boolean(globalOpts.forceLastError),
-              orphans: Boolean(globalOpts.orphans),
-              keep,
+              orphans,
+              ...(keep !== undefined ? { keep } : {}),
               ...(maxAgeDays !== undefined ? { maxAgeDays } : {}),
             },
             true,

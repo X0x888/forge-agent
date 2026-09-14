@@ -65,6 +65,14 @@ export function rewriteDoctorIssueForSurface(
     .replace(
       /\bforge sessions prune --journals\b/gi,
       "/sessions prune --journals",
+    )
+    .replace(
+      /\bforge sessions prune --keep 50 --dry\b/gi,
+      "/sessions prune --keep 50 --dry",
+    )
+    .replace(
+      /\bforge sessions prune --keep 50\b/gi,
+      "/sessions prune --keep 50 --dry",
     );
 }
 

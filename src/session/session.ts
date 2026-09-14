@@ -2195,6 +2195,9 @@ export function isOrphanSubagentSession(meta: {
  * `forceLastError` is set — experts inspect failures via `/sessions errors` first.
  * `orphans` deletes nested `subagent:` children with no `ulw.json` (mills),
  * including their lastError, without touching ULW parent records.
+ * Omitted `keep` is 50 for the session-count cull; omitted `keep` with
+ * `orphans` is mills only (keep-50 does not OR in). Explicit `keep` +
+ * `orphans` ORs both.
  * `dry` lists would-delete ids without unlinking (same as tmp/journals `--dry`).
  */
 export function pruneSessions(opts?: {
@@ -2216,18 +2219,19 @@ export function pruneSessions(opts?: {
   /** Preview: fill `deleted` without unlinking. */
   dry?: boolean;
 }): PruneSessionsResult {
-  // 0 is valid (keep none). NaN/negative fall back to 50.
+  // 0 is valid (keep none). NaN/negative = omitted.
   const keepRaw = opts?.keep;
-  const keep =
-    typeof keepRaw === "number" && Number.isFinite(keepRaw) && keepRaw >= 0
-      ? Math.floor(keepRaw)
-      : 50;
+  const keepExplicit =
+    typeof keepRaw === "number" && Number.isFinite(keepRaw) && keepRaw >= 0;
+  const keep = keepExplicit ? Math.floor(keepRaw) : 50;
   const maxAgeDays = opts?.maxAgeDays;
   const protect = new Set(opts?.protectIds || []);
   const skipLocked = opts?.skipLocked !== false;
   const forceLastError = Boolean(opts?.forceLastError);
   const orphans = Boolean(opts?.orphans);
   const dry = Boolean(opts?.dry);
+  /** Session-count cull unless this call is orphans-only. */
+  const cullByKeep = keepExplicit || !orphans;
   const all = listSessions(10_000);
   const cutoff =
     maxAgeDays != null && maxAgeDays > 0
@@ -2250,7 +2254,7 @@ export function pruneSessions(opts?: {
     const ts = Date.parse(meta.updatedAt || "");
     const tooOld =
       cutoff != null && Number.isFinite(ts) && ts < cutoff;
-    const overKeep = index >= keep;
+    const overKeep = cullByKeep && index >= keep;
     const orphan = orphans && isOrphanSubagentSession(meta);
     if (!(tooOld || overKeep || orphan)) return;
     if (skipLocked && sessionHasForeignLiveLock(meta.id)) {

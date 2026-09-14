@@ -5690,7 +5690,7 @@ case "/new":
         };
       }
       if (sub === "prune") {
-        const dry = parts.includes("--dry");
+        const dry = parts.includes("--dry") || parts.includes("--dry-run");
         const journals =
           parts.includes("--journals") ||
           parts.includes("--journal") ||
@@ -5709,7 +5709,8 @@ case "/new":
             handled: true,
             output:
               `${verb} ${j.deleted} undo journal(s) (${kb} KB)` +
-              `${prot}. Sessions / lastError kept. CLI: forge sessions prune --journals`,
+              `${prot}. Sessions / lastError kept. CLI: forge sessions prune --journals` +
+              (dry ? " --dry" : ""),
           };
         }
         // Accept --keep=N or --keep N (0 is valid — keep none except active/pinned/locked)
@@ -5725,7 +5726,11 @@ case "/new":
             break;
           }
         }
-        let keep = 50;
+        const orphans =
+          parts.includes("--orphans") ||
+          parts.includes("--orphan") ||
+          parts.includes("--subagents");
+        let keep: number | undefined;
         if (keepRaw != null) {
           const parsed = parseCliNonNegInt(keepRaw);
           if (parsed === null) {
@@ -5736,17 +5741,15 @@ case "/new":
             };
           }
           keep = parsed ?? 50;
+        } else if (!orphans) {
+          keep = 50;
         }
         const forceLastError =
           parts.includes("--force-last-error") ||
           parts.includes("--force-errors") ||
           parts.includes("--include-errors");
-        const orphans =
-          parts.includes("--orphans") ||
-          parts.includes("--orphan") ||
-          parts.includes("--subagents");
         const result = pruneSessions({
-          keep,
+          ...(keep !== undefined ? { keep } : {}),
           protectIds: [opts.session.meta.id],
           forceLastError,
           orphans,
@@ -5768,9 +5771,13 @@ case "/new":
             ? `; ${result.deletedOrphans} orphan subagent(s)`
             : "";
         const verb = dry ? "Would prune" : "Pruned";
+        const cliKeep =
+          keep !== undefined ? ` --keep ${keep}` : "";
+        const cliOrphans = orphans ? " --orphans" : "";
+        const cliDry = dry ? " --dry" : "";
         return {
           handled: true,
-          output: `${verb} ${result.deleted.length} session(s); kept ${result.kept} (active protected${lockNote}${pinNote}${errNote}${orphanNote}). CLI: forge sessions prune --keep ${keep}${orphans ? " --orphans" : ""}`,
+          output: `${verb} ${result.deleted.length} session(s); kept ${result.kept} (active protected${lockNote}${pinNote}${errNote}${orphanNote}). CLI: forge sessions prune${cliKeep}${cliOrphans}${cliDry}`,
         };
       }
       // Default: same-cwd sessions (multi-project experts). /sessions all|global for everything.
@@ -7799,14 +7806,14 @@ export async function runDoctorCheck(
     if (sessionsTotal >= 100) {
       lines.push(
         chalk.yellow(
-          `  ⚠ ${sessionsTotal} sessions on disk — consider forge sessions prune --keep 50 (lastError sessions kept unless --force-last-error)`,
+          `  ⚠ ${sessionsTotal} sessions on disk — consider ${sessionsRecoveryVerb("prune", surface)} (lastError sessions kept unless --force-last-error)`,
         ),
       );
     }
     if (orphanSubagentSessions >= 5) {
       lines.push(
         chalk.yellow(
-          `  ⚠ ${orphanSubagentSessions} nested subagent sessions with no ulw.json — forge sessions prune --orphans (ULW parents kept)`,
+          `  ⚠ ${orphanSubagentSessions} nested subagent sessions with no ulw.json — ${sessionsRecoveryVerb("orphans", surface)} (ULW parents kept)`,
         ),
       );
     }

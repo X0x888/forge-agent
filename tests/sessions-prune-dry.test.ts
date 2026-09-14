@@ -97,7 +97,7 @@ describe("/sessions prune --journals --dry", () => {
       const journal = path.join(home, "sessions", other.meta.id, "mutations.jsonl");
       fs.writeFileSync(journal, "x".repeat(2048));
       const hooks = new HookRunner(DEFAULT_CONFIG, ws);
-      const preview = await handleSlash("/sessions prune --journals --dry", {
+      const preview = await handleSlash("/sessions prune --journals --dry-run", {
         session: active,
         config: DEFAULT_CONFIG,
         hooks,
@@ -254,6 +254,62 @@ describe("pruneSessions --keep/--orphans --dry", () => {
       else process.env.FORGE_HOME = prev;
     }
   });
+
+  it("orphans without --keep does not cull index >= 50", () => {
+    const prev = process.env.FORGE_HOME;
+    const home = tmpHome();
+    try {
+      const extras: string[] = [];
+      for (let i = 0; i < 51; i++) {
+        extras.push(
+          createSession({
+            cwd: home,
+            provider: "xai",
+            model: "m",
+            title: `extra-${i}`,
+          }).meta.id,
+        );
+      }
+      const parent = createSession({
+        cwd: home,
+        provider: "xai",
+        model: "m",
+        title: "ulw parent",
+      });
+      fs.writeFileSync(
+        path.join(sessionDir(parent.meta.id), "ulw.json"),
+        JSON.stringify({ version: 2, cycle: 1 }),
+      );
+      saveSession(parent);
+      const mill = createSession({
+        cwd: home,
+        provider: "xai",
+        model: "m",
+        title: "subagent: mill",
+      });
+      mill.meta.subagent = {
+        parentId: parent.meta.id,
+        type: "explore",
+        isolation: "none",
+      };
+      saveSession(mill);
+      const millsOnly = pruneSessions({ orphans: true, dry: true });
+      assert.deepEqual(millsOnly.deleted, [mill.meta.id]);
+      assert.equal(millsOnly.deletedOrphans, 1);
+      for (const id of extras) {
+        assert.equal(fs.existsSync(sessionDir(id)), true);
+      }
+      const cull = pruneSessions({ keep: 50, dry: true });
+      assert.ok(cull.deleted.length >= 1);
+      assert.ok(!cull.deleted.includes(mill.meta.id));
+      const both = pruneSessions({ keep: 50, orphans: true, dry: true });
+      assert.ok(both.deleted.includes(mill.meta.id));
+      assert.ok(both.deleted.length > millsOnly.deleted.length);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+    }
+  });
 });
 
 describe("/sessions prune --keep 1 --dry", () => {
@@ -353,12 +409,16 @@ describe("forge sessions prune --keep/--orphans --dry", () => {
     };
     assert.equal(orphanBody.dry, true);
     assert.ok((orphanBody.deletedOrphans || 0) >= 1);
+    assert.equal((orphanBody.deleted || []).length, 1);
     assert.ok((orphanBody.deleted || []).includes(mill.meta.id));
+    assert.equal("keep" in orphanBody, false);
     assert.equal(fs.existsSync(sessionDir(mill.meta.id)), true);
+    assert.equal(fs.existsSync(sessionDir(old.meta.id)), true);
+    assert.equal(fs.existsSync(sessionDir(newest.meta.id)), true);
 
     const journal = path.join(sessionDir(newest.meta.id), "mutations.jsonl");
     fs.writeFileSync(journal, "x".repeat(64));
-    const jDry = forge(home, ["sessions", "prune", "--journals", "--dry", "--json"]);
+    const jDry = forge(home, ["sessions", "prune", "--journals", "--dry-run", "--json"]);
     assert.equal(jDry.status, 0, jDry.stderr);
     const jBody = JSON.parse(jDry.stdout) as { journals?: boolean; dry?: boolean; deleted?: number };
     assert.equal(jBody.journals, true);

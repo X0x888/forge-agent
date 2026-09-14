@@ -184,7 +184,11 @@ describe("doctor health card", () => {
       "120 sessions on disk — consider forge sessions prune --keep 50";
     assert.match(
       formatDoctorCloser([countIssue], { surface: "cli" }),
-      /forge sessions prune --keep 50/,
+      /forge sessions prune --keep 50 --dry/,
+    );
+    assert.match(
+      formatDoctorCloser([countIssue]),
+      /\/sessions prune --keep 50 --dry/,
     );
   });
 

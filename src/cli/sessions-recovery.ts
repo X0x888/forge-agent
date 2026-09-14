@@ -29,7 +29,10 @@ const SESSIONS_RECOVERY: Record<
     cli: "forge sessions prune --journals",
     repl: "/sessions prune --journals",
   },
-  prune: { cli: "forge sessions prune --keep 50", repl: "/sessions" },
+  prune: {
+    cli: "forge sessions prune --keep 50 --dry",
+    repl: "/sessions prune --keep 50 --dry",
+  },
   orphans: {
     cli: "forge sessions prune --orphans",
     repl: "/sessions prune --orphans",
