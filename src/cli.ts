@@ -3882,7 +3882,12 @@ Docs: docs/PRODUCTION.md
           );
           return;
         }
-        console.log(formatLspStatus(manager));
+        console.log(
+          formatLspStatus(manager, {
+            surface: "cli",
+            toInstall: plan.toInstall.length,
+          }),
+        );
         console.log("");
         console.log(formatEnsurePlan(plan));
       },
@@ -4164,8 +4169,8 @@ Docs: docs/PRODUCTION.md
 
   program
     .command("tmp")
-    .description("Show or prune leftover ~/.forge/tmp look/Chrome profiles")
-    .argument("[action]", "prune (default) | stats")
+    .description("Show leftover ~/.forge/tmp look/Chrome profiles (prune to delete)")
+    .argument("[action]", "stats (default) | prune")
     .option("--dry", "List what would be deleted without removing it")
     .option("--force", "Ignore mtime (still only scratch names)")
     .option(
@@ -4175,10 +4180,10 @@ Docs: docs/PRODUCTION.md
     )
     .option("--json", "Machine-readable JSON")
     .action((action: string | undefined, opts, command) => {
-      const act = String(action || "prune").trim().toLowerCase();
+      const act = String(action || "stats").trim().toLowerCase();
       const wantJson = flagJson(opts, command);
       if (act !== "prune" && act !== "stats") {
-        failUsage("Usage: forge tmp [prune|stats] [--dry] [--force] [--max-age-hours N]", {
+        failUsage("Usage: forge tmp [stats|prune] [--dry] [--force] [--max-age-hours N]", {
           json: wantJson,
         });
       }

@@ -5,8 +5,7 @@ import path from "node:path";
 import { isWithinRoot } from "../util/fs.js";
 import { LspClient } from "./client.js";
 import { loadLspConfig, type LoadedLspConfig } from "./config.js";
-import { formatMissingServerTips } from "./install-guide.js";
-import { commandOnPath } from "./path-util.js";
+import { buildEnsurePlan } from "./ensure.js";
 import {
   languageIdForPath,
   type LspDiagnostic,
@@ -38,6 +37,10 @@ export class LspManager {
 
   get sources(): string[] {
     return this.config.sources.slice();
+  }
+
+  get workspaceRoot(): string {
+    return this.workspace;
   }
 
   get servers(): LspServerConfig[] {
@@ -239,24 +242,31 @@ export function getActiveLspManager(): LspManager | null {
 /** `/lsp` ready/missing peek. Recipes stay on `/lsp install`. */
 export function formatLspStatus(
   manager: LspManager,
-  opts?: { note?: string },
+  opts?: {
+    note?: string;
+    surface?: "repl" | "cli";
+    /** Ensure-pack missing count. Omit to compute from the workspace. */
+    toInstall?: number;
+  },
 ): string {
   if (!manager.enabled) {
     return ["lsp  ·  off", "  disabled  ·  FORGE_LSP=0"].join("\n");
   }
   const statuses = manager.status();
-  let missing = 0;
-  try {
-    missing = formatMissingServerTips(manager.servers, commandOnPath).length;
-  } catch {
-    /* */
+  let toInstall = opts?.toInstall;
+  if (toInstall === undefined) {
+    try {
+      toInstall = buildEnsurePlan(manager.workspaceRoot).toInstall.length;
+    } catch {
+      toInstall = 0;
+    }
   }
   const errors = statuses.filter((s) => s.state === "error");
   const ready = statuses.filter((s) => s.state === "ready");
   let verdict = "lsp  ·  idle";
   if (!statuses.length) verdict = "lsp  ·  none";
   else if (errors.length) verdict = "lsp  ·  error";
-  else if (missing) verdict = "lsp  ·  missing";
+  else if (toInstall > 0) verdict = "lsp  ·  missing";
   else if (ready.length === statuses.length) verdict = "lsp  ·  ready";
   else if (ready.length)
     verdict = `lsp  ·  ${ready.length}/${statuses.length} ready`;
@@ -270,8 +280,16 @@ export function formatLspStatus(
   if (statuses.length > 6) {
     lines.push(`  … +${statuses.length - 6} more`);
   }
-  if (missing || !statuses.length) lines.push("Next  /lsp ensure");
-  else if (errors.length) lines.push("Next  /lsp restart");
+  const ensureKey =
+    (opts?.surface ?? "repl") === "cli" ? "forge lsp ensure" : "/lsp ensure";
+  if (toInstall > 0 || !statuses.length) lines.push(`Next  ${ensureKey}`);
+  else if (errors.length) {
+    lines.push(
+      (opts?.surface ?? "repl") === "cli"
+        ? "Next  forge lsp ensure"
+        : "Next  /lsp restart",
+    );
+  }
   return lines.join("\n");
 }
 

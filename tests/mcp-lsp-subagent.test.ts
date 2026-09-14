@@ -582,6 +582,45 @@ describe("LSP config", () => {
     assert.doesNotMatch(none, /Tool: lsp|forge lsp ensure/);
   });
 
+  it("headline is not missing when ensure toInstall is empty", async () => {
+    const { LspManager, formatLspStatus } = await import(
+      "../src/lsp/manager.js"
+    );
+    const mgr = new LspManager({
+      workspace: tmpRoot,
+      config: {
+        enabled: true,
+        servers: [
+          {
+            languageId: "typescript",
+            extensions: ["ts"],
+            command: "typescript-language-server",
+            args: ["--stdio"],
+          },
+          {
+            languageId: "go",
+            extensions: ["go"],
+            command: "gopls-not-on-path-xyz",
+            args: [],
+          },
+        ],
+        sources: [],
+      },
+    });
+    const idle = formatLspStatus(mgr, { toInstall: 0 });
+    assert.doesNotMatch(idle, /lsp  ·  missing/);
+    assert.match(idle, /lsp  ·  idle/);
+    assert.match(idle, /go  idle/);
+    assert.doesNotMatch(idle, /Next  \/lsp ensure/);
+    const cliMissing = formatLspStatus(mgr, {
+      toInstall: 1,
+      surface: "cli",
+    });
+    assert.match(cliMissing, /lsp  ·  missing/);
+    assert.match(cliMissing, /Next  forge lsp ensure/);
+    assert.doesNotMatch(cliMissing, /Next  \/lsp ensure/);
+  });
+
   it("lsp diagnostics missing path fails closed", async () => {
     const { LspManager } = await import("../src/lsp/manager.js");
     const mgr = new LspManager({
