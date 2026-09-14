@@ -183,6 +183,7 @@ import {
   markSetupSeen,
   markSetupSkipped,
   parseSetupAction,
+  setupCliAction,
   setupJsonPayload,
 } from "./setup.js";
 import {
@@ -678,7 +679,18 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
   if (cmd === "/pause") return "control";
   // /unpause — shorthand for /goal resume (live control)
   if (cmd === "/unpause") return "control";
-  return "idle-only";
+  // Known catalog that is not live-safe stays idle-only (/compact, /undo, /new…).
+  // Aliases not in SLASH_COMMANDS must not become unknown/ephemeral.
+  if (
+    (SLASH_COMMANDS as readonly string[]).includes(cmd) ||
+    cmd === "/ultrawork" ||
+    cmd === "/autowork"
+  ) {
+    return "idle-only";
+  }
+  // Unknown / Did-you-mean: no mutation — live-safe at › and ephemeral in
+  // `forge run "/helpp"` so CI probes do not litter sessions list.
+  return "readonly";
 }
 
 export function isLiveSafeSlash(line: string): boolean {
@@ -7847,11 +7859,14 @@ export async function runDoctorCheck(
       action: i.action,
     }));
     lines.push("");
-    lines.push(`Setup: ${assessed.ready}/${assessed.total}  ·  /setup`);
+    lines.push(
+      `Setup: ${assessed.ready}/${assessed.total}  ·  ${surface === "cli" ? "forge setup" : "/setup"}`,
+    );
     for (const item of assessed.items.filter((i) => !i.ready)) {
-      lines.push(
-        chalk.dim(`  [ ] ${item.label}  ${item.detail}  →  ${item.action}`),
-      );
+      const verb =
+        surface === "cli" ? setupCliAction(item.id) : item.action;
+      const arrow = verb ? `  →  ${verb}` : "";
+      lines.push(chalk.dim(`  [ ] ${item.label}  ${item.detail}${arrow}`));
     }
   } catch {
     /* setup card is advisory */
@@ -7910,7 +7925,6 @@ export async function runDoctorCheck(
         severity: "hygiene",
         detail: `${memN} active project-memory notes (2k injected; extras live in .forge/MEMORY.md)`,
         replAction: "/memory project prune",
-        cliAction: "/memory project prune",
       });
     }
   }

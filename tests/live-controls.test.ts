@@ -215,6 +215,11 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/permissions clear"), "idle-only");
     assert.equal(classifyLiveSlash("/permissions bypassPermissions"), "idle-only");
     assert.equal(classifyLiveSlash("not a slash"), "idle-only");
+    assert.equal(classifyLiveSlash("/helpp"), "readonly");
+    assert.equal(classifyLiveSlash("/zzzznotacommand"), "readonly");
+    assert.ok(isLiveSafeSlash("/helpp"));
+    assert.equal(classifyLiveSlash("/ultrawork"), "idle-only");
+    assert.equal(classifyLiveSlash("/autowork"), "idle-only");
     assert.equal(isLiveSafeSlash("/ulw fix it"), false);
     assert.equal(isLiveSafeSlash("/sessions delete x"), false);
     assert.equal(isLiveSafeSlash("/permissions clear"), false);

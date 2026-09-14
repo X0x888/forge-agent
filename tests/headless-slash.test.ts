@@ -175,6 +175,70 @@ describe("resolveHeadlessSlashPrompt", () => {
     assert.equal(loadSession(session.meta.id), null);
   });
 
+  it("ephemeral unknown Did-you-mean does not keep a session", async () => {
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const { saveSession, loadSession } = await import(
+      "../src/session/session.js"
+    );
+    saveSession(session);
+    const r = await resolveHeadlessSlashPrompt({
+      prompt: "/helpp",
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+      ephemeral: true,
+    });
+    assert.equal(r.kind, "done");
+    if (r.kind === "done") {
+      assert.equal(r.ephemeral, true);
+      assert.match(r.output, /Did you mean|Unknown command/i);
+    }
+    assert.equal(loadSession(session.meta.id), null);
+  });
+
+  it("ephemeral /help stays a discarded probe", async () => {
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const { saveSession, loadSession } = await import(
+      "../src/session/session.js"
+    );
+    saveSession(session);
+    const r = await resolveHeadlessSlashPrompt({
+      prompt: "/help",
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+      ephemeral: true,
+    });
+    assert.equal(r.kind, "done");
+    if (r.kind === "done") {
+      assert.equal(r.ephemeral, true);
+    }
+    assert.equal(loadSession(session.meta.id), null);
+  });
+
+  it("--session / non-ephemeral unknown slash still persists", async () => {
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const { saveSession, loadSession } = await import(
+      "../src/session/session.js"
+    );
+    saveSession(session);
+    const r = await resolveHeadlessSlashPrompt({
+      prompt: "/helpp",
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+      ephemeral: false,
+    });
+    assert.equal(r.kind, "done");
+    if (r.kind === "done") {
+      assert.equal(r.ephemeral, false);
+    }
+    assert.ok(loadSession(session.meta.id));
+  });
+
   it("ephemeral does not discard mutating /plan session", async () => {
     const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
     const hooks = new HookRunner(DEFAULT_CONFIG, tmp);

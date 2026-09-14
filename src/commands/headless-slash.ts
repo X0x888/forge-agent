@@ -103,8 +103,9 @@ export async function resolveHeadlessSlashPrompt(opts: {
       };
     }
     if (slash.handled) {
-      // Only discard for true read-only probes (/help, /commands, /doctor…).
-      // Mutating controls (/plan, /build, /model, /cycle…) must persist session.
+      // Only discard for true read-only probes (/help, /commands, /doctor,
+      // unknown Did-you-mean). Mutating controls (/plan, /build, /compact)
+      // must persist session — classifyLiveSlash keeps those idle-only.
       const cmd = raw.trim().split(/\s+/)[0] || "/";
       const readonlyProbe =
         classifyLiveSlash(raw.trim()) === "readonly" ||

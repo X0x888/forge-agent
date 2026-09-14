@@ -14,6 +14,9 @@ export type SetupItemId =
 
 export type SetupSeverity = "blocking" | "recommended" | "optional";
 
+/** REPL `/setup` is numbered 1–6; `forge setup` is shell verbs. */
+export type SetupSurface = "repl" | "cli";
+
 export interface SetupItem {
   id: SetupItemId;
   ready: boolean;
@@ -147,6 +150,28 @@ const SETUP_KEY: Partial<Record<SetupItemId, string>> = {
   lsp: "5",
 };
 
+/** Shell verb for `forge setup` / CLI doctor — omit when there is no subcommand. */
+export function setupCliAction(
+  id: SetupItemId | "scaffold",
+): string | undefined {
+  switch (id) {
+    case "auth":
+      return "forge login";
+    case "provider_model":
+      return "forge config";
+    case "budget":
+      return "forge --max-cost 5";
+    case "project_rules":
+      return "forge init";
+    case "attention":
+      return undefined;
+    case "lsp":
+      return "forge lsp ensure";
+    case "scaffold":
+      return "forge init";
+  }
+}
+
 function setupMark(item: SetupItem): string {
   if (item.ready) return "✓";
   if (item.severity === "blocking") return "⚠";
@@ -154,11 +179,35 @@ function setupMark(item: SetupItem): string {
   return "○";
 }
 
+function formatSetupCliNext(r: SetupAssessment): string {
+  const keys: string[] = [];
+  const push = (k: string | undefined) => {
+    if (k && !keys.includes(k)) keys.push(k);
+  };
+  for (const item of r.items) {
+    if (!item.ready) push(setupCliAction(item.id));
+  }
+  if (!keys.length) push("forge setup --json");
+  return `  Next  ${keys.slice(0, 4).join("  ·  ")}`;
+}
+
 /** Full /setup card (no chalk — callers color if they want). */
-export function formatSetupCard(r: SetupAssessment): string {
+export function formatSetupCard(
+  r: SetupAssessment,
+  opts?: { surface?: SetupSurface },
+): string {
+  const surface: SetupSurface = opts?.surface ?? "repl";
   const lines = [`Setup  ${r.ready}/${r.total} ready`];
   for (const item of r.items) {
     const mark = setupMark(item);
+    if (surface === "cli") {
+      const verb = !item.ready ? setupCliAction(item.id) : undefined;
+      const action = verb ? `  →  ${verb}` : "";
+      lines.push(
+        `  ${mark}    ${item.label.padEnd(18)} ${item.detail}${action}`,
+      );
+      continue;
+    }
     const key = SETUP_KEY[item.id];
     const keyBit = key ? `${key}  ` : "   ";
     // Numbered rows are the action. Auth has no key — keep the verb.
@@ -166,6 +215,12 @@ export function formatSetupCard(r: SetupAssessment): string {
     lines.push(
       `  ${mark} ${keyBit}${item.label.padEnd(18)} ${item.detail}${action}`,
     );
+  }
+  if (surface === "cli") {
+    lines.push(`  ·    ${"scaffold files".padEnd(18)} forge init`);
+    lines.push("");
+    lines.push(formatSetupCliNext(r));
+    return lines.join("\n");
   }
   lines.push(`  · 6  ${"scaffold files".padEnd(18)} forge init`);
   lines.push("");

@@ -54,21 +54,45 @@ describe("doctor health card", () => {
       [AUTH_ISSUE],
       { color: false, surface: "cli" },
     );
-    assert.match(report, /Next  forge login  ·  \/setup/);
+    assert.match(report, /Next  forge login  ·  forge setup/);
     assert.doesNotMatch(report, /Next  \/auth/);
+    assert.doesNotMatch(report, /\/setup/);
+    assert.doesNotMatch(report, /\/permissions/);
   });
 
-  it("yolo closer is /permissions on both surfaces", () => {
+  it("yolo closer is /permissions at › and a shell flag on CLI", () => {
     assert.match(formatDoctorCloser([YOLO_ISSUE]), /\/permissions/);
-    assert.match(
+    assert.doesNotMatch(
       formatDoctorCloser([YOLO_ISSUE], { surface: "cli" }),
       /\/permissions/,
+    );
+    assert.match(
+      formatDoctorCloser([YOLO_ISSUE], { surface: "cli" }),
+      /forge --permission-mode default/,
     );
     assert.doesNotMatch(formatDoctorCloser([YOLO_ISSUE]), /forge login/);
     assert.doesNotMatch(
       formatDoctorCloser([YOLO_ISSUE], { surface: "cli" }),
       /forge login/,
     );
+  });
+
+  it("CLI Next never lists slash commands", () => {
+    const closer = formatDoctorCloser([YOLO_ISSUE, AUTH_ISSUE], {
+      surface: "cli",
+      recommendations: [
+        {
+          id: "project-memory",
+          severity: "hygiene",
+          detail: "20 notes",
+          replAction: "/memory project prune",
+          cliAction: "/memory project prune",
+        },
+      ],
+    });
+    assert.doesNotMatch(closer, /\/[a-zA-Z]/);
+    assert.doesNotMatch(closer, /\/permissions/);
+    assert.match(closer, /forge login/);
   });
 
   it("other-issue fallback is /status at › and forge doctor --json on CLI", () => {

@@ -15,6 +15,7 @@ import {
   formatSetupCard,
   formatSetupCompactLine,
   parseSetupAction,
+  setupCliAction,
   type SetupAssessment,
 } from "../util/setup-readiness.js";
 
@@ -103,7 +104,12 @@ export function setupJsonPayload(
   };
 }
 
-export { formatSetupCard, formatSetupCompactLine, parseSetupAction };
+export {
+  formatSetupCard,
+  formatSetupCompactLine,
+  parseSetupAction,
+  setupCliAction,
+};
 
 export function markSetupSeen(): void {
   try {

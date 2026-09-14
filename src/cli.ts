@@ -3576,7 +3576,7 @@ Docs: docs/PRODUCTION.md
           );
           return;
         }
-        console.log(formatSetupCard(assessed));
+        console.log(formatSetupCard(assessed, { surface: "cli" }));
         if (!auth) {
           log.dim("Not signed in — forge login  ·  then forge setup");
         }

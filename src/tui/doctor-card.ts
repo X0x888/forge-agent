@@ -54,12 +54,18 @@ export function rewriteDoctorIssueForSurface(
     .replace(/\bforge doctor --json\b/gi, "/doctor");
 }
 
+function isCliSlashKey(k: string): boolean {
+  return /^\s*\//.test(k);
+}
+
 function closerKeyForRec(
   rec: DoctorRecommendation,
   surface: DoctorSurface,
 ): string | null {
   if (surface === "cli") {
-    return rec.cliAction || rec.replAction || null;
+    const k = rec.cliAction;
+    if (!k || isCliSlashKey(k)) return null;
+    return k;
   }
   return rec.replAction || null;
 }
@@ -77,13 +83,15 @@ export function formatDoctorCloser(
   const blob = issues.join("\n");
   const keys: string[] = [];
   const push = (k: string) => {
-    if (k && !keys.includes(k)) keys.push(k);
+    if (!k) return;
+    if (surface === "cli" && isCliSlashKey(k)) return;
+    if (!keys.includes(k)) keys.push(k);
   };
   if (/not authenticated|forge login/i.test(blob)) {
     push(surface === "cli" ? "forge login" : "/auth");
   }
   if (/bypassPermissions|yolo|dontAsk|permission mode/i.test(blob)) {
-    push("/permissions");
+    push(surface === "cli" ? "forge --permission-mode default" : "/permissions");
   }
   if (/undo journal is large|sessions on disk/i.test(blob)) {
     push(surface === "cli" ? "forge sessions prune --keep 50" : "/sessions");
@@ -93,7 +101,7 @@ export function formatDoctorCloser(
     if (k) push(k);
   }
   if (!issues.length || /not authenticated/i.test(blob)) {
-    push("/setup");
+    push(surface === "cli" ? "forge setup" : "/setup");
   }
   if (!keys.length) {
     push(surface === "cli" ? "forge doctor --json" : "/status");
@@ -123,7 +131,9 @@ export function formatDoctorRecommended(
   for (const rec of recs.slice(0, 8)) {
     const action =
       surface === "cli"
-        ? rec.cliAction || rec.replAction
+        ? rec.cliAction && !isCliSlashKey(rec.cliAction)
+          ? rec.cliAction
+          : undefined
         : rec.replAction || rec.cliAction;
     const arrow = action ? `  →  ${action}` : "";
     const row = `  • ${rec.detail}${arrow}`;

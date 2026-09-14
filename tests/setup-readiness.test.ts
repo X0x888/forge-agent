@@ -8,6 +8,8 @@ import {
   alreadyOnboarded,
   rewriteIdleSetupShortcut,
   setupAutoCardDisabled,
+  setupCliAction,
+  setupItemIds,
 } from "../src/util/setup-readiness.js";
 import { clipBannerIdentity, formatBanner } from "../src/tui/banner.js";
 import { visibleWidth } from "../src/util/format.js";
@@ -90,6 +92,26 @@ describe("assessSetupReadiness", () => {
     assert.match(compact, /no AGENTS\.md/);
     assert.match(compact, /type 1–6 or \/setup/);
     assert.doesNotMatch(compact, /notify off|lsp missing/);
+  });
+
+  it("CLI card is shell verbs — never Type 1–6 or slash Next", () => {
+    const r = assessSetupReadiness({ ...base, authenticated: false });
+    const card = formatSetupCard(r, { surface: "cli" });
+    assert.match(card, /Setup  \d\/6 ready/);
+    assert.doesNotMatch(card, /Type 1–6/);
+    assert.doesNotMatch(card, /\/setup skip/);
+    assert.doesNotMatch(card, /\/permissions/);
+    assert.doesNotMatch(card, /○ 2\s+spend cap/);
+    assert.match(card, /→\s+forge login/);
+    assert.match(card, /forge --max-cost 5/);
+    assert.match(card, /forge init/);
+    assert.match(card, /forge lsp ensure/);
+    assert.match(card, /Next  /);
+    assert.doesNotMatch(card, /Next  \//);
+    assert.deepEqual(r.items.map((i) => i.id), setupItemIds());
+    assert.equal(r.items.find((i) => i.id === "budget")?.action, "/budget 5");
+    assert.equal(setupCliAction("budget"), "forge --max-cost 5");
+    assert.equal(setupCliAction("attention"), undefined);
   });
 
   it("marks blocking auth with ⚠ and keeps forge login on that row", () => {
