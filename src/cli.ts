@@ -11,6 +11,7 @@
  */
 import { Command } from "commander";
 import { installGroupedHelp, TOP_LEVEL_COMMANDS } from "./cli/help-groups.js";
+import { suggestTopLevelCommand } from "./cli/suggest-command.js";
 import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
@@ -5183,67 +5184,6 @@ function failSessionLookup(
  * Usage / missing-arg failures for sessions subcommands.
  * With --json: `{ ok:false, reason:usage, error }` on stdout.
  */
-
-/**
- * When a bare prompt is a single token that looks like a mistyped subcommand,
- * return the closest command name (else null). Avoids false positives on short
- * real prompts ("hi", "ok", "fix").
- */
-/** Common abbreviations / near-misses experts type as bare `forge <token>`. */
-const TOP_LEVEL_ALIASES: Record<string, (typeof TOP_LEVEL_COMMANDS)[number]> = {
-  cfg: "config",
-  conf: "config",
-  log: "logs",
-  model: "models",
-  session: "sessions",
-  sess: "sessions",
-  complete: "completion",
-  whatsnew: "news",
-  hud: "status",
-  whoami: "auth",
-  account: "accounts",
-  diagnose: "doctor",
-  tip: "tips",
-  cheatsheet: "tips",
-};
-
-function suggestTopLevelCommand(prompt: string): string | null {
-  const t = prompt.trim();
-  if (!t || /\s/.test(t)) return null;
-  // flags / paths / urls are not command typos
-  if (t.startsWith("-") || t.includes("/") || t.includes(":") || t.includes(".")) return null;
-  const q = t.toLowerCase();
-  // exact command — commander would have routed it; still skip
-  if ((TOP_LEVEL_COMMANDS as readonly string[]).includes(q)) return null;
-  // Explicit aliases (allow short tokens like cfg/log that fail the length floor)
-  const aliased = TOP_LEVEL_ALIASES[q];
-  if (aliased) return aliased;
-  if (q.length < 4) return null;
-
-  let best: { name: string; score: number } | null = null;
-  for (const name of TOP_LEVEL_COMMANDS) {
-    let score = 0;
-    if (name.startsWith(q) || q.startsWith(name)) score = 80;
-    else if (name.includes(q) || q.includes(name)) score = 55;
-    else {
-      const d = editDistance(q, name);
-      const maxD = q.length <= 5 ? 2 : q.length <= 9 ? 3 : 4;
-      if (d > maxD) continue;
-      // Require shared 3-char prefix so "next" does not match "news".
-      if (q.length >= 3 && name.length >= 3 && q.slice(0, 3) !== name.slice(0, 3)) {
-        continue;
-      }
-      score = 40 - d;
-      if (name.length === q.length) score += 3;
-      if (name[0] === q[0]) score += 2;
-    }
-    if (!best || score > best.score) best = { name, score };
-  }
-  // Require a meaningful score so "hello" does not suggest noise
-  if (!best || best.score < 38) return null;
-  return best.name;
-}
-
 
 /** Common `forge <cmd> <other-cmd>` footguns (logout under auth, login under doctor, …). */
 function excessArgCommandHint(argv: string[] = process.argv): {
