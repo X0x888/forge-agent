@@ -5695,12 +5695,6 @@ case "/new":
           parts.includes("--journals") ||
           parts.includes("--journal") ||
           parts.includes("--undo-journal");
-        if (dry && !journals) {
-          return {
-            handled: true,
-            output: "Usage: /sessions prune --journals --dry",
-          };
-        }
         if (journals) {
           const j = pruneMutationJournals({
             protectIds: [opts.session.meta.id],
@@ -5756,6 +5750,7 @@ case "/new":
           protectIds: [opts.session.meta.id],
           forceLastError,
           orphans,
+          dry,
         });
         const lockNote = result.skippedLocked
           ? `; skipped ${result.skippedLocked} foreign-locked`
@@ -5772,9 +5767,10 @@ case "/new":
           result.deletedOrphans > 0
             ? `; ${result.deletedOrphans} orphan subagent(s)`
             : "";
+        const verb = dry ? "Would prune" : "Pruned";
         return {
           handled: true,
-          output: `Pruned ${result.deleted.length} session(s); kept ${result.kept} (active protected${lockNote}${pinNote}${errNote}${orphanNote}). CLI: forge sessions prune --keep ${keep}${orphans ? " --orphans" : ""}`,
+          output: `${verb} ${result.deleted.length} session(s); kept ${result.kept} (active protected${lockNote}${pinNote}${errNote}${orphanNote}). CLI: forge sessions prune --keep ${keep}${orphans ? " --orphans" : ""}`,
         };
       }
       // Default: same-cwd sessions (multi-project experts). /sessions all|global for everything.

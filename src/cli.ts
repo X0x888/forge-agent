@@ -3083,11 +3083,6 @@ Docs: docs/PRODUCTION.md
       }
       if (act === "prune") {
         const dry = Boolean(globalOpts.dry);
-        if (dry && !Boolean(globalOpts.journals)) {
-          failUsage("Usage: forge sessions prune --journals --dry", {
-            json: Boolean(globalOpts.json),
-          });
-        }
         if (Boolean(globalOpts.journals)) {
           const j = pruneMutationJournals({ dry });
           if (globalOpts.json) {
@@ -3170,11 +3165,13 @@ Docs: docs/PRODUCTION.md
           maxAgeDays,
           forceLastError: Boolean(globalOpts.forceLastError),
           orphans: Boolean(globalOpts.orphans),
+          dry,
         });
         if (globalOpts.json) {
           emitOkJson(
             {
               forgeHome: forgeHome(),
+              dry,
               deleted: result.deleted,
               kept: result.kept,
               scanned: result.scanned,
@@ -3191,8 +3188,9 @@ Docs: docs/PRODUCTION.md
             true,
           );
         } else {
+          const verb = dry ? "Would prune" : "Pruned";
           log.success(
-            `Pruned ${result.deleted.length} session(s); kept ${result.kept} (scanned ${result.scanned}` +
+            `${verb} ${result.deleted.length} session(s); kept ${result.kept} (scanned ${result.scanned}` +
               (result.skippedLocked
                 ? `; skipped ${result.skippedLocked} locked`
                 : "") +

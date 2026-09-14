@@ -2161,6 +2161,8 @@ export interface PruneSessionsResult {
   deletedWithLastError: number;
   /** Nested `subagent:` children with no ulw.json (orphan mills). */
   deletedOrphans: number;
+  /** True when nothing was unlinked. */
+  dry: boolean;
 }
 
 /**
@@ -2193,6 +2195,7 @@ export function isOrphanSubagentSession(meta: {
  * `forceLastError` is set — experts inspect failures via `/sessions errors` first.
  * `orphans` deletes nested `subagent:` children with no `ulw.json` (mills),
  * including their lastError, without touching ULW parent records.
+ * `dry` lists would-delete ids without unlinking (same as tmp/journals `--dry`).
  */
 export function pruneSessions(opts?: {
   keep?: number;
@@ -2210,6 +2213,8 @@ export function pruneSessions(opts?: {
    * lastError on those rows does not protect them. ULW parents stay.
    */
   orphans?: boolean;
+  /** Preview: fill `deleted` without unlinking. */
+  dry?: boolean;
 }): PruneSessionsResult {
   // 0 is valid (keep none). NaN/negative fall back to 50.
   const keepRaw = opts?.keep;
@@ -2222,6 +2227,7 @@ export function pruneSessions(opts?: {
   const skipLocked = opts?.skipLocked !== false;
   const forceLastError = Boolean(opts?.forceLastError);
   const orphans = Boolean(opts?.orphans);
+  const dry = Boolean(opts?.dry);
   const all = listSessions(10_000);
   const cutoff =
     maxAgeDays != null && maxAgeDays > 0
@@ -2258,7 +2264,7 @@ export function pruneSessions(opts?: {
       skippedLastError += 1;
       return;
     }
-    if (deleteSession(meta.id)) {
+    if (dry || deleteSession(meta.id)) {
       deleted.push(meta.id);
       if (hasErr) deletedWithLastError += 1;
       if (orphan) deletedOrphans += 1;
@@ -2274,6 +2280,7 @@ export function pruneSessions(opts?: {
     skippedLastError,
     deletedWithLastError,
     deletedOrphans,
+    dry,
   };
 }
 

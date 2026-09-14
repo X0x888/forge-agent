@@ -8,7 +8,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createSession } from "../src/session/session.js";
+import {
+  createSession,
+  pruneSessions,
+  saveSession,
+  sessionDir,
+  setSessionLastError,
+} from "../src/session/session.js";
 import { pruneMutationJournals } from "../src/session/mutations.js";
 import { handleSlash } from "../src/commands/slash.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
@@ -162,5 +168,209 @@ describe("pruneMutationJournals dry kernel", () => {
     assert.equal(fs.existsSync(journal), true);
     assert.equal(pruneMutationJournals().deleted, 1);
     assert.equal(fs.existsSync(journal), false);
+  });
+});
+
+describe("pruneSessions --keep/--orphans --dry", () => {
+  it("keep 1 dry leaves dirs; wet deletes", () => {
+    const prev = process.env.FORGE_HOME;
+    const home = tmpHome();
+    try {
+      const ws = path.join(home, "ws");
+      fs.mkdirSync(ws);
+      const old = createSession({ cwd: ws, provider: "xai", model: "m", title: "old" });
+      old.meta.updatedAt = "2020-01-01T00:00:00.000Z";
+      saveSession(old);
+      const mid = createSession({ cwd: ws, provider: "xai", model: "m", title: "mid" });
+      mid.meta.updatedAt = "2021-01-01T00:00:00.000Z";
+      saveSession(mid);
+      const newest = createSession({ cwd: ws, provider: "xai", model: "m", title: "new" });
+      newest.meta.updatedAt = "2022-01-01T00:00:00.000Z";
+      saveSession(newest);
+      const preview = pruneSessions({ keep: 1, dry: true });
+      assert.equal(preview.dry, true);
+      assert.equal(preview.deleted.length, 2);
+      assert.ok(preview.deleted.includes(old.meta.id));
+      assert.ok(preview.deleted.includes(mid.meta.id));
+      assert.ok(!preview.deleted.includes(newest.meta.id));
+      assert.equal(fs.existsSync(sessionDir(old.meta.id)), true);
+      assert.equal(fs.existsSync(sessionDir(mid.meta.id)), true);
+      assert.equal(fs.existsSync(sessionDir(newest.meta.id)), true);
+      const wet = pruneSessions({ keep: 1 });
+      assert.equal(wet.dry, false);
+      assert.equal(wet.deleted.length, 2);
+      assert.equal(fs.existsSync(sessionDir(old.meta.id)), false);
+      assert.equal(fs.existsSync(sessionDir(newest.meta.id)), true);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+    }
+  });
+
+  it("orphans dry leaves the mill; wet deletes mill and keeps parent", () => {
+    const prev = process.env.FORGE_HOME;
+    const home = tmpHome();
+    try {
+      const parent = createSession({
+        cwd: home,
+        provider: "xai",
+        model: "m",
+        title: "ulw parent",
+      });
+      fs.writeFileSync(
+        path.join(sessionDir(parent.meta.id), "ulw.json"),
+        JSON.stringify({ version: 2, cycle: 1 }),
+      );
+      saveSession(parent);
+      const mill = createSession({
+        cwd: home,
+        provider: "xai",
+        model: "m",
+        title: "subagent: Find next play-path hole",
+      });
+      mill.meta.subagent = {
+        parentId: parent.meta.id,
+        type: "explore",
+        isolation: "none",
+      };
+      setSessionLastError(mill, {
+        code: "max_turns",
+        message: "maxTurns (25) reached — releasing.",
+      });
+      saveSession(mill);
+      const preview = pruneSessions({ keep: 50, orphans: true, dry: true });
+      assert.equal(preview.dry, true);
+      assert.ok(preview.deletedOrphans >= 1);
+      assert.ok(preview.deleted.includes(mill.meta.id));
+      assert.ok(!preview.deleted.includes(parent.meta.id));
+      assert.equal(fs.existsSync(sessionDir(mill.meta.id)), true);
+      const wet = pruneSessions({ keep: 50, orphans: true });
+      assert.equal(wet.dry, false);
+      assert.ok(wet.deleted.includes(mill.meta.id));
+      assert.equal(fs.existsSync(sessionDir(mill.meta.id)), false);
+      assert.equal(fs.existsSync(sessionDir(parent.meta.id)), true);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+    }
+  });
+});
+
+describe("/sessions prune --keep 1 --dry", () => {
+  it("previews then a following prune without --dry deletes", async () => {
+    const prev = process.env.FORGE_HOME;
+    const home = tmpHome();
+    try {
+      const ws = path.join(home, "ws");
+      fs.mkdirSync(ws);
+      const old = createSession({ cwd: ws, provider: "xai", model: "m", title: "old" });
+      const extra = createSession({ cwd: ws, provider: "xai", model: "m", title: "extra" });
+      const active = createSession({ cwd: ws, provider: "xai", model: "m", title: "active" });
+      const hooks = new HookRunner(DEFAULT_CONFIG, ws);
+      const preview = await handleSlash("/sessions prune --keep 1 --dry", {
+        session: active,
+        config: DEFAULT_CONFIG,
+        hooks,
+      });
+      assert.equal(preview.handled, true);
+      assert.match(String(preview.output || ""), /Would prune 2 session/);
+      assert.doesNotMatch(String(preview.output || ""), /Usage:.*--journals --dry/);
+      assert.equal(fs.existsSync(sessionDir(old.meta.id)), true);
+      const dropped = await handleSlash("/sessions prune --keep 1", {
+        session: active,
+        config: DEFAULT_CONFIG,
+        hooks,
+      });
+      assert.match(String(dropped.output || ""), /Pruned 2 session/);
+      assert.equal(fs.existsSync(sessionDir(old.meta.id)), false);
+      assert.equal(fs.existsSync(sessionDir(extra.meta.id)), false);
+      assert.equal(fs.existsSync(sessionDir(active.meta.id)), true);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+    }
+  });
+});
+
+describe("forge sessions prune --keep/--orphans --dry", () => {
+  it("CLI dry leaves dirs; wet deletes; not --deny", () => {
+    const home = tmpHome();
+    const ws = path.join(home, "ws");
+    fs.mkdirSync(ws);
+    const old = createSession({ cwd: ws, provider: "xai", model: "m", title: "old" });
+    old.meta.updatedAt = "2020-01-01T00:00:00.000Z";
+    saveSession(old);
+    const newest = createSession({ cwd: ws, provider: "xai", model: "m", title: "new" });
+    newest.meta.updatedAt = "2022-01-01T00:00:00.000Z";
+    saveSession(newest);
+    const parent = createSession({
+      cwd: ws,
+      provider: "xai",
+      model: "m",
+      title: "ulw parent",
+    });
+    parent.meta.updatedAt = "2023-01-01T00:00:00.000Z";
+    fs.writeFileSync(
+      path.join(sessionDir(parent.meta.id), "ulw.json"),
+      JSON.stringify({ version: 2, cycle: 1 }),
+    );
+    saveSession(parent);
+    const mill = createSession({
+      cwd: ws,
+      provider: "xai",
+      model: "m",
+      title: "subagent: mill",
+    });
+    mill.meta.updatedAt = "2023-06-01T00:00:00.000Z";
+    mill.meta.subagent = {
+      parentId: parent.meta.id,
+      type: "explore",
+      isolation: "none",
+    };
+    saveSession(mill);
+
+    const keepDry = forge(home, ["sessions", "prune", "--keep", "1", "--dry", "--json"]);
+    assert.equal(keepDry.status, 0, keepDry.stderr);
+    assert.doesNotMatch(keepDry.stdout + keepDry.stderr, /Usage:.*--journals --dry/);
+    assert.doesNotMatch(keepDry.stdout + keepDry.stderr, /Did you mean `--deny`|Did you mean --deny/);
+    const keepBody = JSON.parse(keepDry.stdout) as {
+      ok?: boolean;
+      dry?: boolean;
+      deleted?: string[];
+    };
+    assert.equal(keepBody.ok, true);
+    assert.equal(keepBody.dry, true);
+    assert.ok((keepBody.deleted || []).length >= 1);
+    assert.equal(fs.existsSync(sessionDir(old.meta.id)), true);
+
+    const orphanDry = forge(home, ["sessions", "prune", "--orphans", "--dry", "--json"]);
+    assert.equal(orphanDry.status, 0, orphanDry.stderr);
+    assert.doesNotMatch(orphanDry.stdout + orphanDry.stderr, /Usage:.*--journals --dry/);
+    const orphanBody = JSON.parse(orphanDry.stdout) as {
+      dry?: boolean;
+      deletedOrphans?: number;
+      deleted?: string[];
+    };
+    assert.equal(orphanBody.dry, true);
+    assert.ok((orphanBody.deletedOrphans || 0) >= 1);
+    assert.ok((orphanBody.deleted || []).includes(mill.meta.id));
+    assert.equal(fs.existsSync(sessionDir(mill.meta.id)), true);
+
+    const journal = path.join(sessionDir(newest.meta.id), "mutations.jsonl");
+    fs.writeFileSync(journal, "x".repeat(64));
+    const jDry = forge(home, ["sessions", "prune", "--journals", "--dry", "--json"]);
+    assert.equal(jDry.status, 0, jDry.stderr);
+    const jBody = JSON.parse(jDry.stdout) as { journals?: boolean; dry?: boolean; deleted?: number };
+    assert.equal(jBody.journals, true);
+    assert.equal(jBody.dry, true);
+    assert.equal(fs.existsSync(journal), true);
+    assert.equal(fs.existsSync(sessionDir(newest.meta.id)), true);
+
+    const wetKeep = forge(home, ["sessions", "prune", "--keep", "1", "--json"]);
+    assert.equal(wetKeep.status, 0, wetKeep.stderr);
+    const wetBody = JSON.parse(wetKeep.stdout) as { dry?: boolean; deleted?: string[] };
+    assert.equal(wetBody.dry, false);
+    assert.ok((wetBody.deleted || []).length >= 1);
+    assert.equal(fs.existsSync(sessionDir(old.meta.id)), false);
   });
 });
