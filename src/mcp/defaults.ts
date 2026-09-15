@@ -7,12 +7,14 @@
  * - context7 — up-to-date library docs (npx @upstash/context7-mcp)
  * - playwright — isolated browser (npx @playwright/mcp --isolated) unless a
  *   session look profile is bound (`--user-data-dir`); output under
- *   ~/.forge/tmp/playwright-output so the workspace is not a dump
+ *   ~/.forge/tmp/playwright-output so the workspace is not a dump; on macOS a
+ *   Playwright-managed Chromium, never the user's Chrome.app (playwright-browser.ts)
  */
 import fs from "node:fs";
 import type { McpServerConfig } from "./types.js";
 import { isFalsy } from "../util/bool.js";
 import { playwrightOutputDir } from "../util/look-cleanup.js";
+import { managedBrowserArgs } from "./playwright-browser.js";
 
 /** Stable default server ids (reserved names for docs / doctor). */
 export const DEFAULT_MCP_SERVER_IDS = ["context7", "playwright"] as const;
@@ -95,13 +97,14 @@ function hasUserDataDirArg(args: string[]): boolean {
  * Existing ~/.forge/mcp.json from `forge init` overrides built-ins and would
  * drop `--isolated`. Re-apply isolation unless the user set a profile dir or
  * FORGE_PLAYWRIGHT_ISOLATED=0. `--isolated` cannot combine with `--user-data-dir`.
+ * Either way the entry gets a Playwright-managed browser on macOS.
  */
 export function decoratePlaywrightServer(
   name: string,
   cfg: McpServerConfig,
 ): McpServerConfig {
   if (!isPlaywrightMcp(cfg, name)) return cfg;
-  if (isFalsy(process.env.FORGE_PLAYWRIGHT_ISOLATED)) return cfg;
+  if (isFalsy(process.env.FORGE_PLAYWRIGHT_ISOLATED)) return withManagedBrowser(cfg);
   const args = [...(cfg.args || [])];
   const hasUserData = hasUserDataDirArg(args);
   if (!hasUserData && !args.includes("--isolated")) args.push("--isolated");
@@ -120,11 +123,17 @@ export function decoratePlaywrightServer(
     }
     args.push("--output-dir", outDir);
   }
-  return {
+  return withManagedBrowser({
     ...cfg,
     args,
     env: { PLAYWRIGHT_MCP_ISOLATED: hasUserData ? "0" : "1", ...cfg.env },
-  };
+  });
+}
+
+/** Never the `chrome` channel on macOS — see playwright-browser.ts. */
+function withManagedBrowser(cfg: McpServerConfig): McpServerConfig {
+  const extra = managedBrowserArgs(cfg);
+  return extra.length ? { ...cfg, args: [...(cfg.args || []), ...extra] } : cfg;
 }
 
 /**
@@ -159,7 +168,7 @@ export function bindPlaywrightSessionProfile(
 /** Human-readable blurb for /mcp status and doctor. */
 export function formatDefaultMcpBlurb(): string {
   return (
-    "Built-in defaults: context7 (library docs), playwright (session look profile, or --isolated; output under ~/.forge/tmp). " +
+    "Built-in defaults: context7 (library docs), playwright (session look profile, or --isolated; Playwright's own Chromium on macOS; output under ~/.forge/tmp). " +
     "GitHub source is the native `github` tool, not an MCP. " +
     "Override or disable in ~/.forge/mcp.json · FORGE_MCP_DEFAULTS=0 turns defaults off."
   );
