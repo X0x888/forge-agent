@@ -114,8 +114,12 @@ export function patternToRegExp(pattern: string): RegExp {
     else if (/[.+?^${}()|[\]\\]/.test(ch)) re += "\\" + ch;
     else re += ch;
   }
+  // Prefix-only `^rm -rf /` matched `rm -rf /tmp/...` (CFT relaunch denied).
+  // Patterns without `*` are whole-segment; `seg.startsWith(pat + " ")` still
+  // allows `git status -sb` against `git status`.
   if (!pattern.trim().startsWith("*")) {
-    return new RegExp("^" + re, "i");
+    const star = pattern.includes("*");
+    return new RegExp("^" + re + (star ? "" : "$"), "i");
   }
   return new RegExp(re, "i");
 }

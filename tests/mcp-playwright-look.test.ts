@@ -79,7 +79,29 @@ describe("search_mcp empty vs playwright-down", () => {
       { name: "playwright", command: "npx", args: ["-y", "@playwright/mcp", "--user-data-dir", "/tmp/mine"] },
       "/tmp/look-udd",
     );
-    assert.deepEqual(user.args, ["-y", "@playwright/mcp", "--user-data-dir", "/tmp/mine"]);
+    assert.ok(user.args?.includes("--user-data-dir"));
+    assert.ok(!user.args?.includes("--isolated"));
+    assert.equal(user.env?.PLAYWRIGHT_MCP_ISOLATED, "0");
+    assert.ok(
+      user.args?.some((a) => /^@playwright\/mcp@/.test(a)),
+      "unpinned @playwright/mcp is version-pinned",
+    );
+  });
+
+  it("never emits --isolated together with --user-data-dir", () => {
+    const messy = bindPlaywrightSessionProfile(
+      {
+        name: "playwright",
+        command: "npx",
+        args: ["-y", "@playwright/mcp@latest", "--isolated", "--user-data-dir", "/tmp/both"],
+        env: { PLAYWRIGHT_MCP_ISOLATED: "1" },
+      },
+      "/tmp/look-udd",
+    );
+    const blob = (messy.args || []).join(" ");
+    assert.ok(blob.includes("--user-data-dir"));
+    assert.ok(!/\s--isolated(\s|$)/.test(` ${blob} `));
+    assert.equal(messy.env?.PLAYWRIGHT_MCP_ISOLATED, "0");
   });
 
   it("default recipe pins a versioned @playwright/mcp spec", () => {
@@ -133,7 +155,7 @@ describe("live Playwright MCP look", { skip: !live }, () => {
         "call_mcp",
         JSON.stringify({
           tool_name: "playwright__browser_navigate",
-          arguments: { url: `file://${path.join(ws, "index.html")}` },
+          arguments: { url: "https://example.com" },
         }),
         { workspace: ws, mcp: manager },
       );
@@ -144,7 +166,7 @@ describe("live Playwright MCP look", { skip: !live }, () => {
             "call_mcp",
             JSON.stringify({
               tool_name: n2[1],
-              arguments: { url: `file://${path.join(ws, "index.html")}` },
+              arguments: { url: "https://example.com" },
             }),
             { workspace: ws, mcp: manager },
           );

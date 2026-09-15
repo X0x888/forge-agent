@@ -495,16 +495,22 @@ describe("cycle orchestrator", () => {
   it("review findings and failing checks share the same bounded fix budget", async () => {
     const sid = "orch-review-fixcap";
     armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test" });
-    const { rt, calls } = fakeRuntime(cwd, { reviewer: [REVIEW_MUSTFIX, REVIEW_MUSTFIX], checkPasses: [false, true, true] });
+    const { rt, calls } = fakeRuntime(cwd, {
+      reviewer: [REVIEW_MUSTFIX, REVIEW_MUSTFIX],
+      checkPasses: [false, true, true],
+      planner: [PLAN_OK(2)],
+    });
     const first = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts(), fixRoundsCap: 2 });
     assert.equal(first?.phase, "fix");
     const second = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts(), fixRoundsCap: 2 });
     assert.equal(second?.phase, "fix");
     assert.match(second?.reason ?? "", /fix round 2\/2/);
     const third = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts(), fixRoundsCap: 2 });
-    assert.equal(third?.endReason, "fix-cap");
-    assert.match(third?.reason ?? "", /Reviewer findings remain.*the flag prints nothing/);
-    assert.ok(!calls.some((c) => c.startsWith("commit:") || c.startsWith("role:planner")));
+    assert.equal(third?.released, false, "fix-cap skips the cycle and keeps the mill going");
+    assert.notEqual(third?.endReason, "fix-cap");
+    assert.match(third?.committed?.skipped ?? "", /Reviewer findings remain.*the flag prints nothing/);
+    assert.ok(!calls.some((c) => c.startsWith("commit:")));
+    assert.ok(calls.some((c) => c.startsWith("role:planner")), "next cycle is planned");
   });
 
   it("pre-existing failures do not count: a red run whose failures are all in the baseline is green", async () => {
@@ -765,19 +771,24 @@ describe("cycle orchestrator", () => {
     assert.notEqual(loadCycleState(sid)!.phase, "fix");
   });
 
-  it("fix rounds past the cap release with fix-cap and nothing committed", async () => {
+  it("fix rounds past the cap skip the cycle and plan other work", async () => {
     const sid = "orch-fixcap";
     armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test" });
-    const { rt, calls } = fakeRuntime(cwd, { reviewer: [REVIEW_OK], checkPasses: [false, false, false] });
+    const { rt, calls } = fakeRuntime(cwd, {
+      reviewer: [REVIEW_OK],
+      checkPasses: [false, false, false],
+      planner: [PLAN_OK(2)],
+    });
     let r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts(), fixRoundsCap: 2 });
     assert.equal(r?.phase, "fix");
     r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts(), fixRoundsCap: 2 });
     assert.equal(r?.phase, "fix");
     r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts(), fixRoundsCap: 2 });
-    assert.ok(r?.released);
-    assert.equal(r.endReason, "fix-cap");
-    assert.match(r.reason, /Operator:/);
+    assert.equal(r?.released, false);
+    assert.notEqual(r?.endReason, "fix-cap");
+    assert.match(r?.committed?.skipped ?? "", /stayed red after 2 fix round/);
     assert.ok(!calls.some((c) => c.startsWith("commit:")));
+    assert.ok(calls.some((c) => c.startsWith("role:planner")));
   });
 
   it("stuck in EXECUTE routes to the Reviewer instead of releasing", async () => {
@@ -1830,6 +1841,38 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     assert.ok(r2?.released, "two empty synths trip the cap");
     assert.equal(r2.endReason, "no-progress");
     assert.match(r2.reason ?? "", /synthesized cycle/);
+  });
+
+  it("Planner blocked synthesizes other work instead of releasing the mill", async () => {
+    process.env.FORGE_ULW_TWO_TURN = "0";
+    const sid = "orch-planner-blocked";
+    armCycle({ sessionId: sid, mandate: "ship it", cwd });
+    const blocked = `# Cycle 1 plan\nVerdict: blocked — Playwright MCP still exits\nIdentity: a CLI for tests\nLooked: could not run — mcp:playwright exited (code=0)\nConsidered:\n- leave it — the look lease is dead\nOperator: Playwright MCP process exits`;
+    const { rt } = fakeRuntime(cwd, { planner: [blocked] });
+    const r = await ensureCyclePlanned(sid, rt);
+    assert.equal(r?.released, false);
+    assert.notEqual(r?.endReason, "blocked");
+    assert.equal(r?.planAdmitted, true);
+    assert.match(loadCycleState(sid)!.planTitle ?? "", /Keep the promises|Go deeper|Direct execute/i);
+  });
+
+  it("look-lease blocked reviews do not burn the no-commit wall", async () => {
+    process.env.FORGE_ULW_TWO_TURN = "0";
+    const sid = "orch-look-lease-wall";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "paint" }] });
+    const blocked = `# Cycle 1 review\nVerdict: blocked\nLooked: could not run — mcp:playwright exited (code=0)\nMust-fix:\n- look the surface\nWorth: no — nothing landed`;
+    const { rt } = fakeRuntime(cwd, {
+      reviewer: [blocked, blocked, blocked],
+      planner: [PLAN_OK(2), PLAN_OK(3), PLAN_OK(4)],
+    });
+    for (let i = 0; i < 3; i++) {
+      const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+      assert.equal(r?.released, false, `stop ${i + 1} must not release on a dead look`);
+    }
+    assert.ok(
+      (loadCycleState(sid)!.noCommitStreak ?? 0) < 3,
+      "a dead look lease must not trip the no-progress wall",
+    );
   });
 
   it("a committed cycle resets the no-progress streak", async () => {

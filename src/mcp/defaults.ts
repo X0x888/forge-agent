@@ -11,6 +11,7 @@
  *   Playwright-managed Chromium, never the user's Chrome.app (playwright-browser.ts)
  */
 import fs from "node:fs";
+import path from "node:path";
 import type { McpServerConfig } from "./types.js";
 import { isFalsy } from "../util/bool.js";
 import { playwrightOutputDir } from "../util/look-cleanup.js";
@@ -93,6 +94,41 @@ function hasUserDataDirArg(args: string[]): boolean {
   );
 }
 
+function isIsolatedArg(a: string): boolean {
+  return a === "--isolated" || a.startsWith("--isolated=");
+}
+
+/**
+ * `@playwright/mcp@latest` drifts. forge-init mcp.json used it; a new CLI
+ * flag then exits 0 (`error: unknown option`) and every `call_mcp` is dead.
+ * Pin unversioned / @latest specs; an explicit @x.y.z in the entry stays.
+ */
+function pinPlaywrightPackageArgs(args: string[]): string[] {
+  const pin =
+    process.env.FORGE_PLAYWRIGHT_MCP?.trim() || "@playwright/mcp@0.0.41";
+  return args.map((a) =>
+    a === "@playwright/mcp" || a === "@playwright/mcp@latest" ? pin : a,
+  );
+}
+
+/**
+ * Playwright throws `userDataDir is not supported in isolated mode` and the
+ * stdio child exits 0. Never emit both `--isolated` and `--user-data-dir`.
+ */
+export function compatPlaywrightProfile(cfg: McpServerConfig): McpServerConfig {
+  if (!isPlaywrightMcp(cfg, cfg.name || "playwright")) return cfg;
+  const args = pinPlaywrightPackageArgs([...(cfg.args || [])]);
+  const env = { ...(cfg.env || {}) };
+  if (!hasUserDataDirArg(args)) {
+    return { ...cfg, args, env };
+  }
+  return {
+    ...cfg,
+    args: args.filter((a) => !isIsolatedArg(a)),
+    env: { ...env, PLAYWRIGHT_MCP_ISOLATED: "0" },
+  };
+}
+
 /**
  * Existing ~/.forge/mcp.json from `forge init` overrides built-ins and would
  * drop `--isolated`. Re-apply isolation unless the user set a profile dir or
@@ -123,11 +159,13 @@ export function decoratePlaywrightServer(
     }
     args.push("--output-dir", outDir);
   }
-  return withManagedBrowser({
-    ...cfg,
-    args,
-    env: { PLAYWRIGHT_MCP_ISOLATED: hasUserData ? "0" : "1", ...cfg.env },
-  });
+  return compatPlaywrightProfile(
+    withManagedBrowser({
+      ...cfg,
+      args: pinPlaywrightPackageArgs(args),
+      env: { PLAYWRIGHT_MCP_ISOLATED: hasUserData ? "0" : "1", ...cfg.env },
+    }),
+  );
 }
 
 /** Never the `chrome` channel on macOS — see playwright-browser.ts. */
@@ -149,8 +187,8 @@ export function bindPlaywrightSessionProfile(
   const dir = String(udd || "").trim();
   if (!dir) return cfg;
   const args = [...(cfg.args || [])];
-  if (hasUserDataDirArg(args)) return cfg;
-  const out = args.filter((a) => a !== "--isolated");
+  if (hasUserDataDirArg(args)) return compatPlaywrightProfile(cfg);
+  const out = args.filter((a) => !isIsolatedArg(a));
   out.push("--user-data-dir", dir);
   if (
     !isFalsy(process.env.FORGE_PLAYWRIGHT_HEADLESS) &&
@@ -158,11 +196,27 @@ export function bindPlaywrightSessionProfile(
   ) {
     out.push("--headless");
   }
-  return {
+  const sessionOut = path.join(path.dirname(dir), "mcp-output");
+  try {
+    fs.mkdirSync(sessionOut, { recursive: true });
+  } catch {
+    /* */
+  }
+  const withOut: string[] = [];
+  for (let i = 0; i < out.length; i++) {
+    if (out[i] === "--output-dir") {
+      i += 1;
+      continue;
+    }
+    if (out[i]?.startsWith("--output-dir=")) continue;
+    withOut.push(out[i]!);
+  }
+  withOut.push("--output-dir", sessionOut);
+  return compatPlaywrightProfile({
     ...cfg,
-    args: out,
+    args: withOut,
     env: { ...cfg.env, PLAYWRIGHT_MCP_ISOLATED: "0" },
-  };
+  });
 }
 
 /** Human-readable blurb for /mcp status and doctor. */

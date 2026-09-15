@@ -189,30 +189,8 @@ export function productionWarningsForRun(
     }
     if (typeof config.maxCostUsd === "number" && config.maxCostUsd > 0) {
       warnings.push(
-        `maxCostUsd=$${config.maxCostUsd} — session spend estimate will release the agent at the cap (estimateCostUsd, not a bill)`,
+        `maxCostUsd=$${config.maxCostUsd} — session spend estimate will release the agent at the cap (estimateCostUsd, not a bill). /budget off removes it.`,
       );
-    }
-    // Unattended ULW without a spend cap is a common expert footgun.
-    {
-      const sessionCap =
-        opts &&
-        Object.prototype.hasOwnProperty.call(opts, "sessionMaxCostUsd") &&
-        typeof opts.sessionMaxCostUsd === "number"
-          ? opts.sessionMaxCostUsd
-          : undefined;
-      const effectiveCap =
-        sessionCap !== undefined
-          ? sessionCap > 0
-            ? sessionCap
-            : null
-          : typeof config.maxCostUsd === "number" && config.maxCostUsd > 0
-            ? config.maxCostUsd
-            : null;
-      if (opts?.ultrawork && effectiveCap == null) {
-        warnings.push(
-          "ULW armed without a spend cap — set --max-cost N, FORGE_MAX_COST_USD, max_cost_usd, or /budget N so unattended runs cannot runaway-spend",
-        );
-      }
     }
 
     // isolation=worktree land=discard silently drops nested agent edits

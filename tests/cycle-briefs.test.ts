@@ -456,13 +456,13 @@ describe("Reviewer look brief (turn 1)", () => {
 });
 
 const LIFECYCLE_LINE =
-  "until a mandate fulfilled, Planner blocked, /cycle 0, max_cycles, or the no-progress wall. Fulfilled releases only an explicit mandate.";
+  "until a mandate fulfilled, /cycle 0, max_cycles, or the no-progress wall on repeating empty work. A Planner blocked or a dead look is not a release — the mill keeps going on other work. Fulfilled releases only an explicit mandate.";
 
 describe("unlimited ULW lifecycle copy", () => {
   function assertMatchesDriver(text: string, label: string) {
     assert.doesNotMatch(text, /in good shape/, `${label} must not end a no-mandate run on "in good shape"`);
     assert.match(text, /no-progress/, `${label} must name the no-progress wall`);
-    assert.match(text, /blocked/, `${label} must name Planner blocked`);
+    assert.match(text, /Planner blocked/, `${label} must say Planner blocked is not a release`);
     assert.match(text, /explicit mandate/, `${label} must say fulfilled releases only an explicit mandate`);
     assert.ok(text.includes(LIFECYCLE_LINE), `${label} must match planNextCycle's release conditions`);
   }

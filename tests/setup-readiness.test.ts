@@ -53,7 +53,7 @@ describe("assessSetupReadiness", () => {
     assert.equal(r.total, 6);
     assert.equal(r.blocking, true);
     assert.equal(r.items.find((i) => i.id === "auth")?.ready, false);
-    assert.equal(r.recommendedOpen, 3);
+    assert.equal(r.recommendedOpen, 2);
   });
 
   it("treats confirmed model, budget, rules as ready", () => {
@@ -83,7 +83,7 @@ describe("assessSetupReadiness", () => {
     const r = assessSetupReadiness(base);
     const card = formatSetupCard(r);
     assert.match(card, /Setup  \d\/6 ready/);
-    assert.match(card, /○ 2\s+spend cap/);
+    assert.match(card, /✓ 2\s+spend/);
     assert.match(card, /○ 3\s+project rules/);
     assert.match(card, /· 6\s+scaffold files/);
     assert.match(card, /Type 1–6/);
@@ -92,7 +92,6 @@ describe("assessSetupReadiness", () => {
     assert.doesNotMatch(card, /1\) Confirm provider/);
     const compact = formatSetupCompactLine(r);
     assert.match(compact, /setup \d\/6/);
-    assert.match(compact, /no spend cap/);
     assert.match(compact, /no AGENTS\.md/);
     assert.match(compact, /type 1–6 or \/setup/);
     assert.doesNotMatch(compact, /notify off|lsp missing/);
@@ -107,7 +106,7 @@ describe("assessSetupReadiness", () => {
     assert.doesNotMatch(card, /\/permissions/);
     assert.doesNotMatch(card, /○ 2\s+spend cap/);
     assert.match(card, /→\s+forge login/);
-    assert.match(card, /forge setup budget 5/);
+    assert.doesNotMatch(card, /forge setup budget 5/);
     assert.doesNotMatch(card, /forge --max-cost/);
     assert.match(card, /forge setup model/);
     assert.match(card, /forge init/);
@@ -115,8 +114,8 @@ describe("assessSetupReadiness", () => {
     assert.match(card, /Next  /);
     assert.doesNotMatch(card, /Next  \//);
     assert.deepEqual(r.items.map((i) => i.id), setupItemIds());
-    assert.equal(r.items.find((i) => i.id === "budget")?.action, "/budget 5");
-    assert.equal(setupCliAction("budget"), "forge setup budget 5");
+    assert.equal(r.items.find((i) => i.id === "budget")?.action, "/budget");
+    assert.equal(setupCliAction("budget"), "forge setup budget");
     assert.equal(setupCliAction("provider_model"), "forge setup model");
     assert.equal(setupCliAction("attention"), "forge setup notify");
   });
@@ -125,7 +124,7 @@ describe("assessSetupReadiness", () => {
     const r = assessSetupReadiness({ ...base, authenticated: false });
     const cli = setupJsonPayload(r, {}, { surface: "cli" });
     const items = cli.items as { id: string; action: string }[];
-    assert.equal(items.find((i) => i.id === "budget")?.action, "forge setup budget 5");
+    assert.equal(items.find((i) => i.id === "budget")?.action, "forge setup budget");
     assert.equal(
       items.find((i) => i.id === "provider_model")?.action,
       "forge setup model",
@@ -136,7 +135,7 @@ describe("assessSetupReadiness", () => {
     );
     const repl = setupJsonPayload(r);
     const replItems = repl.items as { id: string; action: string }[];
-    assert.equal(replItems.find((i) => i.id === "budget")?.action, "/budget 5");
+    assert.equal(replItems.find((i) => i.id === "budget")?.action, "/budget");
     assert.equal(
       replItems.find((i) => i.id === "provider_model")?.action,
       "/setup model",
@@ -428,20 +427,9 @@ describe("hints", () => {
     assert.equal(h?.id, "no_agents");
   });
 
-  it("then budget, then long-run notify", () => {
-    const budget = pickTurnEndHint({
-      dismissed: ["no_agents"],
-      hadFileEdits: true,
-      projectRulesCount: 0,
-      sessionCostUsd: 0.1,
-      hasBudget: false,
-      turnElapsedSec: 200,
-      notifyOn: false,
-      bellOn: false,
-    });
-    assert.equal(budget?.id, "no_budget");
+  it("then long-run notify (spend cap is not a first-day nag)", () => {
     const notify = pickTurnEndHint({
-      dismissed: ["no_agents", "no_budget"],
+      dismissed: ["no_agents"],
       hadFileEdits: false,
       projectRulesCount: 1,
       sessionCostUsd: 0,

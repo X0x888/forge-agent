@@ -11,6 +11,7 @@ import {
   lookCouldNotLook,
   lookHasKernelEvidence,
   lookInfraFailed,
+  planLookedContradictsScout,
   classifyLookKind,
   lookKindAllowsSurfaceCommit,
   architectureClassMustCollapse,
@@ -633,6 +634,24 @@ describe("look infra vs could-not-look", () => {
     assert.equal(lookInfraFailed("Godot quit unexpectedly after Vulkan init"), true);
     assert.equal(lookCouldNotLook("could not run — Playwright MCP never initialized"), true);
     assert.equal(lookCouldNotLook("opened popup.html and tapped Stay"), false);
+    assert.equal(
+      lookCouldNotLook("could not run — mcp:playwright exited (code=0 signal=null)"),
+      true,
+    );
+    assert.equal(
+      planLookedContradictsScout(
+        "could not run — mcp:playwright exited (code=0)",
+        "Playwright at http://127.0.0.1:5444. Boot showed New Story.",
+      ),
+      true,
+    );
+    assert.equal(
+      planLookedContradictsScout(
+        "could not run — mcp:playwright exited",
+        "could not run — mcp:playwright exited (code=0). Native grab was Ghostty.",
+      ),
+      false,
+    );
     assert.equal(lookHasKernelEvidence("walk() tape + npm test 62/62"), true);
     assert.equal(lookHasKernelEvidence("npm test 62/62"), false, "the project gate is not a look");
     assert.equal(lookHasKernelEvidence("cargo test --offline"), false);

@@ -6,6 +6,7 @@ import { JsonRpcStdioClient } from "../util/jsonrpc-stdio.js";
 import { envDurationMs } from "../util/env.js";
 import { log } from "../util/log.js";
 import { expandServerEnv } from "./config.js";
+import { compatPlaywrightProfile, isPlaywrightMcp } from "./defaults.js";
 import type {
   McpCallResult,
   McpPromptDef,
@@ -33,7 +34,7 @@ export interface McpClientOptions {
 export class McpClient {
   readonly name: string;
   readonly transport: McpTransport;
-  private readonly cfg: McpServerConfig;
+  private cfg: McpServerConfig;
   private readonly workspace: string;
   private readonly signal?: AbortSignal;
   private rpc: JsonRpcStdioClient | null = null;
@@ -48,6 +49,8 @@ export class McpClient {
   private state: "idle" | "connecting" | "ready" | "error" = "idle";
   private lastError?: string;
   private initPromise: Promise<void> | null = null;
+  /** One retry when Playwright rejects isolated + user-data-dir. */
+  private isolatedRetry = false;
 
   constructor(opts: McpClientOptions) {
     this.name = opts.name;
@@ -86,12 +89,23 @@ export class McpClient {
   }
 
   async ensureReady(): Promise<void> {
+    if (this.state === "ready" && this.stdioAlive()) return;
+    if (this.rpc && !this.rpc.alive) {
+      this.state = "idle";
+      await this.rpc.dispose().catch(() => {});
+      this.rpc = null;
+    }
     if (this.state === "ready") return;
     if (this.initPromise) return this.initPromise;
     this.initPromise = this.connect().finally(() => {
       this.initPromise = null;
     });
     return this.initPromise;
+  }
+
+  private stdioAlive(): boolean {
+    if (this.transport === "http") return this.state === "ready";
+    return Boolean(this.rpc?.alive);
   }
 
   async listTools(force = false): Promise<McpToolDef[]> {
@@ -116,30 +130,55 @@ export class McpClient {
   ): Promise<McpCallResult> {
     await this.ensureReady();
     try {
-      if (this.transport === "http") {
-        return await this.httpCallTool(toolName, args);
-      }
-      const result = (await this.rpc!.request(
-        "tools/call",
-        { name: toolName, arguments: args },
-        this.timeoutMs(),
-      )) as {
-        content?: Array<{ type?: string; text?: string }>;
-        isError?: boolean;
-        structuredContent?: unknown;
-      };
-      const text = formatMcpContent(result);
-      return {
-        content: text || "(empty MCP tool result)",
-        isError: Boolean(result?.isError),
-        structured: result?.structuredContent,
-      };
+      return await this.callToolOnce(toolName, args);
     } catch (err) {
+      if (this.transport !== "http" && isStdioDead(err)) {
+        this.state = "idle";
+        if (this.rpc) {
+          await this.rpc.dispose().catch(() => {});
+          this.rpc = null;
+        }
+        try {
+          await this.ensureReady();
+          return await this.callToolOnce(toolName, args);
+        } catch (err2) {
+          return {
+            content:
+              `MCP call error (${this.name}/${toolName}): ${(err2 as Error).message}` +
+              ` (reconnected after ${(err as Error).message})`,
+            isError: true,
+          };
+        }
+      }
       return {
         content: `MCP call error (${this.name}/${toolName}): ${(err as Error).message}`,
         isError: true,
       };
     }
+  }
+
+  private async callToolOnce(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<McpCallResult> {
+    if (this.transport === "http") {
+      return await this.httpCallTool(toolName, args);
+    }
+    const result = (await this.rpc!.request(
+      "tools/call",
+      { name: toolName, arguments: args },
+      this.timeoutMs(),
+    )) as {
+      content?: Array<{ type?: string; text?: string }>;
+      isError?: boolean;
+      structuredContent?: unknown;
+    };
+    const text = formatMcpContent(result);
+    return {
+      content: text || "(empty MCP tool result)",
+      isError: Boolean(result?.isError),
+      structured: result?.structuredContent,
+    };
   }
 
   async listResources(force = false): Promise<McpResourceDef[]> {
@@ -332,6 +371,7 @@ export class McpClient {
         this.timeoutMs(),
       )) as { tools?: McpToolDef[] };
       this.tools = Array.isArray(listed?.tools) ? listed.tools : [];
+      this.isolatedRetry = false;
       this.state = "ready";
       // Playwright advertises tools only. resources/list on that server
       // never returns, which used to leave the look path `connecting` for
@@ -353,12 +393,31 @@ export class McpClient {
           `)`,
       );
     } catch (err) {
-      this.state = "error";
-      this.lastError = (err as Error).message;
       if (this.rpc) {
         await this.rpc.dispose().catch(() => {});
         this.rpc = null;
       }
+      if (
+        !this.isolatedRetry &&
+        isPlaywrightMcp(this.cfg, this.name) &&
+        isIsolatedUserDataConflict(err)
+      ) {
+        this.isolatedRetry = true;
+        this.cfg = compatPlaywrightProfile({
+          ...this.cfg,
+          args: (this.cfg.args || []).filter(
+            (a) => a !== "--isolated" && !a.startsWith("--isolated="),
+          ),
+          env: { ...this.cfg.env, PLAYWRIGHT_MCP_ISOLATED: "0" },
+        });
+        log.warn(
+          `MCP ${this.name}: isolated+user-data-dir conflict — retrying without --isolated`,
+        );
+        this.state = "connecting";
+        return this.connect();
+      }
+      this.state = "error";
+      this.lastError = (err as Error).message;
       throw err;
     }
   }
@@ -567,6 +626,16 @@ function formatMcpContent(result: {
     }
   }
   return parts.join("\n\n");
+}
+
+function isStdioDead(err: unknown): boolean {
+  const m = err instanceof Error ? err.message : String(err);
+  return /exited \(|is closed|stdin not writable|EPIPE/i.test(m);
+}
+
+function isIsolatedUserDataConflict(err: unknown): boolean {
+  const m = err instanceof Error ? err.message : String(err);
+  return /userDataDir is not supported in isolated mode/i.test(m);
 }
 
 function pathToFileUri(p: string): string {

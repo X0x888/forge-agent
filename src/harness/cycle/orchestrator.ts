@@ -43,6 +43,7 @@ import {
   lookHasKernelEvidence,
   classifyLookKind,
   lookKindAllowsSurfaceCommit,
+  planLookedContradictsScout,
   worthIsNo,
   isOperatorArchitectureClass,
   parseLookArtifact,
@@ -745,32 +746,68 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
     return admitted;
   }
 
-  const { plan, raw, tokens } = out;
+  let { plan, raw, tokens } = out;
   s.synthStreak = 0;
   if (plan.direction) s.direction = plan.direction;
 
+  if (
+    scout?.parsed?.looked &&
+    plan.verdict === "continue" &&
+    planLookedContradictsScout(scout.parsed.looked, plan.looked ?? "")
+  ) {
+    rt.log?.(
+      "ULW plan Looked: claims a live sit the scout said never ran — not admitting fiction",
+    );
+    const inventory = s.promises ?? scout.parsed.promises ?? [];
+    const unkept = inventory.some(promiseNeedsWork);
+    const kind = unkept ? "keep-promise" : "go-deeper";
+    const synth = synthesizeWorkPlan(s, scout, kind, {
+      mustFix: ["Looked: contradicted the scout's failed look — sit the product or pick other work"],
+    });
+    s.directExecuteStreak += 1;
+    const admitted = await admitPlan(
+      s,
+      rt,
+      synth.plan,
+      synth.raw,
+      tokens,
+      scout,
+      reviewForExecutor,
+      "synthesized",
+    );
+    stampSynthMustFix(s, synth.mustFix);
+    return admitted;
+  }
+
   if (plan.verdict === "blocked") {
     const n = s.cycle + 1;
-    const planPath = writeArtifact(s.sessionId, n, "plan.md", raw);
-    s.cycles.push({
-      n,
-      title: plan.title,
-      startedAt: nowIso(),
-      endedAt: nowIso(),
-      planPath,
-      ...(scout ? { scoutPath: scout.path } : {}),
-      looked: plan.looked ?? scout?.parsed?.looked,
-      ...(plan.considered.length ? { considered: plan.considered } : scout?.parsed?.considered.length ? { considered: scout.parsed.considered } : {}),
-      planVerdict: plan.verdict,
-      itemsTotal: 0,
-      itemsDone: 0,
-      waves: 0,
-      mustFix: [],
-      plannerTokens: tokens,
-    });
+    writeArtifact(s.sessionId, n, "plan.md", raw);
     const why = plan.verdictNote ? ` — ${plan.verdictNote.replace(/[.\s]+$/, "")}` : "";
     const ops = plan.operator.length ? ` Operator: ${plan.operator.join("; ")}` : "";
-    return release(s, "blocked", `Planner: blocked${why}.${ops}`);
+    rt.log?.(
+      `ULW Planner blocked${why}.${ops} — not releasing; synthesizing other work`,
+    );
+    const inventory = s.promises ?? scout?.parsed?.promises ?? [];
+    const unkept = inventory.some(promiseNeedsWork);
+    const kind = unkept ? "keep-promise" : "go-deeper";
+    const synth = synthesizeWorkPlan(s, scout, kind, {
+      mustFix: plan.operator.length
+        ? plan.operator
+        : ["Planner blocked — sit another way or pick other work"],
+    });
+    s.directExecuteStreak += 1;
+    const admitted = await admitPlan(
+      s,
+      rt,
+      synth.plan,
+      synth.raw,
+      tokens,
+      scout,
+      reviewForExecutor,
+      "synthesized",
+    );
+    stampSynthMustFix(s, synth.mustFix);
+    return admitted;
   }
 
   if (plan.verdict === "fulfilled") {
@@ -1360,21 +1397,22 @@ async function finishCycle(s: CycleState, rt: CycleRuntime, accepted: CheckRun |
   return advanceAfterCycle(s, rt, { sha: ac.sha, subject: ac.subject, skipped: ac.skipped });
 }
 
-function fixOrRelease(
+async function fixOrRelease(
   s: CycleState,
   run: CheckRun,
   verdict: GateVerdict,
-  opts: { fixRoundsCap: number; reviewed: boolean },
-): CycleStopOutcome {
+  opts: { fixRoundsCap: number; reviewed: boolean; rt: CycleRuntime },
+): Promise<CycleStopOutcome> {
   s.fixRounds += 1;
   s.phase = "fix";
   saveCycleState(s);
   if (s.fixRounds > opts.fixRoundsCap) {
-    return release(
-      s,
-      "fix-cap",
-      `\`${run.command}\` stayed red after ${opts.fixRoundsCap} fix round(s) in cycle ${s.cycle} (${verdict.note}); nothing committed. Operator: the tree is dirty and the check is red — inspect ${path.join("cycles", String(s.cycle))}/verify.*.log.`,
+    opts.rt.log?.(
+      `ULW cycle ${s.cycle} fix rounds exhausted — skipping commit, planning other work`,
     );
+    return advanceAfterCycle(s, opts.rt, {
+      skipped: `\`${run.command}\` stayed red after ${opts.fixRoundsCap} fix round(s) (${verdict.note})`,
+    });
   }
   return {
     allowStop: false,
@@ -1407,21 +1445,23 @@ function invalidateReview(s: CycleState): void {
   saveCycleState(s);
 }
 
-function fixReviewOrRelease(
+async function fixReviewOrRelease(
   s: CycleState,
   findings: string[],
   cap: number,
-): CycleStopOutcome {
+  rt: CycleRuntime,
+): Promise<CycleStopOutcome> {
   invalidateReview(s);
   s.fixRounds += 1;
   s.phase = "fix";
   saveCycleState(s);
   if (s.fixRounds > cap) {
-    return release(
-      s,
-      "fix-cap",
-      `Reviewer findings remain after ${cap} fix round(s) in cycle ${s.cycle}; nothing committed. Operator: ${findings.join("; ")}`,
+    rt.log?.(
+      `ULW cycle ${s.cycle} review fix rounds exhausted — skipping commit, planning other work`,
     );
+    return advanceAfterCycle(s, rt, {
+      skipped: `Reviewer findings remain after ${cap} fix round(s): ${findings.join("; ")}`,
+    });
   }
   return {
     allowStop: false,
@@ -1469,7 +1509,7 @@ async function closeCycle(
     const abortPre = ifUserDisarmed(s);
     if (abortPre) return abortPre;
     if (pre && !pre.verdict.passed) {
-      return fixOrRelease(s, pre.run, pre.verdict, { fixRoundsCap: opts.fixRoundsCap, reviewed: false });
+      return await fixOrRelease(s, pre.run, pre.verdict, { fixRoundsCap: opts.fixRoundsCap, reviewed: false, rt });
     }
     s.phase = "review";
     saveCycleState(s);
@@ -1483,7 +1523,7 @@ async function closeCycle(
     }
   }
   const findings = [...(record?.mustFix ?? []), ...(record?.disputed ?? [])];
-  if (findings.length) return fixReviewOrRelease(s, findings, opts.fixRoundsCap);
+  if (findings.length) return await fixReviewOrRelease(s, findings, opts.fixRoundsCap, rt);
   const post = await verifyCycle(s, rt, s.fixRounds > 0 ? `post-review.${s.fixRounds}` : "post-review");
   const abortPost = ifUserDisarmed(s);
   if (abortPost) return abortPost;
@@ -1502,7 +1542,7 @@ async function closeCycle(
       });
     }
     invalidateReview(s);
-    return fixOrRelease(s, post.run, post.verdict, { fixRoundsCap: opts.fixRoundsCap, reviewed: true });
+    return await fixOrRelease(s, post.run, post.verdict, { fixRoundsCap: opts.fixRoundsCap, reviewed: true, rt });
   }
   if (surfaceSitBlocksCommit(s, post)) {
     rt.log?.(`ULW cycle ${s.cycle} commit skipped: surface sit without proof`);
@@ -1873,9 +1913,27 @@ function cycleCloseIsProgress(s: CycleState, committed: CycleStopOutcome["commit
   return isAutoCommitOffSkip(committed?.skipped);
 }
 
+function cycleCloseIsLookLease(s: CycleState): boolean {
+  const rec = currentCycleRecord(s);
+  const looked = `${rec?.looked ?? ""} ${rec?.reviewerLooked ?? ""} ${s.lastReview?.looked ?? ""}`;
+  const must = [...(rec?.mustFix ?? []), ...(s.lastReview?.mustFix ?? [])];
+  if (lookCouldNotLook(looked) || lookInfraFailed(looked)) return true;
+  return must.some(
+    (m) =>
+      /^look the surface$/i.test(m) ||
+      /look infrastructure failed/i.test(m) ||
+      /mcp:playwright exited/i.test(m) ||
+      /playwright mcp/i.test(m),
+  );
+}
+
 function noteNoCommitStreak(s: CycleState, committed: CycleStopOutcome["committed"] | undefined): void {
   if (cycleCloseIsProgress(s, committed)) {
     s.noCommitStreak = 0;
+    return;
+  }
+  if (cycleCloseIsLookLease(s)) {
+    // A dead look is a blocker to work around, not a trivial mill.
     return;
   }
   s.noCommitStreak += 1;

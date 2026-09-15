@@ -20,6 +20,7 @@ import {
   evaluateRules,
   compileRules,
   patternToRegExp,
+  defaultDenyRules,
 } from "../src/agent/rules.js";
 import { checkBashHardDeny } from "../src/agent/safety.js";
 import { PermissionGate } from "../src/agent/permissions.js";
@@ -438,6 +439,24 @@ describe("permission rules", () => {
     assert.ok(r);
     assert.equal(r!.tool, "bash");
     assert.equal(r!.pattern, "rm -rf *");
+  });
+
+  it("Bash(rm -rf /) does not deny rm -rf /tmp/...", () => {
+    const rules = defaultDenyRules();
+    const tmp = evaluateRules(
+      rules,
+      "bash",
+      { command: "rm -rf /tmp/hashpet-c11-cft" },
+      "/tmp/proj",
+    );
+    assert.notEqual(tmp.decision, "deny");
+    const root = evaluateRules(
+      rules,
+      "bash",
+      { command: "rm -rf /" },
+      "/tmp/proj",
+    );
+    assert.equal(root.decision, "deny");
   });
 
   it("deny wins on matching segment", () => {

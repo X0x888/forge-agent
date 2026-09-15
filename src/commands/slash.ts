@@ -7269,16 +7269,9 @@ export async function runDoctorCheck(
     );
     lines.push(
       chalk.dim(
-        "  tip: /budget N · --max-cost N · FORGE_MAX_COST_USD  ·  /notify on for desktop turn-end  ·  /bell on",
+        "  tip: /notify on for desktop turn-end  ·  /bell on  ·  /budget is an optional human brake, not a mill fuse",
       ),
     );
-    if (!(typeof config.maxCostUsd === "number" && config.maxCostUsd > 0)) {
-      lines.push(
-        chalk.dim(
-          "  tip: maxCost is unlimited — set a spend cap before long unattended ULW so hitCostCap can release cleanly",
-        ),
-      );
-    }
   }
   // Expert tip: context_window far below the route default wastes headroom;
   // a pin above the host overflows before compact.

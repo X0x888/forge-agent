@@ -22,7 +22,7 @@ import { ULW_LIVE_CONTROLS_HINT } from "./controls.js";
 
 /** Unlimited /ulw release conditions — the same facts `planNextCycle` honours. */
 export const ULW_UNLIMITED_LIFECYCLE =
-  "until a mandate fulfilled, Planner blocked, /cycle 0, max_cycles, or the no-progress wall. Fulfilled releases only an explicit mandate.";
+  "until a mandate fulfilled, /cycle 0, max_cycles, or the no-progress wall on repeating empty work. A Planner blocked or a dead look is not a release — the mill keeps going on other work. Fulfilled releases only an explicit mandate.";
 
 /** Transcript line injected when /ulw arms — the Planner runs before the first model call. */
 export function ulwKickoffMessage(s: CycleState): string {

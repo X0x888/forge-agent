@@ -92,16 +92,6 @@ export function pickTurnEndHint(input: TurnHintInput): HintPick | null {
     };
   }
   if (
-    input.sessionCostUsd > 0 &&
-    !input.hasBudget &&
-    !dismissed.has("no_budget")
-  ) {
-    return {
-      id: "no_budget",
-      text: "No spend cap — /budget 5 (or /setup).",
-    };
-  }
-  if (
     input.turnElapsedSec >= 180 &&
     !input.notifyOn &&
     !input.bellOn &&

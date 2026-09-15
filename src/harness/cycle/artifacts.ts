@@ -532,14 +532,14 @@ function parsePlanArtifactFromSections(text: string): ParsedPlan | null {
 }
 
 const LOOK_COULD_NOT_RE =
-  /could not run|never opened|did not open popup|playwright mcp never|could not see|vision dropped|image attachments? dropped/i;
+  /could not run|never opened|did not open popup|playwright mcp never|could not see|vision dropped|image attachments? dropped|mcp:playwright exited|playwright mcp exited/i;
 const LOOK_NEGATED_OPEN_RE =
   /could not run|never(?:\s+\w+){0,3}\s+opened|did(?: not|n't) open(?: popup)?|could not open|playwright mcp never(?: initialized)?/gi;
 /** Opening evidence after stripping fail phrases. Bare "lease" is the brief hint, not a look. */
 const LOOK_DID_OPEN_RE =
   /\b(?:clicked|clicking|opened|opening|navigated)\b|file:\/\/|bash chrome|leased chrome|call_mcp playwright|look_native:\s*wrote|screencapture -l|SMOKE_[A-Z0-9_]+_OK|\bgodot\b[^\n]*--headless|headless smoke|walk\s*\(/i;
 const LOOK_INFRA_RE =
-  /maxTurns?\s*\(\d+\)\s*reached|look turn ended before|turn budget ended before|Playwright MCP was down.{0,80}(?:never|could not)|Playwright(?: MCP)? (?:was|is) down|screenshot Vision dropped|image attachments? dropped|this provider dropped \d+ image|Cursor has no multimodal|Chrome for Testing died|GPU unusable|godot(?:\.app)? (?:quit unexpectedly|crashed)|Vulkan[^\n]{0,40}hang/i;
+  /maxTurns?\s*\(\d+\)\s*reached|look turn ended before|turn budget ended before|Playwright MCP was down.{0,80}(?:never|could not)|Playwright(?: MCP)? (?:was|is) down|mcp:playwright exited|playwright mcp exited|screenshot Vision dropped|image attachments? dropped|this provider dropped \d+ image|Cursor has no multimodal|Chrome for Testing died|GPU unusable|godot(?:\.app)? (?:quit unexpectedly|crashed)|Vulkan[^\n]{0,40}hang/i;
 
 /** True when Looked: reports a failed look and does not also describe opening the product. */
 export function lookCouldNotLook(looked: string): boolean {
@@ -827,6 +827,22 @@ export function continueWorthHold(
   if (!prev || prev !== next) return "";
   const shown = (lastShipped?.direction ?? "").replace(/\s+/g, " ").trim();
   return `Direction matched the last Worth: no cycle (${shown}) — pick a different Direction`;
+}
+
+/**
+ * Scout said the look lease was dead; the plan's Looked: claims a live sit.
+ * Labelled Looked: is a receipt — a fabricated playthrough must not admit.
+ */
+export function planLookedContradictsScout(
+  scoutLooked: string,
+  planLooked: string,
+): boolean {
+  const scout = String(scoutLooked || "");
+  const plan = String(planLooked || "");
+  if (!lookCouldNotLook(scout) && !lookInfraFailed(scout)) return false;
+  if (lookCouldNotLook(plan) || lookInfraFailed(plan)) return false;
+  if (lookKindAllowsSurfaceCommit(classifyLookKind(plan))) return true;
+  return /Playwright at\s+\S+/i.test(plan) || /\bBoot showed\b/i.test(plan);
 }
 
 /** The Planner's turn-1 document. Null when none of its sections is there, or Looked: is missing or empty. */

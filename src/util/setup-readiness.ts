@@ -86,14 +86,14 @@ export function assessSetupReadiness(
     },
     {
       id: "budget",
-      ready: input.effectiveMaxCostUsd != null,
-      label: "spend cap",
+      ready: true,
+      label: "spend",
       detail:
         input.effectiveMaxCostUsd != null
-          ? `$${input.effectiveMaxCostUsd}`
+          ? `cap $${input.effectiveMaxCostUsd}`
           : "unlimited",
-      action: "/budget 5",
-      severity: "recommended",
+      action: "/budget",
+      severity: "optional",
     },
     {
       id: "project_rules",
@@ -163,7 +163,7 @@ export function setupCliAction(
     case "provider_model":
       return "forge setup model";
     case "budget":
-      return `forge setup budget ${SETUP_DEFAULT_BUDGET_USD}`;
+      return "forge setup budget";
     case "project_rules":
       return "forge init";
     case "attention":

@@ -24,7 +24,7 @@ describe("productionWarningsForRun", () => {
     assert.ok(w.some((x) => /releasedOnContinueCap/i.test(x)));
   });
 
-  it("flags ULW without spend cap", () => {
+  it("does not nag ULW to set a spend cap", () => {
     const w = productionWarningsForRun(
       { ...DEFAULT_CONFIG, maxCostUsd: 0 },
       {
@@ -34,7 +34,7 @@ describe("productionWarningsForRun", () => {
         _testPinnedCount: 0,
       },
     );
-    assert.ok(w.some((x) => /ULW armed without a spend cap/i.test(x)));
+    assert.ok(!w.some((x) => /spend cap/i.test(x)));
   });
 
   it("flags FORGE_FILE_READ_GUARD=0", () => {
@@ -110,7 +110,7 @@ describe("productionWarningsForRun", () => {
     assert.ok(w.some((x) => /packageManager=.*pnpm/i.test(x) && /package-lock/i.test(x)));
   });
 
-  it("does not flag ULW when budget armed", () => {
+  it("names an explicit maxCostUsd cap when one is set", () => {
     const w = productionWarningsForRun(
       { ...DEFAULT_CONFIG, maxCostUsd: 5 },
       {
@@ -122,20 +122,6 @@ describe("productionWarningsForRun", () => {
     );
     assert.ok(!w.some((x) => /ULW armed without a spend cap/i.test(x)));
     assert.ok(w.some((x) => /maxCostUsd=\$5/i.test(x)));
-  });
-
-  it("session budget 0 overrides config cap for ULW warn", () => {
-    const w = productionWarningsForRun(
-      { ...DEFAULT_CONFIG, maxCostUsd: 10 },
-      {
-        ultrawork: true,
-        sessionMaxCostUsd: 0,
-        _testDirtyFiles: 0,
-        _testSessionCount: 0,
-        _testPinnedCount: 0,
-      },
-    );
-    assert.ok(w.some((x) => /ULW armed without a spend cap/i.test(x)));
   });
 
   it("dirty tree under ULW at ≥20", () => {
