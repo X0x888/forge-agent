@@ -7,7 +7,10 @@ import { spawn } from "node:child_process";
 import {
   browserLeaseFromCommand,
   defaultBrowserUdd,
+  currentLookGeneration,
   ensureSessionLookProfile,
+  rotateSessionLookProfile,
+  sessionLookProfileDir,
   guiLeaseFromCommand,
   guiProcessMatchesLease,
   isLookDevServerCommand,
@@ -82,6 +85,20 @@ describe("browser-lease", () => {
     );
     assert.deepEqual(guiLeaseFromCommand(".build/debug/QQHX"), { app: "native-bin" });
     assert.equal(guiLeaseFromCommand("swift test"), undefined);
+  });
+
+  it("rotateSessionLookProfile advances look-N and keeps the mill UDD unique", () => {
+    withForgeHome(() => {
+      const sid = "look-rotate";
+      const first = ensureSessionLookProfile(sid);
+      assert.equal(first, sessionLookProfileDir(sid, 1));
+      assert.equal(currentLookGeneration(sid), 1);
+      const second = rotateSessionLookProfile(sid);
+      assert.equal(second, sessionLookProfileDir(sid, 2));
+      assert.equal(currentLookGeneration(sid), 2);
+      assert.notEqual(first, second);
+      assert.equal(ensureSessionLookProfile(sid), second);
+    });
   });
 
   it("pins npm run dev onto the session look port and replaces :5173", () => {

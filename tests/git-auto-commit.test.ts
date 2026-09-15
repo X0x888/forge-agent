@@ -21,6 +21,7 @@ import {
   classifyCommitKind,
   isDocsOnlyRelPath,
   porcelainPaths,
+  restoreWorkingTreeTo,
   sessionLooksDir,
   stageAutoCommitPaths,
   ulwAutoCommitEnabled,
@@ -109,6 +110,25 @@ describe("ULW cycle commit", () => {
     process.env.FORGE_ULW_AUTO_COMMIT = "0";
     assert.equal(ulwAutoCommitEnabled(), false);
     delete process.env.FORGE_ULW_AUTO_COMMIT;
+  });
+
+  it("restoreWorkingTreeTo drops unpaid mill edits", () => {
+    withRepo((root) => {
+      fs.writeFileSync(path.join(root, "paid.ts"), "x\n");
+      git(["add", "paid.ts"], root);
+      git(
+        ["-c", "user.email=forge@test", "-c", "user.name=Forge Test", "commit", "-q", "-m", "paid"],
+        root,
+      );
+      const head = git(["rev-parse", "HEAD"], root);
+      fs.writeFileSync(path.join(root, "paid.ts"), "dirty\n");
+      fs.writeFileSync(path.join(root, "unpaid.ts"), "new\n");
+      const r = restoreWorkingTreeTo(root, head);
+      assert.equal(r.restored, true);
+      assert.ok(r.files >= 1);
+      assert.equal(fs.readFileSync(path.join(root, "paid.ts"), "utf8"), "x\n");
+      assert.equal(fs.existsSync(path.join(root, "unpaid.ts")), false);
+    });
   });
 
   it("commits a dirty tree with the cycle subject and body", () => {

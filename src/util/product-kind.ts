@@ -70,12 +70,41 @@ export function ulwRoleInlineSkills(
   return skills;
 }
 
-function isBrowserExtension(root: string): boolean {
+export function isBrowserExtension(root: string): boolean {
   for (const rel of EXTENSION_MANIFESTS) {
     const m = readJson(root, rel);
     if (m && (m.browser_action != null || m.action != null)) return true;
   }
   return false;
+}
+
+/**
+ * Directory to serve for an unpacked extension look — source (public /
+ * extension) over leftover webpack `dist/`.
+ */
+export function extensionLookDir(root: string): string | undefined {
+  if (!root || !isBrowserExtension(root)) return undefined;
+  const candidates = [
+    "extension/public",
+    "public",
+    "extension",
+    "src",
+    ".",
+  ];
+  for (const rel of candidates) {
+    const dir = rel === "." ? root : path.join(root, rel);
+    if (hasExtensionSurface(dir)) return dir;
+  }
+  for (const last of ["extension/dist", "dist", "build"]) {
+    const dir = path.join(root, last);
+    if (hasExtensionSurface(dir)) return dir;
+  }
+  return undefined;
+}
+
+function hasExtensionSurface(dir: string): boolean {
+  const files = ["popup.html", "index.html", "manifest.json"];
+  return files.some((f) => exists(dir, f));
 }
 
 /**

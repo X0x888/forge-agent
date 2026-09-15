@@ -5,6 +5,8 @@
  */
 export const LOOK_PORT_BASE = 5200;
 export const LOOK_PORT_SPAN = 800;
+/** Harness Chrome CDP sits in the next span so it never collides with Vite. */
+export const LOOK_CHROME_PORT_BASE = LOOK_PORT_BASE + LOOK_PORT_SPAN;
 
 export function lookPortForSession(sessionId: string): number {
   const id = (sessionId || "").trim() || "anon";
@@ -14,4 +16,8 @@ export function lookPortForSession(sessionId: string): number {
     h = Math.imul(h, 16777619);
   }
   return LOOK_PORT_BASE + (h >>> 0) % LOOK_PORT_SPAN;
+}
+
+export function lookChromePortForSession(sessionId: string): number {
+  return LOOK_CHROME_PORT_BASE + (lookPortForSession(sessionId) - LOOK_PORT_BASE);
 }

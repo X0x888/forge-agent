@@ -53,7 +53,7 @@ export async function toolSearchMcp(
             ? `No MCP tools matched "${query}".`
             : "No MCP tools registered.") +
           (pwDown
-            ? `\nPlaywright MCP is ${st} — wait for /mcp status ready, then search again. Do not write a Chrome/CDP script.`
+            ? `\nPlaywright MCP is ${st} — look_native screenshot captures the harness Chrome of the look server. Do not write a Chrome/CDP script.`
             : "") +
           "\nConfigure .forge/mcp.json / ~/.forge/mcp.json (Claude/Cursor shape: { \"mcpServers\": { … } })." +
           "\nUse /mcp status in the REPL for connectivity." +

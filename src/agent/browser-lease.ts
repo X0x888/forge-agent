@@ -578,16 +578,56 @@ export function rootSessionIdFromMeta(meta: {
   return safeSessionId(String(meta.id || "anon"));
 }
 
-/**
- * Harness-owned look profile under the session. Planner/Reviewer reuse this
- * UDD instead of mkdir /tmp/<project>-cN-*.
- */
-export function ensureSessionLookProfile(
+const LOOK_GEN_FILE = "look-gen.json";
+
+export function sessionLookProfileDir(rootSessionId: string, generation = 1): string {
+  const root = safeSessionId(rootSessionId);
+  const name = generation <= 1 ? "look" : `look-${generation}`;
+  return path.join(forgeHome(), "sessions", root, "browsers", name);
+}
+
+function lookGenPath(rootSessionId: string): string {
+  return path.join(
+    forgeHome(),
+    "sessions",
+    safeSessionId(rootSessionId),
+    "browsers",
+    LOOK_GEN_FILE,
+  );
+}
+
+export function currentLookGeneration(rootSessionId: string): number {
+  try {
+    const raw = JSON.parse(fs.readFileSync(lookGenPath(rootSessionId), "utf8")) as {
+      generation?: unknown;
+    };
+    const n = Number(raw.generation);
+    if (Number.isInteger(n) && n >= 1) return n;
+  } catch {
+    /* missing is generation 1 */
+  }
+  return 1;
+}
+
+function writeLookGeneration(rootSessionId: string, generation: number): void {
+  const dir = path.dirname(lookGenPath(rootSessionId));
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      lookGenPath(rootSessionId),
+      JSON.stringify({ generation, at: nowIso() }) + "\n",
+    );
+  } catch {
+    /* */
+  }
+}
+
+function ensureLookUdd(
   sessionId: string,
-  opts?: { workspace?: string; rootSessionId?: string },
+  root: string,
+  udd: string,
+  opts?: { workspace?: string },
 ): string {
-  const root = safeSessionId(opts?.rootSessionId || sessionId);
-  const udd = path.join(forgeHome(), "sessions", root, "browsers", "look");
   try {
     fs.mkdirSync(udd, { recursive: true });
   } catch {
@@ -602,6 +642,44 @@ export function ensureSessionLookProfile(
     kind: "browser",
   });
   return udd;
+}
+
+/**
+ * Harness-owned look profile under the session. Planner/Reviewer reuse this
+ * UDD instead of mkdir /tmp/<project>-cN-*.
+ */
+export function ensureSessionLookProfile(
+  sessionId: string,
+  opts?: { workspace?: string; rootSessionId?: string },
+): string {
+  const root = safeSessionId(opts?.rootSessionId || sessionId);
+  const gen = currentLookGeneration(root);
+  return ensureLookUdd(sessionId, root, sessionLookProfileDir(root, gen), opts);
+}
+
+/**
+ * Next look-N after a dead Playwright child. Kills leftover Chrome on the
+ * previous UDD so SingletonLock cannot kill the reconnect.
+ */
+export function rotateSessionLookProfile(
+  sessionId: string,
+  opts?: { workspace?: string; rootSessionId?: string },
+): string {
+  const root = safeSessionId(opts?.rootSessionId || sessionId);
+  const cur = currentLookGeneration(root);
+  const curUdd = sessionLookProfileDir(root, cur);
+  try {
+    killOrphanAgentBrowsers(opts?.workspace, {
+      sessionId: root,
+      requirePath: [curUdd],
+      escalate: true,
+    });
+  } catch {
+    /* reap is best-effort */
+  }
+  const next = cur + 1;
+  writeLookGeneration(root, next);
+  return ensureLookUdd(sessionId, root, sessionLookProfileDir(root, next), opts);
 }
 
 /** Godot / `open -a Godot` — not Chrome, still a session-owned GUI. */

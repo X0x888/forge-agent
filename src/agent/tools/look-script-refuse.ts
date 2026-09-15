@@ -31,6 +31,7 @@ export function lookScriptWriteRefuse(
 function refuseLine(rel: string): string {
   return (
     `write refused: ${rel} is a Chrome/CDP look script. ` +
-    `Use call_mcp playwright (or the leased --user-data-dir) — do not write looks/*.mjs.`
+    `Use call_mcp playwright or look_native screenshot (harness Chrome of the look server). ` +
+    `Do not write looks/*.mjs.`
   );
 }

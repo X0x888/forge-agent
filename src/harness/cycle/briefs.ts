@@ -37,7 +37,7 @@ import type { CycleRecord, CycleState, ReviewVerdict } from "./state.js";
 
 /** Role brief only — never message[0]. Shown when the look path cannot use MCP. */
 export const LOOK_PATH_DOWN_LINE =
-  "Look path: playwright down — use bash/browser lease; do not spend the scout waiting on MCP. Do not write looks/*.mjs Chrome/CDP scripts.";
+  "Look path: playwright down — look_native screenshot captures the harness Chrome of the look server. Do not spend the scout waiting on MCP. Do not write looks/*.mjs. Do not grab the TUI.";
 
 function lookPathLines(opts?: {
   lookProfileUdd?: string;

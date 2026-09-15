@@ -15,7 +15,7 @@ import { isFalsy, isTruthy } from "./bool.js";
 import { forgeHome } from "./fs.js";
 import { lookPortForSession } from "./look-port.js";
 import { pidAlive } from "./process-tree.js";
-import { playwrightLookApplies } from "./product-kind.js";
+import { extensionLookDir, playwrightLookApplies } from "./product-kind.js";
 
 export interface LookServerSpawn {
   command: string;
@@ -82,6 +82,14 @@ export function lookServerSpawnArgs(
     return {
       command: "npx",
       args: ["--yes", "vite", ...portArgs],
+      cwd: workspace,
+    };
+  }
+  const ext = extensionLookDir(workspace);
+  if (ext) {
+    return {
+      command: "python3",
+      args: ["-m", "http.server", String(port), "--bind", "127.0.0.1", "--directory", ext],
       cwd: workspace,
     };
   }

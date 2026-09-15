@@ -10,6 +10,7 @@ import {
   lookServerUrl,
 } from "../src/util/look-server.js";
 import { lookPortForSession } from "../src/util/look-port.js";
+import { extensionLookDir } from "../src/util/product-kind.js";
 
 describe("look-server", () => {
   it("lookServerUrl uses the session look port", () => {
@@ -36,6 +37,31 @@ describe("look-server", () => {
     } finally {
       fs.rmSync(web, { recursive: true, force: true });
       fs.rmSync(native, { recursive: true, force: true });
+    }
+  });
+
+  it("serves an unpacked extension from public, not leftover dist", () => {
+    const ext = fs.mkdtempSync(path.join(os.tmpdir(), "forge-look-ext-"));
+    try {
+      fs.mkdirSync(path.join(ext, "extension", "public"), { recursive: true });
+      fs.mkdirSync(path.join(ext, "extension", "dist"), { recursive: true });
+      fs.writeFileSync(
+        path.join(ext, "extension", "manifest.json"),
+        JSON.stringify({ action: {}, name: "pet" }),
+      );
+      fs.writeFileSync(path.join(ext, "extension", "public", "popup.html"), "<h1>src</h1>\n");
+      fs.writeFileSync(path.join(ext, "extension", "dist", "popup.html"), "<h1>stale</h1>\n");
+      const dir = extensionLookDir(ext);
+      assert.ok(dir);
+      assert.match(dir!, /public$/);
+      const spec = lookServerSpawnArgs(ext, 5322);
+      assert.ok(spec);
+      assert.equal(spec!.command, "python3");
+      assert.ok(spec!.args.includes("--directory"));
+      assert.ok(spec!.args.some((a) => a.includes("public")));
+      assert.ok(!spec!.args.some((a) => /dist$/.test(a)));
+    } finally {
+      fs.rmSync(ext, { recursive: true, force: true });
     }
   });
 

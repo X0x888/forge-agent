@@ -6,10 +6,13 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { sessionLooksDir } from "../../util/git-auto-commit.js";
+import { captureLookChromePng } from "../../util/look-chrome.js";
 import {
   classifyLookLimit,
   lookLimitReceipt,
 } from "../../util/look-infra.js";
+import { lookServerUrl } from "../../util/look-server.js";
+import { playwrightLookApplies } from "../../util/product-kind.js";
 import type { ToolContext, ToolResult } from "./types.js";
 
 function isNotFound(err: unknown): boolean {
@@ -303,10 +306,28 @@ export async function toolLookNative(
 
   const sess = needSession(ctx);
   if (!sess.ok) return sess.result;
-  const darwin = needDarwin();
-  if (darwin) return darwin;
   const destRel = String(args.dest ?? args.path ?? `native-${Date.now()}.png`);
   const dest = looksDest(sess.id, destRel, ".png");
+  const workspace = ctx.workspace || process.cwd();
+  if (playwrightLookApplies(workspace) && !String(args.window ?? "").trim()) {
+    const url = lookServerUrl(sess.id);
+    const shot = captureLookChromePng({ dest, url, sessionId: sess.id });
+    if (shot.ok) {
+      return {
+        output:
+          `look_native: wrote ${shot.dest} (harness Chrome of ${url}). Read that PNG (vision). ` +
+          `Do not write looks/*.mjs. Do not grab the TUI.`,
+      };
+    }
+    return {
+      output:
+        `look_native: harness Chrome did not sit ${url} (${shot.error || "failed"}). ` +
+        `Do not screencapture the TUI. call_mcp playwright if it is ready, or the product CLI.`,
+      isError: true,
+    };
+  }
+  const darwin = needDarwin();
+  if (darwin) return darwin;
   const window = args.window != null ? String(args.window).trim() : "";
   return screenshotWindow(dest, window);
 }

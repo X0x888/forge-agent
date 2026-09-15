@@ -74,6 +74,7 @@ function fakeRuntime(cwd: string, o: FakeOpts = {}) {
   const runOpts: Array<{ role: CycleRole; documentOnly?: boolean; maxTurns?: number }> = [];
   let commits = 0;
   let sessions = 0;
+  const restores: string[] = [];
   const rt: CycleRuntime = {
     workspace: cwd,
     async runRole(role: CycleRole, brief, opts) {
@@ -137,11 +138,15 @@ function fakeRuntime(cwd: string, o: FakeOpts = {}) {
     gitLogSince: () => "",
     gitStatus: () => "clean",
     gitIsClean: () => true,
+    gitRestoreTo: (head) => {
+      restores.push(head ?? "");
+      return { restored: true, files: 1 };
+    },
     userMessagesSince: () => [],
     guidelineSurvey: () => "AGENTS.md fresh",
     projectChecks: () => ["npm test"],
   };
-  return { rt, calls, todos, admitted, briefs, remembered, runOpts };
+  return { rt, calls, todos, admitted, briefs, remembered, runOpts, restores };
 }
 
 const facts = (o: Partial<StopFacts> = {}): StopFacts => ({
@@ -837,7 +842,7 @@ describe("cycle orchestrator", () => {
   it("fix rounds past the cap skip the cycle and plan other work", async () => {
     const sid = "orch-fixcap";
     armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test" });
-    const { rt, calls } = fakeRuntime(cwd, {
+    const { rt, calls, restores } = fakeRuntime(cwd, {
       reviewer: [REVIEW_OK],
       checkPasses: [false, false, false],
       planner: [PLAN_OK(2)],
@@ -852,6 +857,7 @@ describe("cycle orchestrator", () => {
     assert.match(r?.committed?.skipped ?? "", /stayed red after 2 fix round/);
     assert.ok(!calls.some((c) => c.startsWith("commit:")));
     assert.ok(calls.some((c) => c.startsWith("role:planner")));
+    assert.ok(restores.length >= 1, "unpaid skip restores the tree so the next cycle is real work");
   });
 
   it("stuck in EXECUTE routes to the Reviewer instead of releasing", async () => {

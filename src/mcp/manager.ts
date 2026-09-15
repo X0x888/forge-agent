@@ -6,8 +6,15 @@ import { boundToolOutput } from "../agent/tools/truncate.js";
 import { cleanupAgentBrowserScratch } from "../util/look-cleanup.js";
 import { loadMcpConfig, toolAllowedByFilters, type LoadedMcpConfig } from "./config.js";
 import { McpClient, mcpInitTimeoutMs } from "./client.js";
-import { bindPlaywrightSessionProfile, isPlaywrightMcp } from "./defaults.js";
-import { ensureSessionLookProfile } from "../agent/browser-lease.js";
+import {
+  bindPlaywrightSessionProfile,
+  isPlaywrightMcp,
+  rebindPlaywrightUserDataDir,
+} from "./defaults.js";
+import {
+  ensureSessionLookProfile,
+  rotateSessionLookProfile,
+} from "../agent/browser-lease.js";
 import { playwrightLookApplies } from "../util/product-kind.js";
 import {
   isMcpToolReadOnly,
@@ -82,6 +89,7 @@ export class McpManager {
         bound = bindPlaywrightSessionProfile(cfg, udd);
         this.config.servers[name] = bound;
       }
+      const sessionId = this.sessionId;
       this.clients.set(
         name,
         new McpClient({
@@ -89,6 +97,21 @@ export class McpManager {
           config: bound,
           workspace: this.workspace,
           signal: this.signal,
+          onStdioDead:
+            sessionId && isPlaywrightMcp(bound, name)
+              ? () => {
+                  const udd = rotateSessionLookProfile(sessionId, {
+                    workspace: this.workspace,
+                    rootSessionId: sessionId,
+                  });
+                  const next = rebindPlaywrightUserDataDir(
+                    this.config.servers[name] ?? bound,
+                    udd,
+                  );
+                  this.config.servers[name] = next;
+                  return next;
+                }
+              : undefined,
         }),
       );
     }

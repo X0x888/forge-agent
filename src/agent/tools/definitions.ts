@@ -454,7 +454,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     function: {
       name: "look_native",
       description:
-        "Native look: screenshot, HID click, simctl io, Godot --write-movie, or classify TCC/LS115. Web: call_mcp playwright. Do not retry osascript after limited.",
+        "Native look: screenshot, HID click, simctl io, Godot --write-movie, or classify TCC/LS115. Web: call_mcp playwright when ready; if Playwright is down, screenshot captures harness Chrome of the look server (never the TUI, never looks/*.mjs). Do not retry osascript after limited.",
       parameters: {
         type: "object",
         properties: {

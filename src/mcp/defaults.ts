@@ -219,6 +219,24 @@ export function bindPlaywrightSessionProfile(
   });
 }
 
+/** Swap the session UDD after a dead child (look-N). Strips the previous dir first. */
+export function rebindPlaywrightUserDataDir(
+  cfg: McpServerConfig,
+  udd: string,
+): McpServerConfig {
+  const stripped: string[] = [];
+  const args = [...(cfg.args || [])];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--user-data-dir") {
+      i += 1;
+      continue;
+    }
+    if (args[i]?.startsWith("--user-data-dir=")) continue;
+    stripped.push(args[i]!);
+  }
+  return bindPlaywrightSessionProfile({ ...cfg, args: stripped }, udd);
+}
+
 /** Human-readable blurb for /mcp status and doctor. */
 export function formatDefaultMcpBlurb(): string {
   return (

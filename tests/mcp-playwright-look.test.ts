@@ -13,6 +13,7 @@ import { executeTool } from "../src/agent/tools/index.js";
 import {
   bindPlaywrightSessionProfile,
   defaultMcpServers,
+  rebindPlaywrightUserDataDir,
 } from "../src/mcp/defaults.js";
 
 describe("search_mcp empty vs playwright-down", () => {
@@ -102,6 +103,15 @@ describe("search_mcp empty vs playwright-down", () => {
     assert.ok(blob.includes("--user-data-dir"));
     assert.ok(!/\s--isolated(\s|$)/.test(` ${blob} `));
     assert.equal(messy.env?.PLAYWRIGHT_MCP_ISOLATED, "0");
+  });
+
+  it("rebindPlaywrightUserDataDir swaps the session UDD", () => {
+    const first = bindPlaywrightSessionProfile(defaultMcpServers().playwright, "/tmp/look-1");
+    const second = rebindPlaywrightUserDataDir(first, "/tmp/look-2");
+    const blob = (second.args || []).join(" ");
+    assert.match(blob, /--user-data-dir \/tmp\/look-2/);
+    assert.doesNotMatch(blob, /look-1/);
+    assert.ok(!/\s--isolated(\s|$)/.test(` ${blob} `));
   });
 
   it("default recipe pins a versioned @playwright/mcp spec", () => {

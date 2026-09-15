@@ -172,6 +172,39 @@ function gitQuiet(args: string[], cwd: string, timeoutMs = 8_000): string | null
   }
 }
 
+export interface RestoreTreeResult {
+  restored: boolean;
+  files: number;
+  error?: string;
+}
+
+/**
+ * Drop unpaid mill edits so the next cycle sits a clean tree.
+ * `FORGE_ULW_RESTORE_UNPAID=0` off. Never sits the mill down.
+ */
+export function restoreWorkingTreeTo(
+  cwd: string,
+  head: string | null,
+): RestoreTreeResult {
+  if (isFalsy(process.env.FORGE_ULW_RESTORE_UNPAID)) {
+    return { restored: false, files: 0, error: "restore unpaid off" };
+  }
+  const sha = String(head || "").trim();
+  if (!/^[0-9a-f]{40}$/i.test(sha)) return { restored: false, files: 0 };
+  const root = findGitRoot(cwd);
+  if (!root) return { restored: false, files: 0, error: "not a git repository" };
+  const names = cycleChangedPaths(root, sha);
+  const files = names.filter((n) => n && n !== "?");
+  if (!files.length) return { restored: false, files: 0 };
+  try {
+    git(["reset", "--hard", sha], root, 15_000);
+    git(["clean", "-fd", "-e", "node_modules", "-e", ".forge"], root, 15_000);
+    return { restored: true, files: files.length };
+  } catch (err) {
+    return { restored: false, files: 0, error: formatGitExecError(err) };
+  }
+}
+
 export function formatGitExecError(err: unknown): string {
   const e = err as { stderr?: string | Buffer; message?: string };
   const stderr = String(e.stderr || "")

@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { McpServerConfig } from "../src/mcp/types.js";
-import { managedBrowserArgs } from "../src/mcp/playwright-browser.js";
+import { managedBrowserArgs, managedChromiumExecutable } from "../src/mcp/playwright-browser.js";
 import {
   decoratePlaywrightServer,
   defaultMcpServers,
@@ -87,6 +87,10 @@ describe("Playwright MCP browser on macOS", () => {
       "--executable-path",
       newest,
     ]);
+    assert.equal(
+      managedChromiumExecutable({ ...mac(root), headless: true }),
+      newest,
+    );
   });
 
   it("finds the older chrome-mac/Chromium.app layout", () => {

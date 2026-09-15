@@ -71,9 +71,32 @@ export function managedBrowserArgs(
     args.includes("--headless") || isTruthy(env.PLAYWRIGHT_MCP_HEADLESS);
   const root = opts.browsersRoot ?? browsersRoot(env);
   const exe = root
-    ? findManagedChromium(root, headless, opts.arch ?? process.arch)
+    ? findManagedChromium(
+        root,
+        headless,
+        opts.arch ?? process.arch,
+        opts.platform ?? process.platform,
+      )
     : undefined;
   return exe ? ["--executable-path", exe] : ["--browser", "chromium"];
+}
+
+/**
+ * Newest complete Playwright Chromium on this machine. Used by the MCP
+ * decorator and by the harness look Chrome when MCP is down. Never Chrome.app.
+ */
+export function managedChromiumExecutable(
+  opts: ManagedBrowserOptions & { headless?: boolean } = {},
+): string | undefined {
+  const env: Env = { ...(opts.env ?? process.env) };
+  const root = opts.browsersRoot ?? browsersRoot(env);
+  if (!root) return undefined;
+  return findManagedChromium(
+    root,
+    opts.headless ?? true,
+    opts.arch ?? process.arch,
+    opts.platform ?? process.platform,
+  );
 }
 
 function browserChosen(args: string[], env: Env): boolean {
@@ -99,16 +122,9 @@ function findManagedChromium(
   root: string,
   headless: boolean,
   arch: string,
+  platform: NodeJS.Platform = process.platform,
 ): string | undefined {
-  const mac = arch === "arm64" ? "mac-arm64" : "mac-x64";
-  const full = [`chrome-${mac}`, "chrome-mac"].flatMap((d) => [
-    path.join(d, CFT_APP),
-    path.join(d, CHROMIUM_APP),
-  ]);
-  const shell = [
-    `chrome-headless-shell-${mac}/chrome-headless-shell`,
-    "chrome-mac/headless_shell",
-  ];
+  const { full, shell } = chromiumRels(platform, arch);
   const kinds: Array<[string, string[]]> = [["chromium", full]];
   if (headless) kinds.push(["chromium_headless_shell", shell]);
   for (const [prefix, rels] of kinds) {
@@ -120,6 +136,33 @@ function findManagedChromium(
     }
   }
   return undefined;
+}
+
+function chromiumRels(
+  platform: NodeJS.Platform,
+  arch: string,
+): { full: string[]; shell: string[] } {
+  if (platform === "darwin") {
+    const mac = arch === "arm64" ? "mac-arm64" : "mac-x64";
+    return {
+      full: [`chrome-${mac}`, "chrome-mac"].flatMap((d) => [
+        path.join(d, CFT_APP),
+        path.join(d, CHROMIUM_APP),
+      ]),
+      shell: [
+        `chrome-headless-shell-${mac}/chrome-headless-shell`,
+        "chrome-mac/headless_shell",
+      ],
+    };
+  }
+  if (platform === "linux") {
+    const linux = arch === "arm64" ? "linux-arm64" : "linux64";
+    return {
+      full: [`chrome-${linux}/chrome`, `chromium-${linux}/chrome`],
+      shell: [`chrome-headless-shell-${linux}/chrome-headless-shell`],
+    };
+  }
+  return { full: [], shell: [] };
 }
 
 /** `<root>/<prefix>-<rev>` dirs Playwright finished installing, newest first. */

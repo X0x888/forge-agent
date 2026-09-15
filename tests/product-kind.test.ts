@@ -13,6 +13,7 @@ import {
   categorySkillFor,
   categorySkillForKind,
   detectProductKind,
+  extensionLookDir,
   playwrightLookApplies,
   ulwRoleInlineSkills,
   type ProductKind,
@@ -73,6 +74,17 @@ describe("detectProductKind", () => {
         assert.equal(categorySkillFor(d), "forge-shape");
       },
     );
+  });
+
+  it("browser extension look dir prefers public over leftover dist", () => {
+    withRepo("forge-kind-ext-", (d) => {
+      write(d, "extension/manifest.json", JSON.stringify({ action: {}, name: "pet" }));
+      write(d, "extension/public/popup.html", "<h1>src</h1>\n");
+      write(d, "extension/dist/popup.html", "<h1>stale</h1>\n");
+    }, (d) => {
+      assert.equal(playwrightLookApplies(d), true);
+      assert.match(extensionLookDir(d) || "", /public$/);
+    });
   });
 
   it("vite.config.ts → web", () => {

@@ -51,7 +51,7 @@ describe("lookScriptWriteRefuse", () => {
       ctx,
     );
     assert.equal(w.isError, true);
-    assert.match(w.output, /do not write looks\/\*\.mjs/);
+    assert.match(w.output, /Do not write looks\/\*\.mjs/i);
     assert.equal(fs.existsSync(path.join(ws, "looks/chrome-cdp.mjs")), false);
 
     fs.mkdirSync(path.join(ws, "looks"), { recursive: true });

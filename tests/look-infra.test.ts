@@ -6,6 +6,9 @@ import {
 } from "../src/util/look-infra.js";
 import { lookPortForSession, LOOK_PORT_BASE, LOOK_PORT_SPAN } from "../src/util/look-port.js";
 import { executeTool } from "../src/agent/tools/index.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 describe("classifyLookLimit", () => {
   it("maps TCC -10004, LS 115, EPERM, display", () => {
@@ -53,6 +56,24 @@ describe("look_native classify", () => {
     assert.equal(r.isError, false);
     assert.match(r.output, /limited/);
     assert.match(r.output, /TCC -10004/);
+  });
+
+  it("web screenshot does not grab the TUI when harness Chrome is off", async () => {
+    const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-look-web-shot-"));
+    try {
+      fs.writeFileSync(path.join(ws, "vite.config.ts"), "export default {}\n");
+      fs.writeFileSync(path.join(ws, "index.html"), "<h1>x</h1>\n");
+      const r = await executeTool(
+        "look_native",
+        JSON.stringify({ action: "screenshot" }),
+        { workspace: ws, sessionId: "look-web-shot" },
+      );
+      assert.equal(r.isError, true);
+      assert.match(r.output, /harness Chrome|look chrome disabled|Do not screencapture the TUI/i);
+      assert.doesNotMatch(r.output, /screencapture -x/);
+    } finally {
+      fs.rmSync(ws, { recursive: true, force: true });
+    }
   });
 
   it("click requires x,y; unknown action still screenshots on darwin only", async () => {

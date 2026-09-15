@@ -25,8 +25,10 @@ import { appendMemoryRecord } from "../decision-memory.js";
 import {
   cycleDiffIsDocsOnly,
   cycleHasSubstanceDiff,
+  restoreWorkingTreeTo,
   type AutoCommitResult,
 } from "../../util/git-auto-commit.js";
+import { ensureLookChrome } from "../../util/look-chrome.js";
 import { appendRoleRunLine } from "../../session/subagent-usage.js";
 import {
   architectureHoldMessage,
@@ -173,6 +175,8 @@ export interface CycleRuntime {
   gitStatus(): string;
   /** Exact repository-root cleanliness, including untracked files; null if unknown. */
   gitIsClean?(): boolean | null;
+  /** Drop unpaid mill edits so the next cycle sits a clean tree. Mill continues. */
+  gitRestoreTo?(head: string | null): { restored: boolean; files: number; error?: string };
   userMessagesSince(iso: string): string[];
   guidelineSurvey(): string;
   projectChecks(): string[];
@@ -1335,6 +1339,30 @@ async function verifyCycle(
   return { run, verdict };
 }
 
+/** Unpaid cycle: restore the tree, then keep planning. Never sits the mill down. */
+function restoreUnpaidCycle(
+  s: CycleState,
+  rt: CycleRuntime,
+  committed: CycleStopOutcome["committed"],
+): void {
+  if (committed?.sha) return;
+  if (isAutoCommitOffSkip(committed?.skipped)) return;
+  const head = s.cycleStartHead;
+  if (!head) return;
+  const result = rt.gitRestoreTo
+    ? rt.gitRestoreTo(head)
+    : process.env.NODE_TEST_CONTEXT
+      ? { restored: false, files: 0 }
+      : restoreWorkingTreeTo(rt.workspace, head);
+  if (result.restored) {
+    rt.log?.(
+      `ULW cycle ${s.cycle} restored ${result.files} unpaid path(s) to ${head.slice(0, 7)} — mill continues`,
+    );
+  } else if (result.error && result.error !== "restore unpaid off") {
+    rt.log?.(`ULW cycle ${s.cycle} restore unpaid skipped: ${result.error}`);
+  }
+}
+
 /** After a cycle closes (committed or not): /cycle 0, max_cycles, or the next plan. */
 async function advanceAfterCycle(
   s: CycleState,
@@ -1353,6 +1381,7 @@ async function advanceAfterCycle(
     noteSynthStreak(s, committed);
   }
   saveCycleState(s);
+  restoreUnpaidCycle(s, rt, committed);
   const stop = stopBeforeAdmittingNextPlan(s);
   if (stop) return { ...stop, cycleClosed: true, committed };
   const wall = releaseIfNoCommitWall(s);
@@ -1735,6 +1764,15 @@ async function prewarmLookPath(
         workspace: ctx.workspace,
         sessionId: ctx.sessionId,
         waitMs,
+      }).then(
+        () => {},
+        () => {},
+      ),
+    );
+    jobs.push(
+      ensureLookChrome({
+        workspace: ctx.workspace,
+        sessionId: ctx.sessionId,
       }).then(
         () => {},
         () => {},

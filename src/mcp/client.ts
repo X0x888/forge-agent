@@ -29,6 +29,8 @@ export interface McpClientOptions {
   config: McpServerConfig;
   workspace: string;
   signal?: AbortSignal;
+  /** Fresh Playwright args after a dead stdio child (rotated UDD). */
+  onStdioDead?: () => McpServerConfig | undefined;
 }
 
 export class McpClient {
@@ -51,6 +53,7 @@ export class McpClient {
   private initPromise: Promise<void> | null = null;
   /** One retry when Playwright rejects isolated + user-data-dir. */
   private isolatedRetry = false;
+  private readonly onStdioDead?: () => McpServerConfig | undefined;
 
   constructor(opts: McpClientOptions) {
     this.name = opts.name;
@@ -58,6 +61,7 @@ export class McpClient {
     this.workspace = opts.workspace;
     this.signal = opts.signal;
     this.transport = opts.config.url ? "http" : "stdio";
+    this.onStdioDead = opts.onStdioDead;
   }
 
   getStatus(): {
@@ -67,16 +71,21 @@ export class McpClient {
     promptCount: number;
     error?: string;
   } {
+    const state = this.liveState();
+    const dead = state === "error" && this.state === "ready";
     return {
-      state: this.state,
-      toolCount: this.tools.length,
-      resourceCount: this.resources.length,
-      promptCount: this.prompts.length,
-      error: this.lastError,
+      state,
+      toolCount: state === "ready" ? this.tools.length : 0,
+      resourceCount: state === "ready" ? this.resources.length : 0,
+      promptCount: state === "ready" ? this.prompts.length : 0,
+      error: dead
+        ? this.lastError || this.rpc?.lastStderr || "stdio child dead"
+        : this.lastError,
     };
   }
 
   getTools(): McpToolDef[] {
+    if (this.liveState() !== "ready") return [];
     return this.tools.slice();
   }
 
@@ -91,9 +100,11 @@ export class McpClient {
   async ensureReady(): Promise<void> {
     if (this.state === "ready" && this.stdioAlive()) return;
     if (this.rpc && !this.rpc.alive) {
-      this.state = "idle";
+      this.markStdioDead();
       await this.rpc.dispose().catch(() => {});
       this.rpc = null;
+      const next = this.onStdioDead?.();
+      if (next) this.cfg = next;
     }
     if (this.state === "ready") return;
     if (this.initPromise) return this.initPromise;
@@ -106,6 +117,23 @@ export class McpClient {
   private stdioAlive(): boolean {
     if (this.transport === "http") return this.state === "ready";
     return Boolean(this.rpc?.alive);
+  }
+
+  private liveState(): "idle" | "connecting" | "ready" | "error" {
+    if (this.transport !== "http" && this.state === "ready" && !this.stdioAlive()) {
+      return "error";
+    }
+    return this.state;
+  }
+
+  private markStdioDead(err?: unknown): void {
+    const msg =
+      err instanceof Error
+        ? err.message
+        : this.rpc?.lastStderr || "stdio child dead";
+    this.lastError = msg;
+    this.tools = [];
+    this.state = "idle";
   }
 
   async listTools(force = false): Promise<McpToolDef[]> {
@@ -133,11 +161,13 @@ export class McpClient {
       return await this.callToolOnce(toolName, args);
     } catch (err) {
       if (this.transport !== "http" && isStdioDead(err)) {
-        this.state = "idle";
+        this.markStdioDead(err);
         if (this.rpc) {
           await this.rpc.dispose().catch(() => {});
           this.rpc = null;
         }
+        const next = this.onStdioDead?.();
+        if (next) this.cfg = next;
         try {
           await this.ensureReady();
           return await this.callToolOnce(toolName, args);

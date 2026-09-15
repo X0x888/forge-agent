@@ -124,6 +124,9 @@ export class JsonRpcStdioClient {
       const s = chunk.toString("utf8");
       this.stderrTail = (this.stderrTail + s).slice(-4000);
     });
+    this.child.stdin.on("error", (err) => {
+      this.failAll(err);
+    });
     this.child.on("error", (err) => {
       this.failAll(err);
     });
@@ -225,7 +228,8 @@ export class JsonRpcStdioClient {
   }
 
   private write(msg: JsonRpcMessage): void {
-    if (!this.child?.stdin.writable) {
+    const stdin = this.child?.stdin;
+    if (!stdin || !stdin.writable || stdin.destroyed) {
       throw new Error(`${this.label}: stdin not writable`);
     }
     const body = Buffer.from(JSON.stringify(msg), "utf8");
@@ -236,7 +240,9 @@ export class JsonRpcStdioClient {
     // Trailing newline: Playwright MCP's SDK is NDJSON (no Content-Length).
     // A body with no `\n` never completes a line, so `initialize` hangs.
     // LSP/Content-Length readers take `body.length` bytes and leave the `\n`.
-    this.child.stdin.write(Buffer.concat([header, body, Buffer.from("\n")]));
+    stdin.write(Buffer.concat([header, body, Buffer.from("\n")]), (err) => {
+      if (err) this.failAll(err);
+    });
   }
 
   private onData(chunk: Buffer): void {

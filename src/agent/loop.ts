@@ -180,6 +180,7 @@ import {
   autoCommitStamp,
   commitDirtyTree,
   formatLeftUnstagedAdmit,
+  restoreWorkingTreeTo,
 } from "../util/git-auto-commit.js";
 import { reapSessionBrowsers } from "./browser-lease.js";
 import { cleanupAgentBrowserScratch } from "../util/look-cleanup.js";
@@ -1949,6 +1950,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           gitLogSince: (head) => gitLogSince(workspace, head),
           gitStatus: () => gitStatusShort(workspace),
           gitIsClean: () => gitIsClean(workspace),
+          gitRestoreTo: (head) => restoreWorkingTreeTo(workspace, head),
           userMessagesSince: (iso) => userMessagesSince(session, iso),
           guidelineSurvey: () => {
             const s = surveyGuidelines(workspace);
