@@ -146,7 +146,8 @@ describe("context admit (OpenCode-inspired)", () => {
     assert.match(msg1!, /cycle=1 phase=execute/);
     assert.match(msg1!, /improve the code/);
     assert.doesNotMatch(msg1!, /in good shape/);
-    assert.match(msg1!, /explicit mandate/);
+    assert.match(msg1!, /sitting the product/);
+    assert.match(msg1!, /still-open mandate/);
     assert.match(msg1!, /no-progress/);
     assert.match(msg1!, /blocked/);
 

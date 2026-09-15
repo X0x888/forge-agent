@@ -5,8 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { HookRunner } from "../src/harness/hooks.js";
 import { runStopGuard } from "../src/harness/stop-guard.js";
-import { armGoal } from "../src/harness/goal.js";
+import { armGoal, loadGoal } from "../src/harness/goal.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
+import { armWithPlan } from "./helpers/cycle-arm.js";
 
 describe("stop-guard composition", () => {
   it("blocks on active goal without attestation", async () => {
@@ -63,6 +64,38 @@ describe("stop-guard composition", () => {
     });
     assert.equal(r.allowStop, false);
     assert.match(r.reason || "", /open todo/i);
+  });
+
+  it("armed ULW owns Stop — goal stuck-wall does not sit the mill down", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sg-ulw-goal-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "sg-ulw-goal";
+    armWithPlan({ sessionId: sid, cwd: tmp, mandate: "ship the widget" });
+    armGoal(sid, "don't stop until the widget ships", "auto");
+    const config = {
+      ...DEFAULT_CONFIG,
+      blockingStopHooks: true,
+      compatClaudeHooks: false,
+      compatCursorHooks: false,
+      goal: { ...DEFAULT_CONFIG.goal, enabled: true, stuckThreshold: 3 },
+    };
+    const hooks = new HookRunner(config, tmp);
+    let last;
+    for (let i = 0; i < 3; i++) {
+      last = await runStopGuard({
+        config,
+        hooks,
+        ctx: { sessionId: sid, cwd: tmp, workspaceRoot: tmp },
+        ultrawork: true,
+        openTodoCount: 1,
+        editCount: 0,
+        lastAssistantMessage: "still thinking.",
+      });
+    }
+    assert.equal(last!.allowStop, false, "ULW must keep blocking Stop");
+    assert.equal(last!.goal?.stuckReleased, undefined);
+    assert.equal(loadGoal(sid)?.status, "active");
+    assert.notEqual(last!.ulw?.released, true);
   });
 
   it("allows stop when goal attested", async () => {

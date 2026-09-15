@@ -217,6 +217,19 @@ export function formatGoalStatus(g: GoalState | null): string {
   return lines.join("\n");
 }
 
+/** True when `/goal` is armed and still driving Stop. */
+export function goalIsDriving(sessionId: string): boolean {
+  const g = loadGoal(sessionId);
+  return Boolean(
+    g &&
+      g.objective &&
+      !g.paused &&
+      g.status !== "achieved" &&
+      g.status !== "cleared" &&
+      g.status !== "stuck",
+  );
+}
+
 /**
  * Called at Stop. Returns whether to block the agent from finishing.
  */

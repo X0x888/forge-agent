@@ -23,6 +23,11 @@ export function noProgressCap(): number {
   return envPositiveInt("FORGE_ULW_NO_PROGRESS_CAP", 0) || 3;
 }
 
+/** An explicit mandate is still the job — empty-work walls must not abandon it. */
+export function cycleHasMandate(s: Pick<CycleState, "mandate">): boolean {
+  return s.mandate != null && String(s.mandate).trim() !== "";
+}
+
 export type CyclePhase =
   | "plan"
   | "execute"

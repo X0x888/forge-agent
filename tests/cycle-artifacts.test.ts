@@ -14,6 +14,7 @@ import {
   planLookedContradictsScout,
   classifyLookKind,
   lookKindAllowsSurfaceCommit,
+  lookedUsedTheProduct,
   architectureClassMustCollapse,
   continueWorthHold,
   worthIsNo,
@@ -700,6 +701,18 @@ describe("look infra vs could-not-look", () => {
     );
     assert.equal(lookCouldNotLook("could not run; call_mcp failed"), true);
     assert.equal(classifyLookKind("could not run; call_mcp failed"), "failed");
+  });
+
+  it("lookedUsedTheProduct rejects a README sit and accepts a real run", () => {
+    assert.equal(lookedUsedTheProduct(""), false);
+    assert.equal(lookedUsedTheProduct("read the README and the repo layout"), false);
+    assert.equal(lookedUsedTheProduct("inspected the source tree"), false);
+    assert.equal(lookedUsedTheProduct("LOAD A CRATE. WATCH THE CHIPS."), false);
+    assert.equal(lookedUsedTheProduct("ran the binary and npm test"), true);
+    assert.equal(lookedUsedTheProduct("built dist and ran --help; the card shows"), true);
+    assert.equal(lookedUsedTheProduct("opened leftover in Chrome"), true);
+    assert.equal(lookedUsedTheProduct("loopback fixtures returned 200"), true);
+    assert.equal(lookedUsedTheProduct("could not run — mcp:playwright exited"), false);
   });
 
   it("MEMORY.md is not a must-collapse architecture class; a prior Collapse title retires the class", () => {

@@ -5,6 +5,7 @@
 import { worthIsNo } from "./artifacts.js";
 import {
   cycleActive,
+  cycleHasMandate,
   loadCycleState,
   noProgressCap,
   openItems,
@@ -129,13 +130,16 @@ export function formatUlwStatus(s: CycleState | null | undefined): string {
   }
   if (s.verifyCommand) lines.push(`  Verify: ${s.verifyCommand}`);
   const wallCap = noProgressCap();
+  const wallNote = cycleHasMandate(s)
+    ? "mandate open — wall does not release"
+    : "no-progress wall; /cycle 0 stops";
   if (s.directExecuteStreak > 0) {
     lines.push(
-      `  Planner starved → Direct execute ${s.directExecuteStreak}/${wallCap} (no-progress wall; /cycle 0 stops)`,
+      `  Planner starved → Direct execute ${s.directExecuteStreak}/${wallCap} (${wallNote})`,
     );
   }
   if (s.noCommitStreak > 0) {
-    lines.push(`  No commit ${s.noCommitStreak}/${wallCap} (no-progress wall; /cycle 0 stops)`);
+    lines.push(`  No commit ${s.noCommitStreak}/${wallCap} (${wallNote})`);
   }
   const lastCycle = s.cycles[s.cycles.length - 1];
   if (lastCycle?.plannerStatus && lastCycle.plannerStatus !== "planned") {

@@ -615,6 +615,40 @@ export function lookKindAllowsSurfaceCommit(kind: LookKind): boolean {
   return kind === "hid-window" || kind === "cdp-live" || kind === "sim-hid";
 }
 
+/**
+ * Mandate `fulfilled` requires a real sit of the product — running it,
+ * opening it, or a kernel/API receipt. A nonempty Looked: that only read
+ * the README / repo layout is the hello-world escape.
+ */
+const LOOK_RAN_PRODUCT_RE =
+  /\bran(?:\s+the)?\s+(?:binary|cli|game|app|build|server)\b|\bran\s+--help\b|\bbuilt dist\b|\bnode\s+dist\/|\bcargo\s+run\b|\bnpm\s+(?:start|run\s+(?:dev|start|preview))\b|\breturned 200\b/i;
+
+export function lookedUsedTheProduct(looked: string): boolean {
+  const t = (looked || "").trim();
+  if (!t) return false;
+  const sat =
+    LOOK_DID_OPEN_RE.test(t) ||
+    LOOK_RAN_PRODUCT_RE.test(t) ||
+    lookHasKernelEvidence(t);
+  const repoRead =
+    /\bread(?:ing)?\b|\binspected\b|\brepo layout\b|\bsource tree\b/i.test(t);
+  if (repoRead && !sat) return false;
+  if (lookCouldNotLook(t) && !sat) return false;
+  if (lookInfraFailed(t) && !sat) return false;
+  const kind = classifyLookKind(t);
+  if (
+    kind === "hid-window" ||
+    kind === "cdp-live" ||
+    kind === "sim-hid" ||
+    kind === "headless-smoke" ||
+    kind === "kernel-api" ||
+    kind === "cli-help"
+  ) {
+    return true;
+  }
+  return sat;
+}
+
 /** The Reviewer's turn-1 document: what it ran or opened before the diff. Null when there is no Looked: line. */
 export function parseLookArtifact(text: string): { looked: string; couldNotLook: boolean } | null {
   const looked = paragraph(splitSections(text).get("looked"));

@@ -54,7 +54,7 @@ export function armWithPlan(opts: {
   ensureFixtureGitRoot(opts.cwd);
   const s = armCycle({
     sessionId: opts.sessionId,
-    mandate: opts.mandate ?? "add a widget",
+    mandate: opts.mandate === undefined ? "add a widget" : opts.mandate,
     cwd: opts.cwd,
     maxCycles: opts.maxCycles ?? null,
   });

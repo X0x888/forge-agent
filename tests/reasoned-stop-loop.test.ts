@@ -272,12 +272,11 @@ describe("reasoned empty Stop in the agent loop", () => {
     }
   });
 
-  it("consecutive thought-only cap ends the turn without LAST", async () => {
+  it("consecutive thought-only cap ends the turn when no mill is driving", async () => {
     const prevThought = process.env.FORGE_THOUGHT_ONLY_MAX;
     process.env.FORGE_THOUGHT_ONLY_MAX = "2";
     const h = harness();
     h.config.maxTurns = 10;
-    armWithPlan({ sessionId: h.session.meta.id, cwd: tmp, mandate: "Ship the feature.", maxCycles: 10 });
     const provider = scriptedProvider([
       reasoningWall(),
       reasoningWall(),
@@ -288,16 +287,51 @@ describe("reasoned empty Stop in the agent loop", () => {
       const result = await runAgentLoop({
         ...h,
         provider,
-        userMessage: "continue the mandate",
+        userMessage: "what is a cycle?",
         stream: true,
         disableHarnessAutoArm: true,
         maxStopContinues: 2,
       });
       assert.equal(result.releasedOnContinueCap, false);
-      assert.equal(h.session.meta.lastError?.code, "thought_only_cap");
+      assert.notEqual(h.session.meta.lastError?.code, "thought_only_cap");
+      assert.ok(
+        provider.calls <= 2,
+        `no mill: the first thought-only Stop ends the turn, calls=${provider.calls}`,
+      );
+    } finally {
+      if (prevThought === undefined) delete process.env.FORGE_THOUGHT_ONLY_MAX;
+      else process.env.FORGE_THOUGHT_ONLY_MAX = prevThought;
+    }
+  });
+
+  it("thought-only cap keeps driving under ULW instead of sitting the mill down", async () => {
+    const prevThought = process.env.FORGE_THOUGHT_ONLY_MAX;
+    process.env.FORGE_THOUGHT_ONLY_MAX = "2";
+    const h = harness();
+    h.config.maxTurns = 6;
+    armWithPlan({ sessionId: h.session.meta.id, cwd: tmp, mandate: "Ship the feature.", maxCycles: 10 });
+    const provider = scriptedProvider([
+      reasoningWall(),
+      reasoningWall(),
+      reasoningWall(),
+      reasoningWall(),
+      reasoningWall(),
+      reasoningWall(),
+      textReply("Should not need this if maxTurns fires."),
+    ]);
+    try {
+      const result = await runAgentLoop({
+        ...h,
+        provider,
+        userMessage: "continue the mandate",
+        stream: true,
+        disableHarnessAutoArm: true,
+        maxStopContinues: 50,
+      });
+      assert.notEqual(h.session.meta.lastError?.code, "thought_only_cap");
       assert.equal(loadCycleState(h.session.meta.id)?.enabled, true);
-      assert.match(result.finalText, /ULW stays armed/);
-      assert.ok(provider.calls <= 3, `should stop after thought-only cap, calls=${provider.calls}`);
+      assert.equal(result.hitMaxTurns, true);
+      assert.ok(provider.calls >= 6, `mill must keep calling, calls=${provider.calls}`);
     } finally {
       if (prevThought === undefined) delete process.env.FORGE_THOUGHT_ONLY_MAX;
       else process.env.FORGE_THOUGHT_ONLY_MAX = prevThought;

@@ -55,8 +55,11 @@ export interface UserPreferences {
   /**
    * Sticky session spend cap (USD estimate, not a bill). Applied after
    * config.toml, before env / CLI. 0 = unlimited. Missing = do not override.
+   * Ignored unless `budgetExplicit` — leftover `/setup 2` $5 is not a mill fuse.
    */
   maxCostUsd?: number;
+  /** True when the user set the cap via `/budget` / `forge setup budget N`. */
+  budgetExplicit?: boolean;
   /** Dismissed first-day hint ids (no_agents, no_budget, …). */
   dismissedHints?: string[];
   /** Opt-in format-on-write after file tools (OpenCode-inspired). */
@@ -107,12 +110,14 @@ export function loadPreferences(): UserPreferences {
     out.seenProviderModelConfirm = raw.seenProviderModelConfirm;
   }
   if (
+    raw.budgetExplicit === true &&
     typeof raw.maxCostUsd === "number" &&
     Number.isFinite(raw.maxCostUsd) &&
     raw.maxCostUsd >= 0 &&
     raw.maxCostUsd <= 1_000_000
   ) {
     out.maxCostUsd = Math.round(raw.maxCostUsd * 10_000) / 10_000;
+    out.budgetExplicit = true;
   }
   if (Array.isArray(raw.dismissedHints)) {
     const hints = raw.dismissedHints
@@ -165,6 +170,8 @@ export function savePreferences(patch: {
   formatOnWrite?: boolean;
   /** Sticky spend cap. `null` clears the preference. */
   maxCostUsd?: number | null;
+  /** Mark a persisted cap as a user `/budget` (not leftover setup $5). */
+  budgetExplicit?: boolean;
   /** When setting model, also record lastModelByProvider[provider]. */
   modelProvider?: string;
 }): UserPreferences {
@@ -251,6 +258,7 @@ export function savePreferences(patch: {
     if (patch.maxCostUsd !== undefined) {
       if (patch.maxCostUsd === null) {
         delete cur.maxCostUsd;
+        delete cur.budgetExplicit;
       } else if (
         typeof patch.maxCostUsd === "number" &&
         Number.isFinite(patch.maxCostUsd) &&
@@ -258,7 +266,12 @@ export function savePreferences(patch: {
         patch.maxCostUsd <= 1_000_000
       ) {
         cur.maxCostUsd = Math.round(patch.maxCostUsd * 10_000) / 10_000;
+        if (patch.budgetExplicit === false) delete cur.budgetExplicit;
+        else cur.budgetExplicit = true;
       }
+    }
+    if (patch.budgetExplicit === true && cur.maxCostUsd != null) {
+      cur.budgetExplicit = true;
     }
     cur.version = 1;
     cur.updatedAt = nowIso();

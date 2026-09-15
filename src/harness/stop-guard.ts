@@ -185,18 +185,22 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     };
   }
 
-  // Goal driver
-  const goalDecision = evaluateGoalAtStop({
-    sessionId: ctx.sessionId,
-    lastAssistantMessage: input.lastAssistantMessage,
-    editCount: input.editCount,
-    stuckThreshold: config.goal.stuckThreshold,
-    enabled: config.goal.enabled,
-    verificationRan: input.verificationRan,
-    verificationPassed: input.verificationPassed,
-    preferredCheckCommands: input.preferredCheckCommands,
-    diffFingerprint,
-  });
+  // Goal driver. Armed ULW owns Stop — a goal stuck-wall must not sit the
+  // mill down with the mandate open, and a goal block must not swallow
+  // executor `Plan complete.`
+  const goalDecision = ulwOn
+    ? { block: false }
+    : evaluateGoalAtStop({
+        sessionId: ctx.sessionId,
+        lastAssistantMessage: input.lastAssistantMessage,
+        editCount: input.editCount,
+        stuckThreshold: config.goal.stuckThreshold,
+        enabled: config.goal.enabled,
+        verificationRan: input.verificationRan,
+        verificationPassed: input.verificationPassed,
+        preferredCheckCommands: input.preferredCheckCommands,
+        diffFingerprint,
+      });
 
   if (goalDecision.stuckReleased) {
     return {

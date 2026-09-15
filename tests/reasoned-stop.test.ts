@@ -5,7 +5,16 @@ import {
   REASONING_WALL_FINISH,
   formatThoughtOnlyRecoverPoke,
   THOUGHT_ONLY_OBSERVE_POKE,
+  thoughtOnlyYieldsTurn,
 } from "../src/agent/reasoned-stop.js";
+
+describe("thoughtOnlyYieldsTurn", () => {
+  it("yields only when no mill is driving", () => {
+    assert.equal(thoughtOnlyYieldsTurn({ ulwArmed: false, goalActive: false }), true);
+    assert.equal(thoughtOnlyYieldsTurn({ ulwArmed: true, goalActive: false }), false);
+    assert.equal(thoughtOnlyYieldsTurn({ ulwArmed: false, goalActive: true }), false);
+  });
+});
 
 describe("isReasonedEmptyStop", () => {
   it("treats thought + stop + no tools as Stop, not an empty glitch", () => {

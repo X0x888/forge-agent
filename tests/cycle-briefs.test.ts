@@ -18,7 +18,7 @@ import {
   runSpend,
 } from "../src/harness/cycle/briefs.js";
 import { newCycleState, type CycleRecord, type CycleState } from "../src/harness/cycle/state.js";
-import { ulwKickoffMessage } from "../src/harness/cycle/index.js";
+import { ulwKickoffMessage, ULW_UNLIMITED_LIFECYCLE } from "../src/harness/cycle/index.js";
 import { renderHarnessAdmission } from "../src/harness/context-admit.js";
 import { McpManager, setActiveMcpManager } from "../src/mcp/manager.js";
 
@@ -455,22 +455,23 @@ describe("Reviewer look brief (turn 1)", () => {
   });
 });
 
-const LIFECYCLE_LINE =
-  "until a mandate fulfilled, /cycle 0, max_cycles, or the no-progress wall on repeating empty work. A Planner blocked or a dead look is not a release — the mill keeps going on other work. Fulfilled releases only an explicit mandate.";
-
 describe("unlimited ULW lifecycle copy", () => {
   function assertMatchesDriver(text: string, label: string) {
     assert.doesNotMatch(text, /in good shape/, `${label} must not end a no-mandate run on "in good shape"`);
     assert.match(text, /no-progress/, `${label} must name the no-progress wall`);
     assert.match(text, /Planner blocked/, `${label} must say Planner blocked is not a release`);
-    assert.match(text, /explicit mandate/, `${label} must say fulfilled releases only an explicit mandate`);
-    assert.ok(text.includes(LIFECYCLE_LINE), `${label} must match planNextCycle's release conditions`);
+    assert.match(text, /sitting the product/, `${label} must say fulfilled sits the product`);
+    assert.match(text, /still-open mandate/, `${label} must say an open mandate is not a release`);
+    assert.ok(
+      text.includes(ULW_UNLIMITED_LIFECYCLE),
+      `${label} must match planNextCycle's release conditions`,
+    );
   }
 
   it("kickoff unlimited budget matches planNextCycle", () => {
     const kick = ulwKickoffMessage(newCycleState({ sessionId: "life-kick", mandate: null }));
     assert.match(kick, /^\[Forge ULW cycle driver\] armed/);
-    assert.ok(kick.includes(`Budget: unlimited cycles ${LIFECYCLE_LINE}`));
+    assert.ok(kick.includes(`Budget: unlimited cycles ${ULW_UNLIMITED_LIFECYCLE}`));
     assertMatchesDriver(kick, "kickoff");
     const capped = ulwKickoffMessage(newCycleState({ sessionId: "life-cap", mandate: null, maxCycles: 3 }));
     assert.match(capped, /Budget: 3 cycle\(s\)\./);
@@ -497,7 +498,7 @@ describe("unlimited ULW lifecycle copy", () => {
     });
     assert.match(admit, /^\[Forge harness — mid-conversation update\]/);
     assert.ok(
-      admit.includes(`Unlimited cycles ${LIFECYCLE_LINE}`),
+      admit.includes(`Unlimited cycles ${ULW_UNLIMITED_LIFECYCLE}`),
       "admit unlimited line must be the planNextCycle lifecycle, not 'in good shape'",
     );
     assertMatchesDriver(admit, "admit");

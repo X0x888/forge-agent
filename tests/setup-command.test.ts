@@ -89,15 +89,16 @@ describe("/setup slash", () => {
     assert.equal(loadPreferences().setupSkipped, true);
   });
 
-  it("/setup 2 persists the first-day spend cap", async () => {
+  it("/setup 2 peeks spend without writing a $5 mill fuse", async () => {
     const s = session();
     const r = await handleSlash("/setup 2", {
       session: s,
       config: { ...DEFAULT_CONFIG, workspace: cwd },
       hooks: new HookRunner(DEFAULT_CONFIG, cwd),
     });
-    assert.match(String(r.output), /\$5/);
-    assert.equal(loadPreferences().maxCostUsd, 5);
+    assert.equal(r.failed, undefined);
+    assert.equal(loadPreferences().maxCostUsd, undefined);
+    assert.equal(s.meta.maxCostUsd, undefined);
   });
 
   it("/setup 1 still confirms provider", async () => {
@@ -135,9 +136,20 @@ describe("/setup slash", () => {
   it("persistSetupBudget is seen by loadConfig as a finite cap", async () => {
     persistSetupBudget(5);
     assert.equal(loadPreferences().maxCostUsd, 5);
+    assert.equal(loadPreferences().budgetExplicit, true);
     const { loadConfig } = await import("../src/config/load.js");
     const cfg = loadConfig();
     assert.equal(cfg.maxCostUsd, 5);
+  });
+
+  it("leftover setup $5 without budgetExplicit is not a mill fuse", async () => {
+    const { preferencesPath } = await import("../src/config/preferences.js");
+    const { writeJsonFile } = await import("../src/util/fs.js");
+    writeJsonFile(preferencesPath(), { version: 1, maxCostUsd: 5 }, 0o600);
+    assert.equal(loadPreferences().maxCostUsd, undefined);
+    const { loadConfig } = await import("../src/config/load.js");
+    const cfg = loadConfig();
+    assert.equal(cfg.maxCostUsd, 0);
   });
 
   it("bare /setup budget peeks without writing $5", async () => {

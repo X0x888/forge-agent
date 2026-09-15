@@ -59,7 +59,7 @@ import {
 } from "../harness/guideline-audit.js";
 import { buildRunReport, lastRealUserPrompt } from "../harness/run-report.js";
 import { proofClaimReleaseTips } from "../harness/proof-claim-guard.js";
-import { loadGoal, detectAutoGoal, armGoal } from "../harness/goal.js";
+import { loadGoal, detectAutoGoal, armGoal, goalIsDriving } from "../harness/goal.js";
 import {
   loadCycleState,
   loadActiveCycle,
@@ -99,6 +99,7 @@ import {
   REASONING_WALL_FINISH,
   formatThoughtOnlyRecoverPoke,
   thoughtOnlyStopMax,
+  thoughtOnlyYieldsTurn,
 } from "./reasoned-stop.js";
 import {
   clearStaleToolResults,
@@ -1985,8 +1986,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       : undefined;
 
   // Turn start under ULW with no plan on disk: the Planner writes cycle 1's
-  // plan before the executor's first model call. A fulfilled / blocked
-  // verdict ends the run here with the report.
+  // plan before the executor's first model call. A mandate fulfilled (after
+  // sitting the product) ends the run here; a blocked Planner synthesizes.
   let earlyRelease = false;
   if (cycleRuntime) {
     try {
@@ -3478,34 +3479,55 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           }
           const thoughtMax = thoughtOnlyStopMax();
           if (thoughtMax > 0 && thoughtOnlyStops > thoughtMax) {
-            log.warn(
-              `Thought-only Stop cap (${thoughtMax}) — ending this turn; ULW stays CONTINUE`,
-            );
-            events.onStatus?.(`Thought-only cap (${thoughtMax})`);
-            const why =
-              finishReason === REASONING_LOOP_FINISH
-                ? "reasoning_loop"
-                : finishReason === REASONING_WALL_FINISH
-                  ? "reasoning_wall"
-                  : "thought-only";
-            finalText =
-              `[Forge] Model sat in thought ${thoughtOnlyStops} times with no text/tools (${why}). ` +
-              `Ending this turn so you can steer — ULW stays armed. ` +
-              `/retry or a follow-up keeps the cycle. Raise FORGE_THOUGHT_ONLY_MAX or FORGE_PROVIDER_REASONING_WALL_MS to wait longer.`;
+            let ulwArmed = false;
             try {
-              setSessionLastError(session, {
-                code: "thought_only_cap",
-                message: finalText.replace(/^\[Forge\]\s*/, "").slice(0, 500),
-                tips: [
-                  "/retry  ·  type a follow-up — ULW stays armed",
-                  "FORGE_THOUGHT_ONLY_MAX  ·  FORGE_PROVIDER_REASONING_WALL_MS",
-                ],
-              });
-              saveSession(session);
+              ulwArmed = cycleActive(loadCycleState(session.meta.id));
             } catch {
-              /* */
+              /* sidecar optional */
             }
-            break;
+            const millDriving =
+              !thoughtOnlyYieldsTurn({
+                ulwArmed,
+                goalActive: goalIsDriving(session.meta.id),
+              });
+            if (millDriving) {
+              log.warn(
+                `Thought-only Stop cap (${thoughtMax}) — mill keeps driving; forcing a tool`,
+              );
+              events.onStatus?.(
+                `Thought-only cap (${thoughtMax}) — keep going`,
+              );
+              forceToolNext = true;
+            } else {
+              log.warn(
+                `Thought-only Stop cap (${thoughtMax}) — ending this turn`,
+              );
+              events.onStatus?.(`Thought-only cap (${thoughtMax})`);
+              const why =
+                finishReason === REASONING_LOOP_FINISH
+                  ? "reasoning_loop"
+                  : finishReason === REASONING_WALL_FINISH
+                    ? "reasoning_wall"
+                    : "thought-only";
+              finalText =
+                `[Forge] Model sat in thought ${thoughtOnlyStops} times with no text/tools (${why}). ` +
+                `Ending this turn so you can steer. ` +
+                `/retry or a follow-up keeps going. Raise FORGE_THOUGHT_ONLY_MAX or FORGE_PROVIDER_REASONING_WALL_MS to wait longer.`;
+              try {
+                setSessionLastError(session, {
+                  code: "thought_only_cap",
+                  message: finalText.replace(/^\[Forge\]\s*/, "").slice(0, 500),
+                  tips: [
+                    "/retry  ·  type a follow-up",
+                    "FORGE_THOUGHT_ONLY_MAX  ·  FORGE_PROVIDER_REASONING_WALL_MS",
+                  ],
+                });
+                saveSession(session);
+              } catch {
+                /* */
+              }
+              break;
+            }
           }
         } else {
           thoughtOnlyStops = 0;

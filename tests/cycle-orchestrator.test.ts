@@ -206,6 +206,21 @@ describe("cycle orchestrator", () => {
     assert.equal(await ensureCyclePlanned(sid, rt), null);
   });
 
+  it("a mandate fulfilled after only reading the README is go-deeper, not a release", async () => {
+    const sid = "orch-fulfilled-readme";
+    const { rt } = fakeRuntime(cwd, {
+      planner: [
+        `# Cycle 1 plan\nVerdict: fulfilled — hello world is enough\nLooked: read the README and the repo layout`,
+      ],
+    });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: "build a chrome extension", cwd });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.equal(out?.released, false, "reading the repo is not sitting the product");
+    assert.equal(out?.planAdmitted, true);
+    assert.match(loadCycleState(sid)!.planTitle ?? "", /Go deeper/);
+  });
+
   it("a mandate fulfilled without Looked: becomes go-deeper, not a release", async () => {
     const sid = "orch-fulfilled-no-look";
     const { rt } = fakeRuntime(cwd, {
@@ -587,7 +602,13 @@ describe("cycle orchestrator", () => {
 
   it("three blocked reviews release no-progress without starting a fourth plan", async () => {
     const sid = "orch-nocommit-wall";
-    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "the flag" }] });
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      mandate: null,
+      verifyCommand: "npm test",
+      items: [{ title: "the flag" }],
+    });
     const blocked = `# Cycle 1 review\nVerdict: blocked — the flag deletes user data\nMust-fix:\n- do not delete\nWorth: no — deletes user data\n`;
     const { rt, calls } = fakeRuntime(cwd, {
       reviewer: [blocked, blocked, blocked],
@@ -610,6 +631,27 @@ describe("cycle orchestrator", () => {
     assert.equal(s.cycle, 3, "three blocked reviews do not start a fourth plan");
     assert.equal(r3.planAdmitted, undefined);
     assert.equal(calls.filter((c) => c.startsWith("todos:")).length, 2);
+  });
+
+  it("three blocked reviews with a mandate still open keep planning", async () => {
+    const sid = "orch-nocommit-mandate";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "the flag" }] });
+    const blocked = `# Cycle 1 review\nVerdict: blocked — the flag deletes user data\nMust-fix:\n- do not delete\nWorth: no — deletes user data\n`;
+    const { rt } = fakeRuntime(cwd, {
+      reviewer: [blocked, blocked, blocked],
+      planner: [PLAN_OK(2), PLAN_OK(3), PLAN_OK(4)],
+    });
+    const r1 = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r1?.released, false);
+    const r2 = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r2?.released, false);
+    const r3 = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r3?.released, false, "a mandate still open is not abandoned on empty cycles");
+    assert.equal(r3?.planAdmitted, true);
+    const s = loadCycleState(sid)!;
+    assert.equal(s.enabled, true);
+    assert.equal(s.cycle, 4);
+    assert.ok((s.noCommitStreak ?? 0) >= 3);
   });
 
   it("a green ship skipped because auto-commit is off does not increment the no-commit streak", async () => {
@@ -667,7 +709,13 @@ describe("cycle orchestrator", () => {
 
   it("ensureCyclePlanned at the no-commit cap releases without admitting a plan", async () => {
     const sid = "orch-nocommit-cap-plan";
-    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "x" }] });
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      mandate: null,
+      verifyCommand: "npm test",
+      items: [{ title: "x" }],
+    });
     const st = loadCycleState(sid)!;
     st.phase = "plan";
     st.noCommitStreak = 3;
@@ -679,6 +727,21 @@ describe("cycle orchestrator", () => {
     assert.equal(out.endReason, "no-progress");
     assert.equal(out.planAdmitted, undefined);
     assert.ok(!calls.includes("role:planner"));
+  });
+
+  it("ensureCyclePlanned at the no-commit cap with a mandate admits the next plan", async () => {
+    const sid = "orch-nocommit-cap-mandate";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "x" }] });
+    const st = loadCycleState(sid)!;
+    st.phase = "plan";
+    st.noCommitStreak = 3;
+    const { saveCycleState } = await import("../src/harness/cycle/state.js");
+    saveCycleState(st);
+    const { rt } = fakeRuntime(cwd, { planner: [PLAN_OK(2)] });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.equal(out?.released, false);
+    assert.equal(out?.planAdmitted, true);
+    assert.equal(loadCycleState(sid)!.enabled, true);
   });
 
   it("an unparseable review fails closed: blocked, no commit", async () => {
@@ -1820,13 +1883,35 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     assert.equal(loadCycleState(sid)!.synthStreak, 0);
   });
 
+  it("look-lease synthesized cycles do not burn FORGE_ULW_SYNTH_CAP", async () => {
+    process.env.FORGE_ULW_TWO_TURN = "0";
+    process.env.FORGE_ULW_SYNTH_CAP = "2";
+    const sid = "orch3-synth-look-lease";
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: null, cwd });
+    const blocked = `# Cycle 1 review\nVerdict: blocked\nLooked: could not run\nMust-fix:\n- look the surface\nWorth: no — nothing landed`;
+    const { rt } = fakeRuntime(cwd, {
+      planner: ["prose", "still prose", "more", "still more", "third", "still third"],
+      reviewer: [blocked, blocked, blocked],
+    });
+    const first = await ensureCyclePlanned(sid, rt);
+    assert.equal(first?.planAdmitted, true);
+    const r1 = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r1?.committed?.sha, undefined);
+    assert.equal(r1?.released, false);
+    assert.equal(loadCycleState(sid)!.synthStreak, 0, "a dead look is not empty work");
+    const r2 = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r2?.released, false, "look-lease synths must not trip the empty-synth cap");
+    assert.equal(loadCycleState(sid)!.synthStreak, 0);
+  });
+
   it("empty synthesized cycles still cap at FORGE_ULW_SYNTH_CAP", async () => {
     process.env.FORGE_ULW_TWO_TURN = "0";
     process.env.FORGE_ULW_SYNTH_CAP = "2";
     const sid = "orch3-synth-empty-cap";
     const { armCycle } = await import("../src/harness/cycle/index.js");
     armCycle({ sessionId: sid, mandate: null, cwd });
-    const blocked = `# Cycle 1 review\nVerdict: blocked\nLooked: could not run\nMust-fix:\n- look the surface\nWorth: no — nothing landed`;
+    const blocked = `# Cycle 1 review\nVerdict: blocked — the flag deletes user data\nMust-fix:\n- do not delete\nWorth: no — deletes user data`;
     const { rt } = fakeRuntime(cwd, {
       planner: ["prose", "still prose", "more", "still more", "third", "still third"],
       reviewer: [blocked, blocked, blocked],
@@ -2501,7 +2586,13 @@ Considered:
   it("class hold does not trap: no-progress wall still releases", async () => {
     process.env.FORGE_ULW_TWO_TURN = "0";
     const sid = "orch3-class-wall";
-    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "x" }] });
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      mandate: null,
+      verifyCommand: "npm test",
+      items: [{ title: "x" }],
+    });
     const st = loadCycleState(sid)!;
     st.phase = "plan";
     st.cycle = 2;

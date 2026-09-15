@@ -183,7 +183,6 @@ describe("parseSetupAction", () => {
     assert.equal(parseSetupAction("1").kind, "model");
     assert.deepEqual(parseSetupAction("2"), {
       kind: "budget",
-      amount: "5",
     });
     assert.deepEqual(parseSetupAction("budget"), {
       kind: "budget",

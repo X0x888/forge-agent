@@ -55,6 +55,7 @@ import {
   readPlanRecordLabels,
   readReviewRecordLabels,
   lookInfraFailed,
+  lookedUsedTheProduct,
   isLeaveItEntry,
   planAddressesArchitectureClass,
   planArtifactContract,
@@ -98,6 +99,7 @@ import {
   currentCycleAlreadyClosed,
   currentCycleRecord,
   cycleActive,
+  cycleHasMandate,
   ensureCycleArtifactsDir,
   loadActiveCycle,
   noProgressCap,
@@ -718,14 +720,14 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
     // findings into a direct-execute cycle rather than ending the run.
     const n = s.cycle + 1;
     writeArtifact(s.sessionId, n, "plan.failed.md", out.raw || out.error);
-    if (s.directExecuteStreak >= noProgressCap()) {
+    if (emptyWorkReleases(s) && s.directExecuteStreak >= noProgressCap()) {
       return release(
         s,
         "no-progress",
         `ULW released — ${s.directExecuteStreak} synthesized cycle(s) in a row shipped nothing (last: the Planner could not produce a plan). The run is not making progress; re-arm with /ulw or give a mandate.`,
       );
     }
-    if (s.synthStreak >= synthCap()) {
+    if (emptyWorkReleases(s) && s.synthStreak >= synthCap()) {
       return release(
         s,
         "no-progress",
@@ -815,13 +817,13 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
     // "the product is in good shape" is the escape the user forbade: the
     // model looked at a broken product and called it done. It never ends the
     // run — it becomes deeper work, targeting a broken promise first.
-    // Presence-only: a fulfilled plan (or its scout) must carry Looked: —
-    // otherwise this is the low-hanging-fruit escape (README + hello world).
+    // A fulfilled plan must have sat the product — a nonempty Looked: that
+    // only read the README is the hello-world escape. A substance commit
+    // already sat it (the Reviewer did).
     const looked = (plan.looked || scout?.parsed?.looked || "").trim();
-    // A mandate fulfilled before anyone has used the product (no Looked:,
-    // no committed cycle) is the README-and-hello-world escape. After a
-    // reviewed commit the Reviewer already used it; honour fulfilled.
-    const usedTheProduct = Boolean(looked) || s.cycles.some((c) => c.commitSha);
+    const usedTheProduct =
+      lookedUsedTheProduct(looked) ||
+      s.cycles.some((c) => c.commitSha && c.commitKind !== "docs");
     // A mandate cannot fulfil while broken/unknown promises have no Operator:.
     // absent may remain. FORGE_ULW_PROMISE_FULFILL=0 restores Looked:+used release.
     const outstanding = s.mandate != null ? unnamedBrokenOrUnknownPromises(s, plan) : [];
@@ -847,14 +849,14 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
       const ops = plan.operator.length ? ` Operator: ${plan.operator.join("; ")}` : "";
       return release(s, "fulfilled", `Planner: mandate fulfilled${why}. ULW released after ${s.cycles.filter((c) => c.commitSha).length} committed cycle(s).${ops}`);
     }
-    if (s.directExecuteStreak >= noProgressCap()) {
+    if (emptyWorkReleases(s) && s.directExecuteStreak >= noProgressCap()) {
       return release(
         s,
         "no-progress",
         `ULW released — ${s.directExecuteStreak} deeper cycle(s) in a row shipped nothing after the Planner declared the product done. Nothing more is landing; re-arm with /ulw or give a mandate to aim it.`,
       );
     }
-    if (s.synthStreak >= synthCap()) {
+    if (emptyWorkReleases(s) && s.synthStreak >= synthCap()) {
       return release(
         s,
         "no-progress",
@@ -865,7 +867,7 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
     const kind = outstanding.length || unkept ? "keep-promise" : "go-deeper";
     const whySynth =
       s.mandate != null && !usedTheProduct
-        ? "mandate fulfilled without Looked: (use the product before declaring the job done)"
+        ? "mandate fulfilled without sitting the product (Looked: must run or open it, not read the README)"
         : outstanding.length
           ? "a broken or unknown promise is not named on Operator:"
           : unkept
@@ -1952,11 +1954,18 @@ function noteSynthStreak(s: CycleState, committed: CycleStopOutcome["committed"]
     if (cycleCloseIsProgress(s, committed)) s.synthStreak = 0;
     return;
   }
+  if (cycleCloseIsLookLease(s)) return;
   if (cycleCloseIsProgress(s, committed) && rec?.commitKind !== "docs") return;
   s.synthStreak += 1;
 }
 
+/** Empty repeating work walls a no-mandate mill. A mandate still open is the job. */
+function emptyWorkReleases(s: CycleState): boolean {
+  return !cycleHasMandate(s);
+}
+
 function releaseIfNoCommitWall(s: CycleState): CycleStopOutcome | null {
+  if (!emptyWorkReleases(s)) return null;
   if (s.noCommitStreak < noProgressCap()) return null;
   return release(
     s,

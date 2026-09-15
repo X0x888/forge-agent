@@ -133,7 +133,11 @@ export function resolveSetupBudgetAmount(
 
 /** Sticky spend cap so `forge config --json` / the next `forge setup` see it. Throws if the write does not land. */
 export function persistSetupBudget(amount: number): void {
-  savePreferences({ maxCostUsd: amount, seenSetup: true });
+  if (!Number.isFinite(amount) || amount <= 0) {
+    savePreferences({ maxCostUsd: null, seenSetup: true });
+    return;
+  }
+  savePreferences({ maxCostUsd: amount, budgetExplicit: true, seenSetup: true });
 }
 
 export {
