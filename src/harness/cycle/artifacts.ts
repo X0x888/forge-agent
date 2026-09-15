@@ -24,11 +24,11 @@ import type {
 export const PLAN_COMPLETE_RE = /\*{0,2}Plan complete\.?\*{0,2}/i;
 
 /**
- * A cycle is one executor session, not one tiny task and not a laundry list.
- * Live continue plans that exceed this do not parse (no silent slice).
+ * A continue plan past this is a backlog, not a session (no silent slice).
+ * Not a measured session size — the mill was one item, not twelve.
  * Synthesized keep-promise / scout salvage may cap at this number.
  */
-export const MAX_CYCLE_PLAN_ITEMS = 5;
+export const MAX_CYCLE_PLAN_ITEMS = 12;
 
 /**
  * The executor's declared tokens in its closers, read as labelled lines,
@@ -132,6 +132,69 @@ const LEAVE_IT_RE = /^\*{0,2}leave\s+it\b/i;
 
 export function isLeaveItEntry(text: string): boolean {
   return LEAVE_IT_RE.test(String(text || "").trim());
+}
+
+/** Considered rows that are not `leave it` — the class the Planner already named. */
+export function consideredCandidates(considered: readonly string[]): string[] {
+  return considered.filter((c) => !isLeaveItEntry(c) && String(c || "").trim());
+}
+
+/**
+ * One item while Considered still holds other evidenced candidates.
+ * Presence and counts only — the Reviewer's Worth: no is what spends this.
+ */
+export function planIsClassSlice(
+  items: ReadonlyArray<{ title: string }>,
+  considered?: readonly string[],
+): boolean {
+  return items.length === 1 && consideredCandidates(considered ?? []).length >= 2;
+}
+
+function itemTitleKey(title: string): string {
+  return String(title || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+}
+
+/**
+ * Turn leftover Considered candidates into board items so a Worth: no slice
+ * finishes the class in this cycle instead of paying another Planner.
+ */
+export function consideredSiblingItems(
+  considered: readonly string[],
+  already: ReadonlyArray<Pick<CyclePlanItem, "id" | "title">>,
+  cap: number,
+): CyclePlanItem[] {
+  const have = new Set(already.map((i) => itemTitleKey(i.title)));
+  const used = new Set(already.map((i) => i.id));
+  let n = 1;
+  const nextId = (): string => {
+    while (used.has(`i${n}`)) n += 1;
+    const id = `i${n}`;
+    used.add(id);
+    n += 1;
+    return id;
+  };
+  const out: CyclePlanItem[] = [];
+  for (const c of consideredCandidates(considered)) {
+    if (already.length + out.length >= cap) break;
+    const title = c.split(/\s+(?:—|–)\s+/)[0]?.trim().slice(0, 200) || c.slice(0, 200);
+    const key = itemTitleKey(title);
+    if (!key || have.has(key)) continue;
+    have.add(key);
+    out.push({
+      id: nextId(),
+      title,
+      files: [],
+      serves: "a Considered candidate of this cycle's class",
+      redNow: c.slice(0, 300),
+      proof: "a reproducible observation of the candidate, plus the project gate",
+      status: "open",
+    });
+  }
+  return out;
 }
 
 /** Lease/platform limits a scout saw — not a broken product, not a hole to keep-promise. */
@@ -355,7 +418,7 @@ export function explainPlanParseFailure(text: string): string {
   }
   if (items.length > MAX_CYCLE_PLAN_ITEMS) {
     problems.push(
-      `Items: ${items.length} is more than a session (${MAX_CYCLE_PLAN_ITEMS}) — pack the class, do not laundry-list`,
+      `Items: ${items.length} is a backlog, not a session (${MAX_CYCLE_PLAN_ITEMS}) — pack one theme, do not laundry-list`,
     );
   }
   if (items.length === 1 && !paragraph(sections.get("one-item"))) {
@@ -987,7 +1050,7 @@ export function planArtifactContract(cycle: number): string {
     `Verify: <the one command that proves the cycle, e.g. \`npm test\`> | none — <why this repo has no check>`,
     `Items:`,
     `1. <item title> — files: <path>, <path> — serves: <the job in Identity this serves> — red now: <observed defect, limitation, regression risk or evidence gap; or unchecked — why> — proof: <command or observable distinguishing improvement or resolving the question>`,
-    `2. <same theme — default is two to five items, a natural executor session; at most ${MAX_CYCLE_PLAN_ITEMS}>`,
+    `2. <same theme — pack the class so the executor finishes it in one session; more than ${MAX_CYCLE_PLAN_ITEMS} is a backlog>`,
     `One item: <required when Items has one entry, after every Items: row: why the other Considered candidates are a different job or leave-it, not sequels for the next cycle>`,
     `Out of scope:`,
     `- <a different job or a lease limit (no TTY, do not rebuild dist) — not the rest of this Looked: class parked for cycle N+1; a one-item plan may keep at most one entry here>`,

@@ -32,6 +32,8 @@ import {
   architectureHoldMessage,
   continueWorthHold,
   MAX_CYCLE_PLAN_ITEMS,
+  consideredSiblingItems,
+  planIsClassSlice,
   explainPlanParseFailure,
   explainReviewParseFailure,
   extractDisputeLines,
@@ -1507,11 +1509,50 @@ async function closeCycle(
     return advanceAfterCycle(s, rt, { skipped: "surface sit without proof" });
   }
   const rec = currentCycleRecord(s);
+  const packed = tryPackClassSlice(s, rt);
+  if (packed) return packed;
   if (worthIsNo(rec?.worth)) {
     rt.log?.(`ULW cycle ${s.cycle} Worth: no — no substance commit`);
     return advanceAfterCycle(s, rt, { skipped: "Worth: no" });
   }
   return finishCycle(s, rt, post?.run ?? null);
+}
+
+/**
+ * Worth: no on a one-item slice of a class already in Considered: — keep this
+ * cycle open and put the siblings on the board. Cheaper than a fresh Planner.
+ * Packed cycles that were not worth it still skip the commit (below).
+ * `FORGE_ULW_SLICE_PACK=0` restores skip-only.
+ */
+function tryPackClassSlice(s: CycleState, rt: CycleRuntime): CycleStopOutcome | null {
+  if (isFalsy(process.env.FORGE_ULW_SLICE_PACK)) return null;
+  const rec = currentCycleRecord(s);
+  if (!worthIsNo(rec?.worth)) return null;
+  const considered = rec?.considered ?? [];
+  if (!planIsClassSlice(s.items, considered)) return null;
+  const added = consideredSiblingItems(considered, s.items, MAX_CYCLE_PLAN_ITEMS);
+  if (!added.length) return null;
+  invalidateReview(s);
+  s.items = [...s.items, ...added];
+  s.phase = "execute";
+  s.stuckBlocks = 0;
+  if (rec) rec.itemsTotal = s.items.length;
+  saveCycleState(s);
+  safe(() => rt.seedTodos(s.items), undefined);
+  rt.log?.(
+    `ULW cycle ${s.cycle} Worth: no on a class slice — packed ${added.length} Considered sibling(s) into this cycle`,
+  );
+  return {
+    allowStop: false,
+    released: false,
+    reanchor: [
+      `[Forge ULW cycle driver] Cycle ${s.cycle} Worth: no — Items: was one slice of a class already in Considered:. The rest of that class is now on the board. Finish every item before "Plan complete." The scout already spent; packing here is cheaper than a fresh Planner.`,
+      ...added.map((i) => `  • ${i.id} ${i.title}`),
+    ].join("\n"),
+    reason: `Cycle ${s.cycle} Worth: no class slice — packed ${added.length} sibling(s)`,
+    waveStamped: false,
+    phase: s.phase,
+  };
 }
 
 export interface EvaluateCycleOptions {

@@ -174,6 +174,7 @@ describe("cycle orchestrator", () => {
     delete process.env.FORGE_ULW_PROMISE_FULFILL;
     delete process.env.FORGE_ULW_CLASS_HOLD;
     delete process.env.FORGE_ULW_WORTH_HOLD;
+    delete process.env.FORGE_ULW_SLICE_PACK;
     delete process.env.FORGE_ULW_NO_PROGRESS_CAP;
   });
 
@@ -1694,6 +1695,7 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     delete process.env.FORGE_ULW_PROMISE_FULFILL;
     delete process.env.FORGE_ULW_CLASS_HOLD;
     delete process.env.FORGE_ULW_WORTH_HOLD;
+    delete process.env.FORGE_ULW_SLICE_PACK;
     delete process.env.FORGE_ULW_SYNTH_CAP;
     delete process.env.FORGE_ULW_NO_PROGRESS_CAP;
   });
@@ -2273,6 +2275,58 @@ Considered:
     const c = await ensureCyclePlanned("orch3-class-off", fakeRuntime(cwd, { planner: [PLAN_OK(3)] }).rt);
     assert.equal(c?.planAdmitted, true);
     assert.match(loadCycleState("orch3-class-off")!.planTitle ?? "", /theme 3/);
+  });
+
+  it("Worth: no on a one-item class slice packs Considered siblings into this cycle", async () => {
+    process.env.FORGE_ULW_TWO_TURN = "0";
+    const sid = "orch-slice-pack";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "the card" }] });
+    const st = loadCycleState(sid)!;
+    st.cycles[0].considered = [
+      "broken promise: first-run card — first thing a user meets",
+      "rough edge: --dry deletes — same CLI hygiene class",
+      "missing: pin empty — same class",
+      "leave it — it runs",
+    ];
+    const { saveCycleState } = await import("../src/harness/cycle/state.js");
+    saveCycleState(st);
+    const { rt, calls } = fakeRuntime(cwd, {
+      reviewer: [
+        `# Cycle 1 review\nVerdict: ship\nFulfillment:\n- the card — done\nMust-fix:\n- none\nWorth: no — one slice of a class already in Considered\n`,
+      ],
+      planner: [PLAN_OK(2)],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r);
+    assert.equal(r.allowStop, false);
+    assert.equal(r.committed, undefined);
+    assert.equal(loadCycleState(sid)!.phase, "execute");
+    assert.ok(loadCycleState(sid)!.items.length >= 3, "siblings joined the board");
+    assert.match(r.reanchor ?? "", /class already in Considered/);
+    assert.ok(!calls.some((c) => c.startsWith("commit:")));
+    assert.ok(!calls.includes("role:planner"), "did not pay another Planner");
+  });
+
+  it("Worth: no on a packed cycle skips the commit and replans", async () => {
+    process.env.FORGE_ULW_TWO_TURN = "0";
+    const sid = "orch-worth-skip";
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      verifyCommand: "npm test",
+      items: [{ title: "a" }, { title: "b" }],
+    });
+    const { rt, calls } = fakeRuntime(cwd, {
+      reviewer: [
+        `# Cycle 1 review\nVerdict: ship\nFulfillment:\n- a — done\n- b — done\nMust-fix:\n- none\nWorth: no — not worth a cycle\n`,
+      ],
+      planner: [PLAN_OK(2)],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r);
+    assert.equal(r.committed?.skipped, "Worth: no");
+    assert.ok(!calls.some((c) => c.startsWith("commit:")));
+    assert.equal(r.planAdmitted, true, "next plan after a skip");
   });
 
   it("after Worth: no, the same Direction is held then synthesized go-deeper; a different Direction admits", async () => {

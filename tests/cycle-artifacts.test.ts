@@ -33,6 +33,9 @@ import {
   scoutArtifactContract,
   PLAN_COMPLETE_RE,
   MAX_CYCLE_PLAN_ITEMS,
+  planIsClassSlice,
+  consideredSiblingItems,
+  consideredCandidates,
 } from "../src/harness/cycle/artifacts.js";
 
 /** The alternatives block every `continue` plan has to carry. */
@@ -272,7 +275,7 @@ describe("plan artifact parser", () => {
     }
     assert.ok(c.includes("# Cycle 4 plan"));
     assert.match(c, /never a paraphrase of the mandate's adjectives/);
-    assert.match(c, /at most 5/);
+    assert.match(c, /more than 12 is a backlog/);
   });
 
   it("a continue plan with one item and no One item: does not parse", () => {
@@ -310,6 +313,27 @@ describe("plan artifact parser", () => {
     const over = mk(MAX_CYCLE_PLAN_ITEMS + 1);
     assert.equal(parsePlanArtifact(over), null);
     assert.match(explainPlanParseFailure(over), new RegExp(`session \\(${MAX_CYCLE_PLAN_ITEMS}\\)`));
+  });
+
+  it("a one-item plan with two Considered candidates besides leave it is a class slice", () => {
+    assert.equal(
+      planIsClassSlice([{ title: "the card" }], [
+        "broken promise: first-run card",
+        "rough edge: --dry deletes",
+        "leave it — it runs",
+      ]),
+      true,
+    );
+    assert.equal(planIsClassSlice([{ title: "a" }, { title: "b" }], ["x", "y", "leave it"]), false);
+    assert.equal(planIsClassSlice([{ title: "the card" }], ["x", "leave it"]), false);
+    const sibs = consideredSiblingItems(
+      ["broken promise: first-run card — first thing", "rough edge: --dry deletes — same class", "leave it — runs"],
+      [{ id: "i1", title: "first-run card" }],
+      12,
+    );
+    assert.equal(consideredCandidates(["a", "leave it — x", "b"]).length, 2);
+    assert.ok(sibs.some((i) => /--dry/.test(i.title)));
+    assert.ok(!sibs.some((i) => /leave it/i.test(i.title)));
   });
 
   it("a one-item plan may keep one Out of scope entry; two is a parking lot", () => {

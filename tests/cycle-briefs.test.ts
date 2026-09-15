@@ -270,7 +270,7 @@ describe("Planner plan brief (turn 2)", () => {
     assert.ok(b.includes("same kind of change twice"), "the class rule is stated");
     assert.match(b, /session-sized plan/);
     assert.match(b, /One item:/);
-    assert.match(b, /two to five items/);
+    assert.match(b, /Pack every evidenced candidate of this class/);
     assert.match(b, /not sequels/);
     assert.match(b, / · 2 items/, "the ledger shows how big the last session was");
     assert.match(b, /ledger row that shows `1 item` is the exception/);
@@ -550,6 +550,8 @@ describe("Reviewer review brief (turn 2)", () => {
       assert.match(b, /Nonblocking observations and future improvements belong under Architecture/);
       assert.match(b, /not against whether the diff matches the mandate's adjectives/);
       assert.match(b, /one slice while Considered already listed other evidenced candidates/);
+      assert.match(b, /Class is this cycle's scope/);
+      assert.match(b, /Must-fix names what a user of this product would hit/);
       assert.doesNotMatch(b, /test-only change with no production body|stop planning invisible cycles|first minute, first day/);
     }
   });

@@ -92,12 +92,17 @@ complexity and risk. Compare the plan's `Considered:` alternatives with
 - `Worth: yes — <evidenced benefit or consequential uncertainty resolved>`
 - `Worth: no — <why this was not worth a cycle; which Considered entry should have won, if any>`
 
-A cycle whose `Items:` is one slice while the plan's `Considered:` already
-listed other evidenced candidates of the same job you just used is
-`Worth: no` — pack the class, or `One item:` a different job. `Out of scope:`
-that parks the rest of this `Looked:` as the next cycle is the same miss. A
-useful investigation may still be one item when `One item:` names a real
-isolation.
+**The plan's class is this cycle's scope.** `Considered:` candidates of the
+same job you just used that are not in `Items:` are unfinished work now, not
+`Architecture:` for cycle N+1. A cycle whose `Items:` is one slice of that
+class is `Worth: no` — pack the class, or `One item:` a different job. The
+harness will put those siblings on the board. `Out of scope:` that parks the
+rest of this `Looked:` as the next cycle is the same miss. A useful
+investigation may still be one item when `One item:` names a real isolation.
+
+`Must-fix` names what a user of this product would hit if it shipped. A
+finding whose repair changes nothing they get is taste, not `Must-fix`. Name
+the thing, the evidence, and the next action.
 
 A cycle whose diff is copy, comments or names while a core workflow you just
 used is broken or untested is `Worth: no` and `Must-fix: this is not the job`
@@ -112,8 +117,7 @@ as future work with their evidence, without widening this cycle.
 ## The document, not a revision pass
 
 You do not edit this turn; Must-fix is how the tree changes. The harness runs
-the verify command after you. Do not widen scope; do not start the next
-cycle's work. Repairable unresolved defects go under `Must-fix` with
+the verify command after you. Do not start the next cycle's work. Repairable unresolved defects go under `Must-fix` with
 `Verdict: ship-with-revisions`: the harness withholds commit, lets the executor
 repair them in this cycle and runs a fresh review. Partial or missing items
 cannot ship. Nonblocking observations and future improvements go under

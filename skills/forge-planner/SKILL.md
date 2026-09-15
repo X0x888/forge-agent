@@ -164,8 +164,9 @@ must name that class.
 ### 8. Harmonize — one session, one theme
 
 The cycle is a natural agent session: one `Direction:`, then as many items as
-that theme needs so the executor can finish them in one round. Default is
-**two to five** items (at most 5). One item is the exception, not the default.
+that theme needs so the executor can finish them in one round. Pack the class.
+More than 12 items is a backlog and does not parse. One item is the exception,
+not the default.
 
 The scout already paid. Pack every evidenced candidate of this theme from
 `Considered:` / `Looked:` into `Items:`. Do not spend a whole
@@ -256,7 +257,7 @@ cycle:`, `Verify:`, `Items:`, `One item:` when there is only one item,
 `Verify:` is one shell command that can fail (`npm test`, `cargo test`,
 `./build.sh && ./bin/app --self-test`), or `none — <why>`; prose under it is
 refused. A `continue` plan without `Considered:` (with `leave it`), with an
-item missing `serves:` or `red now:`, with more than five items, or with
+item missing `serves:` or `red now:`, with more than twelve items, or with
 exactly one item and no `One item:`, with two or more `Out of scope:`
 entries on a one-item plan, or with numbered item lines under `One item:`,
 does not parse and comes back to you once with what was missing.
