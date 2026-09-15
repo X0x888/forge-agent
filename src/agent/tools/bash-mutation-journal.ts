@@ -56,9 +56,10 @@ export function isLookScratchRel(rel: string): boolean {
   if (n === ".forge/tmp" || n.startsWith(".forge/tmp/") || n.startsWith(".forge/tmp-")) {
     return true;
   }
-  if (n.includes("/swift-mod/") || /\.swiftmodule$/i.test(n) || /\.swiftdoc$/i.test(n) || /\.o$/i.test(n)) {
+  if (n.includes("/swift-mod/") || /\.swiftmodule$/i.test(n) || /\.swiftdoc$/i.test(n) || /\.o$/i.test(n) || /\.pcm$/i.test(n)) {
     return true;
   }
+  if (/(^|\/)looks\/.+\.mjs$/i.test(n) || /(^|\/)look-shots\//i.test(n)) return true;
   return false;
 }
 

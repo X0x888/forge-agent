@@ -52,7 +52,7 @@ function headOf(cmd: string): string {
 
 const ARRANGE_HEAD_RE = /^(?:mkdir|cd|env|export|true|:)$/i;
 
-/** Drop leading `mkdir -p … &&` / `cd … &&` so HostCareCheck harvests. */
+/** Drop leading `mkdir -p … &&` / `cd … &&` so a real check after arrange still harvests. */
 export function stripArrangePrefix(cmd: string): string {
   let c = String(cmd || "").trim();
   for (let i = 0; i < 6; i++) {

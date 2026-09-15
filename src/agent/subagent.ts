@@ -237,6 +237,7 @@ const READ_ONLY_TOOLS = new Set([
   "todo_write",
   "get_task_output",
   "search_mcp",
+  "look_native",
   "call_mcp",
   "mcp_call",
   "use_mcp",

@@ -79,7 +79,7 @@ export async function runCheckCommand(opts: {
   if (!command) {
     const note =
       `[forge] verify refused: \`${opts.command}\` never exits (preview/dev/watch/serve). ` +
-      `Declare a finite check (npm test, cargo test, swiftc HostCareCheck).`;
+      `Declare a finite check (npm test, cargo test, xcodebuild -quiet test).`;
     return {
       command: opts.command,
       exitCode: 1,
@@ -182,6 +182,18 @@ export async function runCheckCommand(opts: {
 }
 
 /**
+ * A named failure that is a grep/assert of an operator file (MEMORY.md,
+ * AGENTS.md) is not a product-gate regression.
+ */
+export function isOperatorFileFailure(name: string): boolean {
+  const n = String(name || "").replace(/\\/g, "/");
+  if (/\.forge\/MEMORY\.md/i.test(n)) return true;
+  if (/(^|[/\s:(])AGENTS\.md\b/i.test(n)) return true;
+  if (/(^|[/\s:(])CLAUDE\.md\b/i.test(n)) return true;
+  return false;
+}
+
+/**
  * Green means: the run passed outright, or every failure it has was already
  * failing before the cycle (same command). A red run whose failures cannot
  * be named — a timeout, a crash, an unknown runner — is red whatever the
@@ -197,17 +209,27 @@ export function judgeAgainstBaseline(
   if (run.timedOut) {
     return { passed: false, newFailures: [], inherited: [], note: "timed out" };
   }
+  const operator = run.failures.filter((f) => isOperatorFileFailure(f));
+  const product = run.failures.filter((f) => !isOperatorFileFailure(f));
+  if (!product.length && operator.length) {
+    return {
+      passed: true,
+      newFailures: [],
+      inherited: [],
+      note: `green — ${operator.length} operator-file failure(s) ignored`,
+    };
+  }
   if (!baseline || baseline.command !== run.command) {
     return {
       passed: false,
-      newFailures: run.failures,
+      newFailures: product,
       inherited: [],
-      note: run.failures.length
-        ? `red — ${run.failures.length} failing, no baseline for \`${run.command}\``
+      note: product.length
+        ? `red — ${product.length} failing, no baseline for \`${run.command}\``
         : `red — exit ${run.exitCode ?? "?"}, no failing tests named`,
     };
   }
-  if (!run.failures.length) {
+  if (!product.length) {
     return {
       passed: false,
       newFailures: [],
@@ -216,8 +238,8 @@ export function judgeAgainstBaseline(
     };
   }
   const base = new Set(baseline.failures);
-  const newFailures = run.failures.filter((f) => !base.has(f));
-  const inherited = run.failures.filter((f) => base.has(f));
+  const newFailures = product.filter((f) => !base.has(f));
+  const inherited = product.filter((f) => base.has(f));
   if (newFailures.length) {
     return {
       passed: false,

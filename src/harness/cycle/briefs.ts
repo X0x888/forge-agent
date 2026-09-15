@@ -20,7 +20,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { playwrightLookStatus } from "../../mcp/manager.js";
-import { categorySkillFor } from "../../util/product-kind.js";
+import { categorySkillFor, playwrightLookApplies } from "../../util/product-kind.js";
+import { lookPortForSession } from "../../util/look-port.js";
+import { lookServerUrl } from "../../util/look-server.js";
+import { nativeLookRecipe } from "../../util/look-infra.js";
 import {
   isLeaveItEntry,
   MAX_CYCLE_PLAN_ITEMS,
@@ -34,19 +37,34 @@ import type { CycleRecord, CycleState, ReviewVerdict } from "./state.js";
 
 /** Role brief only — never message[0]. Shown when the look path cannot use MCP. */
 export const LOOK_PATH_DOWN_LINE =
-  "Look path: playwright down — use bash/browser lease; do not spend the scout waiting on MCP.";
+  "Look path: playwright down — use bash/browser lease; do not spend the scout waiting on MCP. Do not write looks/*.mjs Chrome/CDP scripts.";
 
-function lookPathLines(opts?: { lookProfileUdd?: string; workspace?: string }): string[] {
+function lookPathLines(opts?: {
+  lookProfileUdd?: string;
+  workspace?: string;
+  sessionId?: string;
+}): string[] {
   const st = playwrightLookStatus();
   const lines: string[] = [];
-  if (st === "ready") {
-    lines.push("Look path: playwright ready — call_mcp playwright; do not bash-spawn Chrome.");
-  } else if (st === "connecting") {
-    lines.push(
-      "Look path: playwright connecting — if call_mcp is not yet listed, use the leased profile below once; do not mkdir a new /tmp UDD.",
-    );
-  } else if (st === "down") {
-    lines.push(LOOK_PATH_DOWN_LINE);
+  const web = opts?.workspace ? playwrightLookApplies(opts.workspace) : true;
+  if (web) {
+    if (st === "ready") {
+      lines.push("Look path: playwright ready — call_mcp playwright; do not bash-spawn Chrome.");
+    } else if (st === "connecting") {
+      lines.push(
+        "Look path: playwright connecting — if call_mcp is not yet listed, use the leased profile below once; do not mkdir a new /tmp UDD.",
+      );
+    } else if (st === "down") {
+      lines.push(LOOK_PATH_DOWN_LINE);
+    }
+    if (opts?.sessionId) {
+      const port = lookPortForSession(opts.sessionId);
+      lines.push(
+        `Look server: ${lookServerUrl(opts.sessionId)} (port ${port}, --strictPort). Drive this URL, not :5173 or another mill's Vite.`,
+      );
+    }
+  } else if (opts?.workspace) {
+    lines.push(...nativeLookRecipe(opts.workspace));
   }
   if (opts?.lookProfileUdd) {
     lines.push(
@@ -287,6 +305,7 @@ export function buildPlannerScoutBrief(input: PlannerScoutInput): string {
     ...lookPathLines({
       lookProfileUdd: "lookProfileUdd" in input ? input.lookProfileUdd : undefined,
       workspace: input.workspace,
+      sessionId: input.state.sessionId,
     }),
     ...categorySkillLine(input.workspace),
     ``,
@@ -414,6 +433,7 @@ export function buildPlannerPlanBrief(input: PlannerPlanInput): string {
     ...lookPathLines({
       lookProfileUdd: "lookProfileUdd" in input ? input.lookProfileUdd : undefined,
       workspace: input.workspace,
+      sessionId: input.state.sessionId,
     }),
     ``,
     `## Workspace`,
@@ -462,6 +482,7 @@ export function buildPlannerBrief(input: PlannerPlanInput): string {
     ...lookPathLines({
       lookProfileUdd: "lookProfileUdd" in input ? input.lookProfileUdd : undefined,
       workspace: input.workspace,
+      sessionId: input.state.sessionId,
     }),
     ...categorySkillLine(input.workspace),
     ``,
@@ -555,6 +576,7 @@ export function buildReviewerLookBrief(input: ReviewerLookInput): string {
     ...lookPathLines({
       lookProfileUdd: "lookProfileUdd" in input ? input.lookProfileUdd : undefined,
       workspace: input.workspace,
+      sessionId: input.state.sessionId,
     }),
     ``,
     `## Workspace`,
@@ -677,6 +699,7 @@ export function buildReviewerReviewBrief(input: ReviewerBriefInput & { lookText?
     ...lookPathLines({
       lookProfileUdd: "lookProfileUdd" in input ? input.lookProfileUdd : undefined,
       workspace: input.workspace,
+      sessionId: input.state.sessionId,
     }),
     ``,
     `## Workspace`,
@@ -699,6 +722,7 @@ export function buildReviewerBrief(input: ReviewerBriefInput): string {
     ...lookPathLines({
       lookProfileUdd: "lookProfileUdd" in input ? input.lookProfileUdd : undefined,
       workspace: input.workspace,
+      sessionId: input.state.sessionId,
     }),
     ``,
     `## Workspace`,

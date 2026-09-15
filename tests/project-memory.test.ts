@@ -151,6 +151,33 @@ describe("project memory", () => {
     assert.equal(fs.statSync(md).mtimeMs, beforeMtime);
   });
 
+  it("does not rewrite MEMORY.md while ULW is armed", async () => {
+    appendProjectMemory(ws, { kind: "gotcha", text: "before ulw" });
+    const md = path.join(ws, ".forge", "MEMORY.md");
+    const before = fs.readFileSync(md, "utf8");
+    const session = createSession({
+      cwd: ws,
+      provider: "xai",
+      model: "grok-4",
+    });
+    const { armCycle, disarmCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: session.meta.id, mandate: "ship", cwd: ws });
+    try {
+      appendProjectMemory(ws, { kind: "gotcha", text: "during ulw" });
+      assert.equal(fs.readFileSync(md, "utf8"), before, "tracked mirror stays put during ULW");
+      assert.ok(
+        listActiveProjectMemory(ws).some((r) => r.text === "during ulw"),
+        "JSON store still records the note",
+      );
+    } finally {
+      disarmCycle(session.meta.id);
+    }
+    appendProjectMemory(ws, { kind: "gotcha", text: "after ulw" });
+    const after = fs.readFileSync(md, "utf8");
+    assert.match(after, /during ulw/);
+    assert.match(after, /after ulw/);
+  });
+
   it("archives and clears", () => {
     appendProjectMemory(ws, { text: "temp fact", kind: "fact" });
     assert.equal(listActiveProjectMemory(ws).length, 1);

@@ -10,6 +10,9 @@ import {
   ensureSessionLookProfile,
   guiLeaseFromCommand,
   guiProcessMatchesLease,
+  isLookDevServerCommand,
+  liveLookServerLease,
+  pinLookServerCommand,
   isReapableBrowserUdd,
   registerBrowserLease,
   registerSpawnedResources,
@@ -24,6 +27,7 @@ import {
   isAgentBrowserCommand,
   killOrphanAgentBrowsers,
 } from "../src/util/look-cleanup.js";
+import { lookPortForSession } from "../src/util/look-port.js";
 
 function withForgeHome(fn: (home: string) => void): void {
   const prevHome = process.env.FORGE_HOME;
@@ -72,8 +76,83 @@ describe("browser-lease", () => {
     assert.deepEqual(guiLeaseFromCommand("npm run preview -- --port 4173"), { app: "vite-preview" });
     assert.deepEqual(guiLeaseFromCommand("npm run dev"), { app: "vite-preview" });
     assert.deepEqual(guiLeaseFromCommand("vite preview --port 4173"), { app: "vite-preview" });
+    assert.deepEqual(
+      guiLeaseFromCommand("npx vite --port 5321 --strictPort --host 127.0.0.1"),
+      { app: "vite-preview" },
+    );
     assert.deepEqual(guiLeaseFromCommand(".build/debug/QQHX"), { app: "native-bin" });
     assert.equal(guiLeaseFromCommand("swift test"), undefined);
+  });
+
+  it("pins npm run dev onto the session look port and replaces :5173", () => {
+    assert.equal(isLookDevServerCommand("npm run dev"), true);
+    assert.equal(isLookDevServerCommand("vite preview"), true);
+    assert.equal(isLookDevServerCommand("npm test"), false);
+    const port = lookPortForSession("sess-look-a");
+    const pinned = pinLookServerCommand("npm run dev", "sess-look-a");
+    assert.equal(pinned.port, port);
+    assert.match(pinned.command, new RegExp(`--port ${port}`));
+    assert.match(pinned.command, /--strictPort/);
+    const replaced = pinLookServerCommand("npm run preview -- --port 5173", "sess-look-a");
+    assert.match(replaced.command, new RegExp(`--port ${port}`));
+    assert.doesNotMatch(replaced.command, /5173/);
+  });
+
+  it("reuses a live vite-preview lease instead of spawning another", () => {
+    withForgeHome((home) => {
+      const sid = "look-reuse";
+      const port = lookPortForSession(sid);
+      const udd = path.join(home, "sessions", sid, "browsers", "gui-vitepreview");
+      fs.mkdirSync(udd, { recursive: true });
+      registerBrowserLease({
+        sessionId: sid,
+        udd,
+        pid: process.pid,
+        port,
+        kind: "gui",
+        bundleId: "vite-preview",
+        cmd: `npm run preview -- --port ${port} --strictPort`,
+      });
+      const live = liveLookServerLease(sid);
+      assert.ok(live);
+      assert.equal(live?.pid, process.pid);
+      assert.equal(live?.port, port);
+    });
+  });
+
+  it("bash npm run preview with timeout_ms 30000 is leased, not SIGTERM'd", async () => {
+    const prevHome = process.env.FORGE_HOME;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-look-lease-"));
+    const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-look-ws-"));
+    process.env.FORGE_HOME = home;
+    try {
+      const { toolBash } = await import("../src/agent/tools/bash.js");
+      const { toolKillTask } = await import("../src/agent/tools/task-tools.js");
+      const ctx = {
+        workspace: ws,
+        sessionId: "look-bg",
+        sandbox: "off",
+        config: { sandbox: "off" },
+      } as const;
+      const r = await toolBash({ command: "npm run preview", timeout_ms: 30_000 }, ctx as never);
+      assert.match(r.output, /Look server leased/);
+      assert.match(r.output, /Background task started/);
+      assert.doesNotMatch(r.output, /timeout_ms: 30000/);
+      const id = r.output.match(/task_id: (\S+)/)?.[1];
+      if (id) {
+        await toolKillTask({ task_id: id }, ctx as never);
+      }
+      const again = await toolBash({ command: "npm run preview", timeout_ms: 30_000 }, ctx as never);
+      // First spawn may have already exited (no package.json); reuse only when pid still live.
+      assert.match(again.output, /Look server leased|already leased|Background task started/);
+      const id2 = again.output.match(/task_id: (\S+)/)?.[1];
+      if (id2) await toolKillTask({ task_id: id2 }, ctx as never);
+    } finally {
+      if (prevHome === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prevHome;
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(ws, { recursive: true, force: true });
+    }
   });
 
   it("GUI reap matches this lease's tokens, not a product name or a stranger vite", () => {
@@ -320,8 +399,12 @@ describe("browser-lease", () => {
         workspace: ws,
       });
       assert.notEqual(lease.id, "skipped");
-      await new Promise((r) => setTimeout(r, 200));
-      const row = _listProcessesForTests().find((r) => r.pid === pid);
+      let row: ReturnType<typeof _listProcessesForTests>[number] | undefined;
+      for (let i = 0; i < 20; i++) {
+        row = _listProcessesForTests().find((r) => r.pid === pid);
+        if (row) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
       assert.ok(row, `ps missing pid ${pid}`);
       assert.equal(isAgentBrowserCommand(row.cmd, []), true, row.cmd);
       await cleanupSubagentSession(sess.meta.id);

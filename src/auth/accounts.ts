@@ -487,13 +487,13 @@ export function maybeProactiveSwitch(
  */
 export function switchOnQuotaFailure(
   provider: string,
-  opts?: { cooldownSec?: number },
+  opts?: { cooldownSec?: number; force?: boolean },
 ): SwitchResult {
   if (isEnvAuthActive(provider)) {
     return { switched: false, reason: "env API key wins (no multi-account switch)" };
   }
   const settings = getAutoSwitchSettings();
-  if (!settings.autoSwitch) {
+  if (!settings.autoSwitch && !opts?.force) {
     return { switched: false, reason: "auto-switch disabled" };
   }
   const current = getActiveAccount(provider);
@@ -671,6 +671,7 @@ export async function waitAndRetryQuotaSwitch(
     sleep: (ms: number) => Promise<void>;
     onWaiting?: (waitSec: number) => void;
     waitMaxSec?: number;
+    force?: boolean;
   },
 ): Promise<SwitchResult> {
   if (
@@ -701,7 +702,7 @@ export async function waitAndRetryQuotaSwitch(
     }
   }
   clearExpiredAccountCooldowns(provider);
-  return switchOnQuotaFailure(provider);
+  return switchOnQuotaFailure(provider, { force: opts.force });
 }
 
 /** Second team-cap 403 must not hop back to the other same-team email. */

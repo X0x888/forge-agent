@@ -255,6 +255,7 @@ import {
 import {
   isImageDimensionError,
   isProviderApiError,
+  isVisionPayloadError,
 } from "../providers/errors.js";
 import {
   costCapStatus,
@@ -671,6 +672,7 @@ const READ_ONLY = new Set([
   "github",
   "get_task_output",
   "task_output",
+  "look_native",
   "search_mcp",
   "mcp_search",
   "mcp_resource",
@@ -2559,12 +2561,15 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 throw err2;
               }
             }
-          } else if (isImageDimensionError(err) && !visionImagesStripped) {
+          } else if (
+            (isImageDimensionError(err) || isVisionPayloadError(err)) &&
+            !visionImagesStripped
+          ) {
             visionImagesStripped = true;
             log.warn(
-              "Provider rejected image dimensions — dropping vision parts and retrying once",
+              "Provider rejected vision payload — dropping image_url parts and retrying once",
             );
-            events.onStatus?.("Image too small for vision — retrying without images");
+            events.onStatus?.("Vision payload rejected — retrying without images");
             events.onPhase?.("thinking");
             response = await doChat();
           } else {
@@ -2690,13 +2695,16 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               } catch {
                 /* pin so we cooldown THIS session's slot */
               }
-              let switched = switchOnQuotaFailure(String(config.provider));
+              let switched = switchOnQuotaFailure(String(config.provider), {
+                force: Boolean(session.meta.ultrawork),
+              });
               switched = await waitAndRetryQuotaSwitch(
                 String(config.provider),
                 switched,
                 {
                   session,
                   sleep: (ms) => abortableDelay(ms, signal),
+                  force: Boolean(session.meta.ultrawork),
                   onWaiting: (waitSec) => {
                     events.onStatus?.(
                       `Waiting ${waitSec}s for account cooldown…`,

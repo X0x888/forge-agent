@@ -16,12 +16,17 @@ import {
 import { loadSession } from "../../session/session.js";
 import { janitorBackgroundTasks } from "../../agent/tools/background-tasks.js";
 import { getActiveMcpManager, MCP_PREWARM_ADMIT_WAIT_MS } from "../../mcp/manager.js";
+import { ensureLookServer } from "../../util/look-server.js";
 import { isFalsy } from "../../util/bool.js";
 import { nowIso } from "../../util/fs.js";
 import { ensureGitRepo } from "../../util/git-ensure.js";
 import { envPositiveInt } from "../../util/env.js";
 import { appendMemoryRecord } from "../decision-memory.js";
-import type { AutoCommitResult } from "../../util/git-auto-commit.js";
+import {
+  cycleDiffIsDocsOnly,
+  cycleHasSubstanceDiff,
+  type AutoCommitResult,
+} from "../../util/git-auto-commit.js";
 import { appendRoleRunLine } from "../../session/subagent-usage.js";
 import {
   architectureHoldMessage,
@@ -34,6 +39,10 @@ import {
   isSurfaceSit,
   lookCouldNotLook,
   lookHasKernelEvidence,
+  classifyLookKind,
+  lookKindAllowsSurfaceCommit,
+  worthIsNo,
+  isOperatorArchitectureClass,
   parseLookArtifact,
   parsePlanArtifact,
   parseReviewArtifact,
@@ -78,6 +87,7 @@ import {
   runRoleTurnAgain,
   runRoleTwoTurn,
   safeCleanup,
+  twoTurnEnabled,
   type TwoTurnResult,
 } from "./roles.js";
 import {
@@ -425,15 +435,21 @@ async function runPlanner(
     };
   }
   let raw = roleBody(tt.second.text);
-  if (!tt.second.ok && !raw.trim()) {
+  const turn2ProviderDeath =
+    !tt.second.ok &&
+    /invalid_image|resource_exhausted|does not contain a valid|below the minimum of \d+ pixels|HTTP 400/i.test(
+      `${tt.second.error ?? ""} ${tt.second.status ?? ""}`,
+    );
+  if (!tt.second.ok && !raw.trim() && !turn2ProviderDeath) {
     await persistAndCleanupRole(s.sessionId, "planner", rt, tt);
     return { error: tt.second.error || `planner ${tt.second.status}`, raw, tokens, scout };
   }
   let plan = parsePlanArtifact(raw);
   let hold = continuePlanHold(s, plan);
-  const tryScoutAsPlan = (): boolean => {
-    // Cycle 2+ scout never saw Must-fix / Worth: no; labelled-plan salvage is parsePlanArtifact on turn 2.
-    if (s.cycles.length > 0) return false;
+  const tryScoutAsPlan = (afterRecord: boolean): boolean => {
+    // Cycle 2+ scout never saw Must-fix / Worth: no. Salvage it only when
+    // turn 2 died (provider 400 / empty) — not as a skip-the-record path.
+    if (s.cycles.length > 0 && !afterRecord) return false;
     const fromScout = parsePlanArtifact(scoutRaw);
     if (!fromScout || continuePlanHold(s, fromScout)) return false;
     plan = fromScout;
@@ -441,7 +457,7 @@ async function runPlanner(
     hold = "";
     return true;
   };
-  if ((!plan || hold) && tryScoutAsPlan()) {
+  if ((!plan || hold) && tryScoutAsPlan(false)) {
     /* scout already carried the contract */
   }
   if (!plan || hold) {
@@ -462,7 +478,7 @@ async function runPlanner(
     if (againRaw.trim()) raw = againRaw;
     plan = parsePlanArtifact(againRaw);
     hold = continuePlanHold(s, plan);
-    if ((!plan || hold) && tryScoutAsPlan()) {
+    if ((!plan || hold) && tryScoutAsPlan(false)) {
       /* retry missed; scout still parses */
     }
     if (hold) {
@@ -471,6 +487,9 @@ async function runPlanner(
     }
   }
   await persistAndCleanupRole(s.sessionId, "planner", rt, tt);
+  if (!plan && turn2ProviderDeath && tryScoutAsPlan(true)) {
+    /* turn 2 400 with empty body; scout already was a continue plan */
+  }
   if (!plan) {
     const clsHold = classHoldMessage(s);
     return {
@@ -487,7 +506,7 @@ async function runPlanner(
   return { plan, raw, tokens, scout, plannerStatus };
 }
 
-/** Consecutive synthesized cycles, even ones that committed. Default 2. */
+/** Consecutive empty synthesized cycles. Default 2. */
 function synthCap(): number {
   return envPositiveInt("FORGE_ULW_SYNTH_CAP", 0) || 2;
 }
@@ -650,7 +669,7 @@ export function synthesizeWorkPlan(
  * produce a plan, or a no-mandate `fulfilled`, becomes work — never a release.
  */
 export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<CycleStopOutcome> {
-  void prewarmLookPath(0);
+  void prewarmLookPath(0, { sessionId: s.sessionId, workspace: rt.workspace });
   const git = ensureGitRepo(rt.workspace, { reason: "ulw" });
   if (git.inited) {
     rt.log?.(`ULW initialized git repository in ${git.root ?? rt.workspace} (local only; FORGE_AUTO_GIT=0 off)`);
@@ -1051,21 +1070,53 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     verifyCommand: s.verifyCommand,
     executorCloser,
   };
-  const tt = await runRoleTwoTurn(rt, "reviewer", {
-    cycle: s.cycle,
-    firstBrief: buildReviewerLookBrief({
-      state: s,
-      workspace: rt.workspace,
-      direction: record?.direction ?? s.direction,
-      plannerLooked: record?.looked,
-      verifyCommand: s.verifyCommand,
-      lookProfileUdd: sessionLookProfile(s.sessionId, rt.workspace),
-    }),
-    secondBrief: (lookText) => buildReviewerReviewBrief({ ...reviewInput, lookText }),
-    singleBrief: () => buildReviewerBrief(reviewInput),
-    firstMaxTurns: reviewerLookTurns(),
-    secondDocumentOnly: true,
-  });
+  const skipLook = twoTurnEnabled() && cycleDiffIsDocsOnly(rt.workspace, s.cycleStartHead);
+  let tt: TwoTurnResult;
+  if (skipLook) {
+    const stub =
+      `# Cycle ${s.cycle} look\nLooked: skipped — docs-only cycle; no product surface to sit.\n`;
+    rt.log?.(`ULW cycle ${s.cycle} review: skip look — docs-only`);
+    const second = await rt.runRole(
+      "reviewer",
+      buildReviewerReviewBrief({ ...reviewInput, lookText: stub }),
+      {
+        cycle: s.cycle,
+        documentOnly: true,
+        maxTurns: reviewerDocumentTurns(),
+        keepSession: true,
+      },
+    );
+    tt = {
+      first: {
+        ok: true,
+        text: stub,
+        status: "completed",
+        promptTokens: 0,
+        completionTokens: 0,
+        editCount: 0,
+        sessionId: second.sessionId,
+      },
+      second,
+      mode: "two-turn",
+      sessionId: second.sessionId,
+    };
+  } else {
+    tt = await runRoleTwoTurn(rt, "reviewer", {
+      cycle: s.cycle,
+      firstBrief: buildReviewerLookBrief({
+        state: s,
+        workspace: rt.workspace,
+        direction: record?.direction ?? s.direction,
+        plannerLooked: record?.looked,
+        verifyCommand: s.verifyCommand,
+        lookProfileUdd: sessionLookProfile(s.sessionId, rt.workspace),
+      }),
+      secondBrief: (lookText) => buildReviewerReviewBrief({ ...reviewInput, lookText }),
+      singleBrief: () => buildReviewerBrief(reviewInput),
+      firstMaxTurns: reviewerLookTurns(),
+      secondDocumentOnly: true,
+    });
+  }
   let res = tt.second;
   if (record) record.reviewerTokens = (record.reviewerTokens ?? 0) + roleTokens(tt);
   const lookRaw = tt.first ? roleBody(tt.first.text) : "";
@@ -1256,7 +1307,10 @@ async function advanceAfterCycle(
     record.itemsDone = s.items.filter((i) => i.status === "done").length;
     record.waves = s.wave;
   }
-  if (firstClose) noteNoCommitStreak(s, committed);
+  if (firstClose) {
+    noteNoCommitStreak(s, committed);
+    noteSynthStreak(s, committed);
+  }
   saveCycleState(s);
   const stop = stopBeforeAdmittingNextPlan(s);
   if (stop) return { ...stop, cycleClosed: true, committed };
@@ -1278,16 +1332,11 @@ async function finishCycle(s: CycleState, rt: CycleRuntime, accepted: CheckRun |
     // Docs-only commits are not progress: a rename mill of READMEs would
     // otherwise reset the no-progress wall forever. Source/product files do.
     if (ac.commitKind !== "docs") {
-      const rec = currentCycleRecord(s);
-      const synth = /^(Direct execute|Keep the promises still broken|Go deeper)\b/i.test(
-        rec?.title ?? "",
-      );
-      // Substance landed: the no-progress wall counts "shipped nothing", not
-      // "the title was Direct execute". Synth mill still caps via synthStreak.
+      // Substance landed. Empty synths still cap via noteSynthStreak.
       s.directExecuteStreak = 0;
       s.noCommitStreak = 0;
-      if (synth) s.synthStreak += 1;
-      else s.synthStreak = 0;
+      const rec = currentCycleRecord(s);
+      if (!isSynthCycleRecord(rec)) s.synthStreak = 0;
     }
     // Bash Chrome outlives the cycle; reap after commit, never during a Reviewer look.
     safe(() => reapSessionBrowsers(s.sessionId, { workspace: rt.workspace }), {
@@ -1437,12 +1486,30 @@ async function closeCycle(
   const abortPost = ifUserDisarmed(s);
   if (abortPost) return abortPost;
   if (post && !post.verdict.passed) {
+    const rec = currentCycleRecord(s);
+    const lookOnlyShip =
+      rec?.reviewVerdict === "ship" &&
+      !(rec.revisions && rec.revisions.length) &&
+      !cycleHasSubstanceDiff(rt.workspace, s.cycleStartHead);
+    if (lookOnlyShip) {
+      rt.log?.(
+        `ULW cycle ${s.cycle} post-review verify red on a look-only ship — not a fix mill`,
+      );
+      return advanceAfterCycle(s, rt, {
+        skipped: "look-only; verify red was not this cycle's tree",
+      });
+    }
     invalidateReview(s);
     return fixOrRelease(s, post.run, post.verdict, { fixRoundsCap: opts.fixRoundsCap, reviewed: true });
   }
   if (surfaceSitBlocksCommit(s, post)) {
     rt.log?.(`ULW cycle ${s.cycle} commit skipped: surface sit without proof`);
     return advanceAfterCycle(s, rt, { skipped: "surface sit without proof" });
+  }
+  const rec = currentCycleRecord(s);
+  if (worthIsNo(rec?.worth)) {
+    rt.log?.(`ULW cycle ${s.cycle} Worth: no — no substance commit`);
+    return advanceAfterCycle(s, rt, { skipped: "Worth: no" });
   }
   return finishCycle(s, rt, post?.run ?? null);
 }
@@ -1534,7 +1601,10 @@ export async function ensureCyclePlanned(
   const s = loadActiveCycle(sessionId);
   if (!s) return null;
   if (s.phase !== "plan" || s.humanPlan) return null;
-  await prewarmLookPath(MCP_PREWARM_ADMIT_WAIT_MS);
+  await prewarmLookPath(MCP_PREWARM_ADMIT_WAIT_MS, {
+    sessionId,
+    workspace: rt.workspace,
+  });
   return planNextCycle(s, rt);
 }
 
@@ -1553,21 +1623,43 @@ function surfaceLookGateBlocks(
     : notes.looked
       ? lookCouldNotLook(notes.looked)
       : true;
+  const kind = classifyLookKind(notes.looked || "");
+  if (lookKindAllowsSurfaceCommit(kind)) return false;
   // maxTurns / Godot crash / CFT died is not "opened the product" — block even
-  // when Looked: does not match the could-not-look phrases.
+  // when Looked: does not match the could-not-look phrases, unless a live
+  // receipt (leased Chrome / HID / sim HID) is in Looked:.
   return !hasLook || couldNot || Boolean(look.infraFailed);
 }
 
-/** Fail-open: never hold the Planner on a 120s MCP init. */
-async function prewarmLookPath(waitMs: number): Promise<void> {
+/** Fail-open: never hold the Planner on a 120s MCP init or Vite start. */
+async function prewarmLookPath(
+  waitMs: number,
+  ctx?: { sessionId?: string; workspace?: string },
+): Promise<void> {
   if (process.env.NODE_TEST_CONTEXT) return;
+  const jobs: Promise<void>[] = [];
   const m = getActiveMcpManager();
-  if (!m?.enabled) return;
-  try {
-    await m.prewarm(waitMs);
-  } catch {
-    /* a down playwright is a brief line, not a Stop */
+  if (m?.enabled) {
+    jobs.push(
+      m.prewarm(waitMs).catch(() => {
+        /* a down playwright is a brief line, not a Stop */
+      }),
+    );
   }
+  if (ctx?.sessionId && ctx.workspace) {
+    jobs.push(
+      ensureLookServer({
+        workspace: ctx.workspace,
+        sessionId: ctx.sessionId,
+        waitMs,
+      }).then(
+        () => {},
+        () => {},
+      ),
+    );
+  }
+  if (!jobs.length) return;
+  await Promise.all(jobs);
 }
 
 const EXECUTOR_LINES_KEEP = 12;
@@ -1677,7 +1769,8 @@ function uniqueLines(have: string[], add: string[]): string[] {
 function classHoldMessage(s: CycleState): string {
   if (isFalsy(process.env.FORGE_ULW_CLASS_HOLD)) return "";
   const cls = recurringArchitectureClass(s.cycles);
-  return cls ? architectureHoldMessage(cls) : "";
+  if (!cls || isOperatorArchitectureClass(cls)) return "";
+  return architectureHoldMessage(cls);
 }
 
 function architectureClassItem(cls: string): CyclePlanItem {
@@ -1745,6 +1838,23 @@ function noteNoCommitStreak(s: CycleState, committed: CycleStopOutcome["committe
     return;
   }
   s.noCommitStreak += 1;
+}
+
+function isSynthCycleRecord(rec: { title?: string; plannerStatus?: string } | undefined): boolean {
+  if (!rec) return false;
+  if (rec.plannerStatus === "synthesized") return true;
+  return /^(Direct execute|Keep the promises still broken|Go deeper)\b/i.test(rec.title ?? "");
+}
+
+/** Empty synthesized cycles burn the cap; substance synths do not. */
+function noteSynthStreak(s: CycleState, committed: CycleStopOutcome["committed"] | undefined): void {
+  const rec = currentCycleRecord(s);
+  if (!isSynthCycleRecord(rec)) {
+    if (cycleCloseIsProgress(s, committed)) s.synthStreak = 0;
+    return;
+  }
+  if (cycleCloseIsProgress(s, committed) && rec?.commitKind !== "docs") return;
+  s.synthStreak += 1;
 }
 
 function releaseIfNoCommitWall(s: CycleState): CycleStopOutcome | null {

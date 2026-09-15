@@ -10,6 +10,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { envPositiveInt } from "./env.js";
+import {
+  decodeRaster,
+  encodePngRgba,
+  scaleRgbaNearest,
+  type RgbaBitmap,
+} from "./raster.js";
 
 const IMAGE_EXT = new Set([
   ".png",
@@ -18,6 +24,16 @@ const IMAGE_EXT = new Set([
   ".gif",
   ".webp",
   ".bmp",
+  ".ico",
+]);
+
+/** MIME types xAI will accept on image_url. GIF/BMP 400 the mill. */
+const VISION_SAFE_MIME = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/x-icon",
+  "image/vnd.microsoft.icon",
 ]);
 
 export type TextContentPart = { type: "text"; text: string };
@@ -39,7 +55,12 @@ export function mimeForImagePath(p: string): string {
   if (ext === ".gif") return "image/gif";
   if (ext === ".webp") return "image/webp";
   if (ext === ".bmp") return "image/bmp";
+  if (ext === ".ico") return "image/x-icon";
   return "application/octet-stream";
+}
+
+export function isVisionSafeMime(mime: string): boolean {
+  return VISION_SAFE_MIME.has(mime);
 }
 
 /** Max image bytes we'll base64-inline (default 4 MiB). */
@@ -47,9 +68,15 @@ export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
 /** xAI rejects edges below 8px. */
 export const MIN_VISION_EDGE = 8;
+/** xAI: "Image has 255 total pixels (15x17), which is below the minimum of 512 pixels." */
+export const MIN_VISION_PIXELS = 512;
 
 export function visionMinEdge(): number {
   return envPositiveInt("FORGE_VISION_MIN_EDGE", MIN_VISION_EDGE);
+}
+
+export function visionMinPixels(): number {
+  return envPositiveInt("FORGE_VISION_MIN_PIXELS", MIN_VISION_PIXELS);
 }
 
 export type ImageVisionStatus =
@@ -72,7 +99,18 @@ export function imagePixelSize(
   if (buf[0] === 0xff && buf[1] === 0xd8) {
     return jpegSofSize(buf);
   }
+  if (buf[0] === 0x42 && buf[1] === 0x4d) {
+    return bmpSize(buf);
+  }
   return null;
+}
+
+function bmpSize(buf: Buffer): { width: number; height: number } | null {
+  if (buf.length < 26) return null;
+  const width = buf.readInt32LE(18);
+  const height = Math.abs(buf.readInt32LE(22));
+  if (width < 1 || height < 1) return null;
+  return { width, height };
 }
 
 function pngIhdrSize(buf: Buffer): { width: number; height: number } | null {
@@ -140,6 +178,46 @@ export function imageVisionStatus(input: {
   return "ok";
 }
 
+/** Both edges pass the 8px floor but the area is below xAI's 512-pixel minimum. */
+export function imageNeedsUpscale(
+  width: number,
+  height: number,
+): boolean {
+  const min = visionMinEdge();
+  if (width < min || height < min) return false;
+  return width * height < visionMinPixels();
+}
+
+export function visionTargetSize(
+  width: number,
+  height: number,
+): { width: number; height: number } {
+  const minE = visionMinEdge();
+  const minP = visionMinPixels();
+  let w = width;
+  let h = height;
+  if (w < minE || h < minE) {
+    const s = Math.max(minE / w, minE / h);
+    w = Math.ceil(w * s);
+    h = Math.ceil(h * s);
+  }
+  if (w * h < minP) {
+    const s = Math.sqrt(minP / (w * h));
+    w = Math.max(minE, Math.ceil(w * s));
+    h = Math.max(minE, Math.ceil(h * s));
+  }
+  return { width: w, height: h };
+}
+
+function toVisionPng(img: RgbaBitmap): { buf: Buffer; width: number; height: number } {
+  let out = img;
+  if (imageNeedsUpscale(out.width, out.height)) {
+    const t = visionTargetSize(out.width, out.height);
+    out = scaleRgbaNearest(out, t.width, t.height);
+  }
+  return { buf: encodePngRgba(out), width: out.width, height: out.height };
+}
+
 function resolveImageAbs(filePath: string, workspace?: string): string {
   if (!path.isAbsolute(filePath) && workspace) {
     return path.resolve(workspace, filePath);
@@ -158,6 +236,13 @@ export function imageReadReceipt(
   size: number,
   opts?: { width?: number; height?: number },
 ): string {
+  const ext = path.extname(rel).toLowerCase();
+  if (ext === ".gif") {
+    return (
+      `Image: ${rel} (${size} bytes). ` +
+      `Not attached — GIF is not a vision format (xAI accepts JPG, PNG, WebP, ICO). Export a PNG.`
+    );
+  }
   const status = imageVisionStatus({
     exists: true,
     isImage: true,
@@ -173,7 +258,8 @@ export function imageReadReceipt(
     const min = visionMinEdge();
     return (
       `Image: ${rel} (${size} bytes${dimText}). ` +
-      `Not attached — both edges must be at least ${min} pixels.`
+      `Not attached — both edges must be at least ${min} pixels ` +
+      `(xAI also requires at least ${visionMinPixels()} total pixels).`
     );
   }
   if (status === "too_large") {
@@ -205,6 +291,8 @@ export function loadImageDataUrl(
     const st = fs.statSync(abs);
     if (st.size <= 0 || st.size > MAX_IMAGE_BYTES) return null;
     const buf = fs.readFileSync(abs);
+    const ext = path.extname(abs).toLowerCase();
+    if (ext === ".gif") return null;
     const dim = imagePixelSize(buf);
     // PNG/JPEG with no parseable header cannot be floored — do not send.
     if (pngOrJpegExt(abs) && !dim) return null;
@@ -216,9 +304,41 @@ export function loadImageDataUrl(
       height: dim?.height,
     });
     if (status !== "ok") return null;
-    const b64 = buf.toString("base64");
-    const mime = mimeForImagePath(abs);
-    return { dataUrl: `data:${mime};base64,${b64}`, abs };
+
+    const nativeMime = mimeForImagePath(abs);
+    const areaOk =
+      typeof dim?.width === "number" &&
+      typeof dim?.height === "number" &&
+      dim.width * dim.height >= visionMinPixels();
+    const canSendNative =
+      isVisionSafeMime(nativeMime) &&
+      areaOk &&
+      !imageNeedsUpscale(dim!.width, dim!.height);
+
+    if (canSendNative) {
+      const b64 = buf.toString("base64");
+      return { dataUrl: `data:${nativeMime};base64,${b64}`, abs };
+    }
+
+    const decoded = decodeRaster(buf);
+    if (!decoded) return null;
+    if (
+      imageVisionStatus({
+        exists: true,
+        isImage: true,
+        size: decoded.rgba.length,
+        width: decoded.width,
+        height: decoded.height,
+      }) !== "ok"
+    ) {
+      return null;
+    }
+    const png = toVisionPng(decoded);
+    if (png.buf.length > MAX_IMAGE_BYTES) return null;
+    return {
+      dataUrl: `data:image/png;base64,${png.buf.toString("base64")}`,
+      abs,
+    };
   } catch {
     return null;
   }

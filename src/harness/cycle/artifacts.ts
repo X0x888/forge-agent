@@ -474,7 +474,7 @@ const LOOK_NEGATED_OPEN_RE =
   /could not run|never(?:\s+\w+){0,3}\s+opened|did(?: not|n't) open(?: popup)?|could not open|playwright mcp never(?: initialized)?/gi;
 /** Opening evidence after stripping fail phrases. Bare "lease" is the brief hint, not a look. */
 const LOOK_DID_OPEN_RE =
-  /\b(?:clicked|clicking|click|loaded|loading|load|opened|opening|navigated|unpacked)\b|file:\/\/|bash chrome|SMOKE_[A-Z0-9_]+_OK|\bgodot\b[^\n]*--headless|headless smoke/i;
+  /\b(?:clicked|clicking|opened|opening|navigated)\b|file:\/\/|bash chrome|leased chrome|call_mcp playwright|look_native:\s*wrote|screencapture -l|SMOKE_[A-Z0-9_]+_OK|\bgodot\b[^\n]*--headless|headless smoke|walk\s*\(/i;
 const LOOK_INFRA_RE =
   /maxTurns?\s*\(\d+\)\s*reached|look turn ended before|turn budget ended before|Playwright MCP was down.{0,80}(?:never|could not)|Playwright(?: MCP)? (?:was|is) down|screenshot Vision dropped|image attachments? dropped|this provider dropped \d+ image|Cursor has no multimodal|Chrome for Testing died|GPU unusable|godot(?:\.app)? (?:quit unexpectedly|crashed)|Vulkan[^\n]{0,40}hang/i;
 
@@ -501,6 +501,55 @@ const KERNEL_LOOK_RE =
 
 export function lookHasKernelEvidence(looked: string): boolean {
   return KERNEL_LOOK_RE.test(String(looked || ""));
+}
+
+/**
+ * Kinded look receipt. Surface-claim cycles commit only on hid-window /
+ * cdp-live / sim-hid. AUTO stills, cargo --help, and banner `LOAD`/`WATCH`
+ * are not a sit. Playwright-down plus a leased Chrome sit is cdp-live.
+ */
+export type LookKind =
+  | "hid-window"
+  | "cdp-live"
+  | "sim-hid"
+  | "headless-smoke"
+  | "auto-still"
+  | "cli-help"
+  | "kernel-api"
+  | "failed"
+  | "unknown";
+
+export function classifyLookKind(looked: string): LookKind {
+  const t = String(looked || "");
+  if (!t.trim()) return "failed";
+  const liveReceipt =
+    /look_native:\s*wrote|leased (?:chrome|chromium)|call_mcp playwright|screencapture -l/i.test(t);
+  if (
+    lookCouldNotLook(t) ||
+    (!liveReceipt &&
+      /Looked:\s*limited\b|TCC -10004|privilege violation|LSApplicationWorkspaceErrorDomain|code=115/i.test(
+        t,
+      ))
+  ) {
+    return "failed";
+  }
+  if (/simctl io|SimulatorKit|sim-input|look_native sim\b/i.test(t)) return "sim-hid";
+  if (/godot[^\n]*--headless|--write-movie|headless smoke|look_native movie\b/i.test(t)) {
+    return "headless-smoke";
+  }
+  if (/look_native:\s*wrote|screencapture -l|CGEvent|HID tap|window id\s+\d+/i.test(t)) {
+    return "hid-window";
+  }
+  if (/leased (?:chrome|chromium)|call_mcp playwright|\bCDP\b/i.test(t)) return "cdp-live";
+  if (/cargo run -- --help|--help\)[^\n]{0,40}no window/i.test(t)) return "cli-help";
+  if (/CHAIN_BENCH_AUTO|AUTO still|chain-bench-idle/i.test(t)) return "auto-still";
+  if (KERNEL_LOOK_RE.test(t)) return "kernel-api";
+  if (lookInfraFailed(t) && !LOOK_DID_OPEN_RE.test(t)) return "failed";
+  return "unknown";
+}
+
+export function lookKindAllowsSurfaceCommit(kind: LookKind): boolean {
+  return kind === "hid-window" || kind === "cdp-live" || kind === "sim-hid";
 }
 
 /** The Reviewer's turn-1 document: what it ran or opened before the diff. Null when there is no Looked: line. */
@@ -619,9 +668,20 @@ export function recurringArchitectureClass(
  * files those reviews already named.
  */
 export function architectureClassMustCollapse(
-  cycles: ReadonlyArray<Pick<CycleRecord, "commitSha" | "architecture" | "commitFiles">>,
+  cycles: ReadonlyArray<Pick<CycleRecord, "commitSha" | "architecture" | "commitFiles" | "title">>,
   cls: string,
 ): boolean {
+  if (isOperatorArchitectureClass(cls)) return false;
+  if (
+    cycles.some(
+      (c) =>
+        c.commitSha &&
+        /collapse/i.test(c.title ?? "") &&
+        hayMentionsClass(c.title ?? "", cls),
+    )
+  ) {
+    return false;
+  }
   const shipped = cycles.filter((c) => c.commitSha && (c.architecture?.length ?? 0) > 0);
   let n = 0;
   for (const c of shipped) {
@@ -630,6 +690,16 @@ export function architectureClassMustCollapse(
     }
   }
   return n >= 3;
+}
+
+/** MEMORY.md / AGENTS.md are operator files, not a product architecture class. */
+export function isOperatorArchitectureClass(cls: string): boolean {
+  const n = normalizeArchHay(cls);
+  if (!n) return false;
+  if (n.includes("memory md") || n.includes("forge memory")) return true;
+  if (/(^| )agents md( |$)/.test(n)) return true;
+  if (n.includes(".forge")) return true;
+  return false;
 }
 
 function hayMentionsClass(hay: string, cls: string): boolean {

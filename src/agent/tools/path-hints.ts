@@ -58,6 +58,12 @@ export async function pathNotFoundHint(
   const leaf = path.basename(missingPath);
   const parent = path.dirname(missingPath);
   const parts: string[] = [];
+  const n = missingPath.replace(/\\/g, "/");
+  if (/cursor-projects\/.+\/(agent-transcripts|terminals)(\/|$)/i.test(n)) {
+    parts.push(
+      "Forge sessions live in ~/.forge/sessions/<id> (not Cursor agent-transcripts/terminals).",
+    );
+  }
 
   const scored = await similarEntries(parent, leaf);
   if (scored.length) {

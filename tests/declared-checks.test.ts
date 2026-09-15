@@ -13,6 +13,8 @@ describe("declared-checks — finite gate and swiftc harvest", () => {
       "mkdir -p .forge/tmp && swiftc -parse-as-library PixelPetsWatch/PetState.swift PixelPetsWatch/PetStore.swift PixelPetsWatchTests/HostCareCheck.swift -o .forge/tmp/HostCareCheck && .forge/tmp/HostCareCheck";
     assert.match(stripArrangePrefix(raw), /^swiftc /);
     assert.equal(looksLikeCheckCommand(raw), true);
+    assert.equal(looksLikeCheckCommand("xcodebuild -quiet test"), true);
+    assert.equal(looksLikeCheckCommand("swift test"), true);
   });
 
   it("drops preview/dev/watch segments from a compound", () => {

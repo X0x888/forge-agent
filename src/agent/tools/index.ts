@@ -22,6 +22,7 @@ import {
   toolMcpPrompt,
 } from "../../mcp/tools.js";
 import { toolLsp } from "../../lsp/tools.js";
+import { toolLookNative } from "./look-native.js";
 import { toolSpawnSubagent } from "./subagent-tool.js";
 import { toolMemoryWrite } from "./memory-write.js";
 import {
@@ -37,7 +38,7 @@ export type { ToolContext, ToolResult } from "./types.js";
 export { TOOL_DEFINITIONS };
 
 const AVAILABLE =
-  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, memory_write, ask_user, enter_plan_mode, exit_plan_mode, web_search, web_fetch, github, search_mcp, call_mcp, mcp_resource, mcp_prompt, spawn_subagent, lsp, image_gen, image_edit, image_to_video, reference_to_video";
+  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, memory_write, ask_user, enter_plan_mode, exit_plan_mode, web_search, web_fetch, github, look_native, search_mcp, call_mcp, mcp_resource, mcp_prompt, spawn_subagent, lsp, image_gen, image_edit, image_to_video, reference_to_video";
 
 /** Canonical tool ids (used for doubled-name recovery). */
 const CANONICAL_TOOLS = [
@@ -70,6 +71,7 @@ const CANONICAL_TOOLS = [
   "web_search",
   "web_fetch",
   "github",
+  "look_native",
   "search_mcp",
   "call_mcp",
   "mcp_search",
@@ -287,6 +289,8 @@ export async function executeTool(
       case "web_fetch":
       case "WebFetch":
         return await toolWebFetch(args, ctx);
+      case "look_native":
+        return await toolLookNative(args, ctx);
       case "search_mcp":
       case "mcp_search":
         return await toolSearchMcp(args, ctx);

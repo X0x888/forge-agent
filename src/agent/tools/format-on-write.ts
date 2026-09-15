@@ -372,7 +372,10 @@ export function maybeFormatAfterWrite(
 export function formatNoteSuffix(result: FormatResult | null): string {
   if (!result) return "";
   if (result.ok) return ` (formatted with ${result.formatter})`;
-  return ` (format ${result.formatter} skipped: ${result.detail || "failed"})`;
+  return (
+    ` Write applied but ${result.formatter} rejected the file: ${result.detail || "failed"}. ` +
+    `Fix parse errors before another feature edit.`
+  );
 }
 
 /**

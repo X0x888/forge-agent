@@ -10,6 +10,7 @@
  */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createChildEnv } from "../agent/tools/env-policy.js";
+import { killProcessTree } from "./process-tree.js";
 import { log } from "./log.js";
 
 export type JsonRpcId = string | number | null;
@@ -107,8 +108,10 @@ export class JsonRpcStdioClient {
         // from mcp.json can still set a key explicitly.
         env: createChildEnv(env, { keepSecrets: true }),
         stdio: ["pipe", "pipe", "pipe"],
-        // Detached so timeout kills can target the process group on Unix.
-        detached: process.platform !== "win32",
+        // Never detach: Playwright MCP (and other stdio MCP/LSP) never
+        // answer `initialize` when the child is a session leader — stdout
+        // never reaches the parent. Bash/verify still use spawnOwnGroupOpts.
+        detached: false,
       });
     } catch (err) {
       this.closed = true;
@@ -210,33 +213,9 @@ export class JsonRpcStdioClient {
       const done = () => resolve();
       child.once("exit", done);
       const t = setTimeout(() => {
-        try {
-          if (process.platform !== "win32" && child.pid) {
-            try {
-              process.kill(-child.pid, "SIGTERM");
-            } catch {
-              child.kill("SIGTERM");
-            }
-          } else {
-            child.kill("SIGTERM");
-          }
-        } catch {
-          /* */
-        }
+        killProcessTree(child, "SIGTERM");
         const t2 = setTimeout(() => {
-          try {
-            if (process.platform !== "win32" && child.pid) {
-              try {
-                process.kill(-child.pid, "SIGKILL");
-              } catch {
-                child.kill("SIGKILL");
-              }
-            } else {
-              child.kill("SIGKILL");
-            }
-          } catch {
-            /* */
-          }
+          killProcessTree(child, "SIGKILL");
           resolve();
         }, 800);
         t2.unref?.();
@@ -254,7 +233,10 @@ export class JsonRpcStdioClient {
       `Content-Length: ${body.length}\r\n\r\n`,
       "utf8",
     );
-    this.child.stdin.write(Buffer.concat([header, body]));
+    // Trailing newline: Playwright MCP's SDK is NDJSON (no Content-Length).
+    // A body with no `\n` never completes a line, so `initialize` hangs.
+    // LSP/Content-Length readers take `body.length` bytes and leave the `\n`.
+    this.child.stdin.write(Buffer.concat([header, body, Buffer.from("\n")]));
   }
 
   private onData(chunk: Buffer): void {

@@ -37,6 +37,7 @@ export function extractFailingTests(output: string): string[] {
     else if ((m = l.match(/^\s*not ok\s+\d+\s*-\s*(.+)$/))) push(m[1]);
     else if ((m = l.match(/^\s*[✕×]\s+(.+)$/))) push(m[1]);
     else if ((m = l.match(/^\s*FAIL\s+(\S+\.(?:test|spec)\.[cm]?[jt]sx?)\b/))) push(m[1]);
+    else if ((m = l.match(/^\s*FAIL\s+(\S+?)(?:\s*[:—-]\s+|\s*$)/))) push(m[1]);
     else if ((m = l.match(/^FAILED\s+(\S+::\S+)/))) push(m[1]);
     else if ((m = l.match(/^test\s+(\S+)\s+\.\.\.\s+FAILED\s*$/))) push(m[1]);
     else if ((m = l.match(/^\s*---\s+FAIL:\s+(\S+)/))) push(m[1]);

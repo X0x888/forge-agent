@@ -71,15 +71,15 @@ describe("read_file vision", () => {
     assert.equal(loadImageDataUrl(png, dir), null);
   });
 
-  it("returns [[image:]] receipt for an 8×8 PNG instead of binary refuse", async () => {
+  it("returns [[image:]] receipt for a 32×32 PNG instead of binary refuse", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-img-read-"));
     const png = path.join(dir, "shot.png");
-    fs.writeFileSync(png, PNG_8X8);
+    fs.writeFileSync(png, PNG_32X32);
     const r = await toolRead({ path: png }, { workspace: dir });
     assert.notEqual(r.isError, true);
     assert.match(r.output, /\[\[image:shot\.png\]\]/);
     assert.match(r.output, /Image:/);
-    assert.match(r.output, /8x8/);
+    assert.match(r.output, /32x32/);
     assert.ok(loadImageDataUrl(png, dir));
   });
 });
@@ -130,14 +130,14 @@ describe("expandMessagesForVision tool results", () => {
     );
   });
 
-  it("appends a user vision turn after tool [[image:]] for an 8×8 PNG", () => {
+  it("appends a user vision turn after tool [[image:]] for a 32×32 PNG", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-vis-"));
     const png = path.join(dir, "shot.png");
-    fs.writeFileSync(png, PNG_8X8);
+    fs.writeFileSync(png, PNG_32X32);
     const out = expandMessagesForVision(
       visionMsgs(
         dir,
-        imageReadReceipt("shot.png", PNG_8X8.length, { width: 8, height: 8 }),
+        imageReadReceipt("shot.png", PNG_32X32.length, { width: 32, height: 32 }),
       ),
       dir,
     );
@@ -174,7 +174,7 @@ describe("expandMessagesForVision tool results", () => {
     const msgs: ChatMessage[] = [{ role: "user", content: "look" }];
     for (let i = 1; i <= 3; i++) {
       const png = path.join(dir, `shot${i}.png`);
-      fs.writeFileSync(png, PNG_8X8);
+      fs.writeFileSync(png, PNG_32X32);
       msgs.push(
         {
           role: "assistant",
@@ -190,9 +190,9 @@ describe("expandMessagesForVision tool results", () => {
         {
           role: "tool",
           tool_call_id: `c${i}`,
-          content: imageReadReceipt(`shot${i}.png`, PNG_8X8.length, {
-            width: 8,
-            height: 8,
+          content: imageReadReceipt(`shot${i}.png`, PNG_32X32.length, {
+            width: 32,
+            height: 32,
           }),
         },
       );
@@ -282,7 +282,7 @@ describe("dimension 400 retry", () => {
     process.env.FORGE_HOME = path.join(tmp, "home");
     process.env.FORGE_MCP = "0";
     process.env.FORGE_LSP = "0";
-    fs.writeFileSync(path.join(tmp, "shot.png"), PNG_8X8);
+    fs.writeFileSync(path.join(tmp, "shot.png"), PNG_32X32);
   });
 
   afterEach(() => {

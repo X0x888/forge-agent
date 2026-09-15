@@ -78,6 +78,7 @@ describe("tool definitions include MCP/LSP/subagent", () => {
     for (const n of [
       "search_mcp",
       "call_mcp",
+      "look_native",
       "mcp_resource",
       "mcp_prompt",
       "spawn_subagent",
@@ -94,8 +95,18 @@ describe("tool definitions include MCP/LSP/subagent", () => {
     assert.equal(normalizeToolName("LSP"), "LSP");
   });
 
-  it("read-only classification", () => {
+  it("read-only classification", async () => {
     assert.equal(isReadOnlyToolName("search_mcp"), true);
+    assert.equal(isReadOnlyToolName("look_native"), true);
+    const gate = new PermissionGate({ interactive: false });
+    const dontAsk = await gate.request({
+      toolName: "look_native",
+      input: { action: "classify", text: "(-10004)" },
+      mode: "dontAsk",
+      workspace: tmpRoot,
+      config: { ...DEFAULT_CONFIG, workspace: tmpRoot },
+    });
+    assert.equal(dontAsk.decision, "allow", "dontAsk mills must get the TCC receipt");
     assert.equal(isReadOnlyToolName("github"), true);
     assert.equal(isReadOnlyToolName("lsp"), true);
     assert.equal(isReadOnlyToolName("call_mcp"), false);
@@ -126,6 +137,32 @@ describe("MCP config + types", () => {
     assert.ok(
       cfg.servers.playwright.args?.includes("--output-dir"),
     );
+  });
+
+  it("session-bound playwright uses the look UDD instead of --isolated", () => {
+    const ws = path.join(tmpRoot, "session-pw");
+    fs.mkdirSync(ws, { recursive: true });
+    const mgr = new McpManager({
+      workspace: ws,
+      sessionId: "looksess",
+      config: {
+        enabled: true,
+        sources: [],
+        servers: {
+          playwright: {
+            name: "playwright",
+            command: "npx",
+            args: ["-y", "@playwright/mcp@0.0.41", "--isolated", "--output-dir", "/tmp/out"],
+          },
+        },
+      },
+    });
+    mgr.start();
+    const args = mgr.serverConfig("playwright")?.args ?? [];
+    assert.ok(args.includes("--user-data-dir"));
+    assert.ok(!args.includes("--isolated"));
+    const udd = args[args.indexOf("--user-data-dir") + 1];
+    assert.match(udd ?? "", /sessions\/looksess\/browsers\/look/);
   });
 
   it("decorates a stock playwright mcp.json with --isolated and an output dir", () => {

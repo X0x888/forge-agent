@@ -53,6 +53,74 @@ export function isForgeScratchRelPath(rel: string): boolean {
   return !FORGE_KEEP_RE.test(n);
 }
 
+/** Look-compile junk that must never become a cycle commit. */
+export function isLookCompileRelPath(rel: string): boolean {
+  const n = rel.replace(/\\/g, "/");
+  if (/\.(swiftmodule|swiftdoc|pcm|o)$/i.test(n)) return true;
+  if (/(^|\/)looks\/.+\.mjs$/i.test(n)) return true;
+  if (/(^|\/)look-shots\//i.test(n)) return true;
+  return false;
+}
+
+/** Tracked MEMORY.md restamp is not a product cycle (SCRAPFALL mill). */
+export function isMemoryMirrorRelPath(rel: string): boolean {
+  const n = rel.replace(/\\/g, "/").replace(/^\.\//, "");
+  return n === ".forge/MEMORY.md";
+}
+
+function isNonProductRel(rel: string): boolean {
+  return (
+    isDocsOnlyRelPath(rel) ||
+    isForgeScratchRelPath(rel) ||
+    isLookCompileRelPath(rel) ||
+    isLookArtefactRelPath(rel) ||
+    isDisposableTestRelPath(rel) ||
+    isMemoryMirrorRelPath(rel) ||
+    isSensitiveRelPath(rel)
+  );
+}
+
+/**
+ * Tracked + dirty paths since `fromHead` (or the dirty index). Untracked
+ * files are included so a docs-only README or MEMORY.md restamp is visible
+ * even when `git diff SHA` does not list them.
+ */
+export function cycleChangedPaths(cwd: string, fromHead?: string | null): string[] {
+  const names = new Set<string>();
+  try {
+    if (fromHead) {
+      const tracked = gitQuiet(["diff", "--name-only", fromHead], cwd, 8_000);
+      if (tracked == null) return ["?"];
+      for (const p of tracked.split("\n")) {
+        const t = p.trim();
+        if (t) names.add(t);
+      }
+    }
+    for (const p of porcelainPaths(cwd)) names.add(p);
+  } catch {
+    return ["?"];
+  }
+  return [...names];
+}
+
+/** True when the tree has a product/source change since `fromHead` (or the dirty index). */
+export function cycleHasSubstanceDiff(cwd: string, fromHead?: string | null): boolean {
+  const names = cycleChangedPaths(cwd, fromHead);
+  if (names.includes("?")) return true;
+  return names.some((p) => !isNonProductRel(p));
+}
+
+/**
+ * True when the cycle changed something, and every path is docs / MEMORY.md /
+ * look junk — not a product surface. Empty trees are not docs-only (the
+ * Reviewer still looks).
+ */
+export function cycleDiffIsDocsOnly(cwd: string, fromHead?: string | null): boolean {
+  const names = cycleChangedPaths(cwd, fromHead);
+  if (!names.length || names.includes("?")) return false;
+  return names.every(isNonProductRel);
+}
+
 export type AutoCommitKind = "docs" | "substance";
 
 export interface AutoCommitResult {
@@ -343,9 +411,13 @@ export function commitDirtyTree(opts: {
     (p) =>
       !isSensitiveRelPath(p) &&
       !isDisposableTestRelPath(p) &&
-      !isForgeScratchRelPath(p),
+      !isForgeScratchRelPath(p) &&
+      !isLookCompileRelPath(p) &&
+      !isMemoryMirrorRelPath(p),
   );
-  const leftUnstaged = dirty.filter(isForgeScratchRelPath);
+  const leftUnstaged = dirty.filter(
+    (p) => isForgeScratchRelPath(p) || isLookCompileRelPath(p) || isMemoryMirrorRelPath(p),
+  );
   const looks = toAdd.filter(isLookArtefactRelPath);
   if (looks.length) {
     let orphan: string[] = [];

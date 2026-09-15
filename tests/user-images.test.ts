@@ -7,12 +7,19 @@ import {
   imagePixelSize,
   imageReadReceipt,
   imageVisionStatus,
+  imageNeedsUpscale,
   loadImageDataUrl,
   MAX_IMAGE_BYTES,
   MIN_VISION_EDGE,
+  MIN_VISION_PIXELS,
   stripOutboundImageParts,
 } from "../src/util/user-images.js";
-import { isImageDimensionError, ProviderApiError } from "../src/providers/errors.js";
+import { encodeBmp24, encodePngRgba } from "../src/util/raster.js";
+import {
+  isImageDimensionError,
+  isVisionPayloadError,
+  ProviderApiError,
+} from "../src/providers/errors.js";
 
 /** Exact Maze leftover-door 1×1 PNG (also in imagine.test.ts). */
 const PNG_1X1 = Buffer.from(
@@ -143,7 +150,7 @@ describe("imageVisionStatus / imageReadReceipt", () => {
     assert.match(
       text,
       new RegExp(
-        `Image: leftover-door\\.png \\(${PNG_1X1.length} bytes, 1x1\\)\\. Not attached — both edges must be at least 8 pixels\\.`,
+        `Image: leftover-door\\.png \\(${PNG_1X1.length} bytes, 1x1\\)\\. Not attached — both edges must be at least 8 pixels`,
       ),
     );
     assert.equal(MIN_VISION_EDGE, 8);
@@ -206,15 +213,53 @@ describe("loadImageDataUrl vision floor", () => {
     assert.equal(loadImageDataUrl(p, dir), null);
   });
 
-  it("inlines an 8×8 PNG and a 32×32 PNG", () => {
-    const a = path.join(dir, "ok8.png");
+  it("inlines a 32×32 PNG as image/png", () => {
     const b = path.join(dir, "ok32.png");
-    fs.writeFileSync(a, pngWithEdge(8));
     fs.writeFileSync(b, pngWithEdge(32));
-    const eight = loadImageDataUrl(a, dir);
     const thirty = loadImageDataUrl("ok32.png", dir);
-    assert.ok(eight?.dataUrl.startsWith("data:image/png;base64,"));
     assert.ok(thirty?.dataUrl.startsWith("data:image/png;base64,"));
+  });
+
+  it("converts a dump BMP to PNG and never sends image/bmp", () => {
+    const rgba = Buffer.alloc(16 * 16 * 4, 80);
+    for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
+    const bmp = encodeBmp24({ width: 16, height: 16, rgba });
+    const p = path.join(dir, "战士.bmp");
+    fs.writeFileSync(p, bmp);
+    const loaded = loadImageDataUrl(p, dir);
+    assert.ok(loaded?.dataUrl.startsWith("data:image/png;base64,"));
+    assert.ok(!loaded?.dataUrl.startsWith("data:image/bmp"));
+  });
+
+  it("upscales a 15×17 PNG so the payload is at least 512 pixels", () => {
+    const w = 15;
+    const h = 17;
+    const rgba = Buffer.alloc(w * h * 4, 40);
+    for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
+    const p = path.join(dir, "icon.png");
+    fs.writeFileSync(p, encodePngRgba({ width: w, height: h, rgba }));
+    assert.equal(imageNeedsUpscale(w, h), true);
+    const loaded = loadImageDataUrl(p, dir);
+    assert.ok(loaded?.dataUrl.startsWith("data:image/png;base64,"));
+    const b64 = loaded!.dataUrl.slice("data:image/png;base64,".length);
+    const out = Buffer.from(b64, "base64");
+    const dim = imagePixelSize(out);
+    assert.ok(dim);
+    assert.ok(dim.width * dim.height >= MIN_VISION_PIXELS);
+    assert.ok(dim.width >= MIN_VISION_EDGE && dim.height >= MIN_VISION_EDGE);
+  });
+
+  it("does not attach WebP whose size cannot be parsed", () => {
+    const p = path.join(dir, "thumb.webp");
+    fs.writeFileSync(p, Buffer.from("RIFF....WEBP"));
+    assert.equal(loadImageDataUrl(p, dir), null);
+  });
+
+  it("does not attach GIF", () => {
+    const p = path.join(dir, "a.gif");
+    fs.writeFileSync(p, Buffer.from("GIF89a"));
+    assert.equal(loadImageDataUrl(p, dir), null);
+    assert.doesNotMatch(imageReadReceipt("a.gif", 6), /\[\[image:/);
   });
 
   it("returns null for size 0", () => {
@@ -279,6 +324,54 @@ describe("isImageDimensionError", () => {
       false,
     );
     assert.equal(isImageDimensionError(new Error("invalid api key")), false);
+  });
+});
+
+describe("isVisionPayloadError", () => {
+  const bmp400 =
+    'xai API error 400: {"code":"invalid_image","error":"Downloaded response does not contain a valid JPG, PNG, WebP, or ICO image."}';
+  const area400 =
+    'xai API error 400: {"code":"invalid_image","error":"Image has 255 total pixels (15x17), which is below the minimum of 512 pixels."}';
+
+  it("matches QQHX BMP 400 and QQT 15×17 400", () => {
+    assert.equal(isVisionPayloadError(new Error(bmp400)), true);
+    assert.equal(isVisionPayloadError(new Error(area400)), true);
+    assert.equal(
+      isVisionPayloadError(
+        new ProviderApiError({
+          provider: "xai",
+          status: 400,
+          body: JSON.stringify({
+            code: "invalid_image",
+            error: "Downloaded response does not contain a valid JPG, PNG, WebP, or ICO image.",
+          }),
+        }),
+      ),
+      true,
+    );
+  });
+
+  it("does not match generic 400s", () => {
+    assert.equal(
+      isVisionPayloadError(
+        new ProviderApiError({
+          provider: "xai",
+          status: 400,
+          body: "invalid schema for function",
+        }),
+      ),
+      false,
+    );
+    assert.equal(
+      isVisionPayloadError(
+        new ProviderApiError({
+          provider: "xai",
+          status: 400,
+          body: "max_tokens is too small",
+        }),
+      ),
+      false,
+    );
   });
 });
 

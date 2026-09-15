@@ -20,6 +20,7 @@ import {
   lineStats,
 } from "./edit-receipt.js";
 import { verifyHintSuffix } from "../../util/project-intel.js";
+import { lookScriptWriteRefuse } from "./look-script-refuse.js";
 
 export async function toolWrite(
   args: Record<string, unknown>,
@@ -68,6 +69,13 @@ export async function toolWrite(
   try {
     const logical = resolvePath(ctx.workspace, raw);
     const filePath = await assertWritablePath(ctx.workspace, logical);
+    const lookRefuse = lookScriptWriteRefuse(
+      displayRelPath(ctx.workspace, filePath),
+      args.content,
+    );
+    if (lookRefuse) {
+      return { output: lookRefuse, isError: true };
+    }
     // Refuse directory targets early — EISDIR from rename is opaque to models.
     try {
       if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {

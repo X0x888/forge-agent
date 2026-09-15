@@ -98,6 +98,36 @@ describe("detectProductKind", () => {
     );
   });
 
+  it("Package.swift + Sources → game, Playwright off", () => {
+    withRepo("forge-kind-swift-", (d) => {
+      write(d, "Package.swift", "// swift-tools-version: 5.9\n");
+      write(d, "Sources/App/main.swift", "print(1)\n");
+    }, (d) => {
+      assert.equal(detectProductKind(d), "game");
+      assert.equal(playwrightLookApplies(d), false);
+    });
+  });
+
+  it("Cargo.toml macroquad → game, Playwright off", () => {
+    withRepo("forge-kind-mq-", (d) => {
+      write(d, "Cargo.toml", "[package]\nname=\"yard\"\n[dependencies]\nmacroquad = \"0.4\"\n");
+      write(d, "src/main.rs", "fn main() {}\n");
+    }, (d) => {
+      assert.equal(detectProductKind(d), "game");
+      assert.equal(playwrightLookApplies(d), false);
+    });
+  });
+
+  it("xcodeproj → game, Playwright off", () => {
+    withRepo("forge-kind-xc-", (d) => {
+      fs.mkdirSync(path.join(d, "PixelPets.xcodeproj"));
+      write(d, "PixelPets.xcodeproj/project.pbxproj", "//\n");
+    }, (d) => {
+      assert.equal(detectProductKind(d), "game");
+      assert.equal(playwrightLookApplies(d), false);
+    });
+  });
+
   it("empty → unknown", () => {
     withRepo("forge-kind-empty-", () => {}, (d) => {
       assert.equal(detectProductKind(d), "unknown");

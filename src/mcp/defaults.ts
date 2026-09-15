@@ -5,8 +5,9 @@
  * override or disable any entry). Opt out entirely with FORGE_MCP_DEFAULTS=0.
  *
  * - context7 — up-to-date library docs (npx @upstash/context7-mcp)
- * - playwright — isolated browser (npx @playwright/mcp --isolated); output
- *   under ~/.forge/tmp/playwright-output so the workspace is not a dump
+ * - playwright — isolated browser (npx @playwright/mcp --isolated) unless a
+ *   session look profile is bound (`--user-data-dir`); output under
+ *   ~/.forge/tmp/playwright-output so the workspace is not a dump
  */
 import fs from "node:fs";
 import type { McpServerConfig } from "./types.js";
@@ -63,12 +64,31 @@ function playwrightMcpArgs(): string[] {
   } catch {
     /* output-dir is best-effort; --isolated still prevents disk profiles */
   }
-  return ["-y", "@playwright/mcp@latest", "--isolated", "--output-dir", outDir];
+  const spec =
+    process.env.FORGE_PLAYWRIGHT_MCP?.trim() || "@playwright/mcp@0.0.41";
+  const args = [
+    "-y",
+    spec,
+    "--isolated",
+    "--headless",
+    "--output-dir",
+    outDir,
+  ];
+  if (isFalsy(process.env.FORGE_PLAYWRIGHT_HEADLESS)) {
+    return args.filter((a) => a !== "--headless");
+  }
+  return args;
 }
 
 export function isPlaywrightMcp(cfg: McpServerConfig, name: string): boolean {
   const blob = `${name} ${cfg.command || ""} ${(cfg.args || []).join(" ")}`;
   return /@playwright\/mcp/i.test(blob) || /^playwright$/i.test(name);
+}
+
+function hasUserDataDirArg(args: string[]): boolean {
+  return args.some(
+    (a) => a === "--user-data-dir" || a.startsWith("--user-data-dir="),
+  );
 }
 
 /**
@@ -83,10 +103,14 @@ export function decoratePlaywrightServer(
   if (!isPlaywrightMcp(cfg, name)) return cfg;
   if (isFalsy(process.env.FORGE_PLAYWRIGHT_ISOLATED)) return cfg;
   const args = [...(cfg.args || [])];
-  const hasUserData = args.some(
-    (a) => a === "--user-data-dir" || a.startsWith("--user-data-dir="),
-  );
+  const hasUserData = hasUserDataDirArg(args);
   if (!hasUserData && !args.includes("--isolated")) args.push("--isolated");
+  if (
+    !isFalsy(process.env.FORGE_PLAYWRIGHT_HEADLESS) &&
+    !args.includes("--headless")
+  ) {
+    args.push("--headless");
+  }
   if (!args.some((a) => a === "--output-dir" || a.startsWith("--output-dir="))) {
     const outDir = playwrightOutputDir();
     try {
@@ -103,10 +127,39 @@ export function decoratePlaywrightServer(
   };
 }
 
+/**
+ * Bind Playwright MCP to the session look profile. `--isolated` cannot
+ * combine with `--user-data-dir`; drop isolation when a UDD is supplied.
+ * Leaves an explicit user `--user-data-dir` alone.
+ */
+export function bindPlaywrightSessionProfile(
+  cfg: McpServerConfig,
+  udd: string,
+): McpServerConfig {
+  if (isFalsy(process.env.FORGE_PLAYWRIGHT_ISOLATED)) return cfg;
+  const dir = String(udd || "").trim();
+  if (!dir) return cfg;
+  const args = [...(cfg.args || [])];
+  if (hasUserDataDirArg(args)) return cfg;
+  const out = args.filter((a) => a !== "--isolated");
+  out.push("--user-data-dir", dir);
+  if (
+    !isFalsy(process.env.FORGE_PLAYWRIGHT_HEADLESS) &&
+    !out.includes("--headless")
+  ) {
+    out.push("--headless");
+  }
+  return {
+    ...cfg,
+    args: out,
+    env: { ...cfg.env, PLAYWRIGHT_MCP_ISOLATED: "0" },
+  };
+}
+
 /** Human-readable blurb for /mcp status and doctor. */
 export function formatDefaultMcpBlurb(): string {
   return (
-    "Built-in defaults: context7 (library docs), playwright (isolated browser; output under ~/.forge/tmp). " +
+    "Built-in defaults: context7 (library docs), playwright (session look profile, or --isolated; output under ~/.forge/tmp). " +
     "GitHub source is the native `github` tool, not an MCP. " +
     "Override or disable in ~/.forge/mcp.json · FORGE_MCP_DEFAULTS=0 turns defaults off."
   );

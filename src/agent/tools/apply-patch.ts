@@ -24,6 +24,7 @@ import {
 } from "./format-on-write.js";
 import { fileReadGuardEnabled } from "./file-read-state.js";
 import { verifyHintSuffix } from "../../util/project-intel.js";
+import { lookScriptWriteRefuse } from "./look-script-refuse.js";
 
 async function unlinkIfExists(abs: string): Promise<void> {
   try {
@@ -353,6 +354,16 @@ export async function toolApplyPatch(
       willCreate.delete(abs);
       willCreate.add(moveAbs);
       willDelete.delete(moveAbs);
+    }
+  }
+
+  for (const op of planned) {
+    if (op.kind === "delete") continue;
+    const refuse = lookScriptWriteRefuse(op.rel, op.content);
+    if (refuse) return { output: refuse, isError: true };
+    if (op.kind === "update" && op.moveRel) {
+      const moved = lookScriptWriteRefuse(op.moveRel, op.content);
+      if (moved) return { output: moved, isError: true };
     }
   }
 

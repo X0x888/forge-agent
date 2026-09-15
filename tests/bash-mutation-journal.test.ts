@@ -68,6 +68,8 @@ describe("isLookScratchRel", () => {
     assert.equal(isLookScratchRel(".forge/tmp-c3-look/swift-mod/PetState.swiftmodule"), true);
     assert.equal(isLookScratchRel(".forge/tmp/HostCareCheck"), true);
     assert.equal(isLookScratchRel("build/foo.o"), true);
+    assert.equal(isLookScratchRel("looks/c27.mjs"), true);
+    assert.equal(isLookScratchRel("Foo.pcm"), true);
     assert.equal(isLookScratchRel("PixelPetsWatch/PetState.swift"), false);
     assert.equal(isLookScratchRel("src/index.ts"), false);
   });

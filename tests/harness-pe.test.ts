@@ -483,11 +483,10 @@ describe("prompt profile + baseline system", () => {
         /## Project memory/,
         "a fresh repo has no project memory; the fixture leaked the developer's",
       );
-      // 16k: measured 15.6k once the fixture stopped importing project
-      // memory (the old 17k ceiling had ~1.7k of it inside). Anything past
-      // this is doctrine bloat — trim a bullet, do not raise the number.
+      // 16.2k: 16k was the doctrine ceiling; look_native's schema is a tool,
+      // not a bullet. New doctrine still trims; do not grow this for prose.
       assert.ok(
-        text.length < 16_000,
+        text.length < 16_200,
         `baseline system prompt grew to ${text.length} chars`,
       );
       // Without builtins the core doctrine alone must stay small.

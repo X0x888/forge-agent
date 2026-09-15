@@ -56,6 +56,32 @@ export function isImageDimensionError(err: unknown): boolean {
 }
 
 /**
+ * Any vision payload 400 that a strip-and-retry can recover from.
+ * QQHX mill: invalid_image / "not a valid JPG, PNG, WebP, or ICO".
+ * QQT mill: "255 total pixels (15x17), which is below the minimum of 512".
+ */
+const VISION_PAYLOAD_RE =
+  /invalid_image|does not contain a valid (?:jpg|jpeg|png|webp|ico)|below the minimum of \d+ pixels|total pixels/i;
+
+export function isVisionPayloadError(err: unknown): boolean {
+  if (isImageDimensionError(err)) return true;
+  const blob = isProviderApiError(err)
+    ? `${err.body}\n${err.message}`
+    : err instanceof Error
+      ? err.message
+      : String(err ?? "");
+  if (isProviderApiError(err) && err.status !== 400 && err.status !== 422) {
+    return false;
+  }
+  if (!VISION_PAYLOAD_RE.test(blob)) return false;
+  // Do not treat "max_tokens is too small" as vision.
+  if (/max_tokens|invalid schema|invalid_grant|invalid api/i.test(blob) && !/invalid_image/i.test(blob)) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Parse Retry-After / retry-after-ms response headers into a delay in ms.
  * Supports delta-seconds and HTTP-date forms (RFC 7231).
  */

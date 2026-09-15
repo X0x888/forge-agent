@@ -176,6 +176,7 @@ import { normalizePermissionMode, normalizeSandboxProfile } from "../util/mode-a
 import { isFalsy } from "../util/bool.js";
 import { forgeHome, inspectSecureFile } from "../util/fs.js";
 import { forgeTmpStats } from "../util/forge-tmp.js";
+import { darwinAccessibilityDenied } from "../util/look-infra.js";
 import { checkCommandHasShellComment } from "../util/project-intel.js";
 import { defaultSubagentMaxTurns } from "../agent/subagent-policy.js";
 import { getForgeVersion } from "../util/version.js";
@@ -8082,6 +8083,19 @@ export async function runDoctorCheck(
     }
   } catch {
     /* */
+  }
+  try {
+    if (darwinAccessibilityDenied() === true) {
+      recommendations.push({
+        id: "tcc-accessibility",
+        severity: "setup",
+        detail:
+          "Accessibility is denied (TCC -10004) — native ULW looks cannot click or grab windows. Grant Terminal/Forge Accessibility + Screen Recording in System Settings.",
+        replAction: "/doctor",
+      });
+    }
+  } catch {
+    /* probe is advisory */
   }
 
   return {

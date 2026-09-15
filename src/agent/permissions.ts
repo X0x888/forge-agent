@@ -59,6 +59,7 @@ const READ_ONLY_TOOLS = new Set([
   "memory_write",
   "get_task_output",
   "search_mcp",
+  "look_native",
   "mcp_search",
   "mcp_resource",
   "mcp_prompt",

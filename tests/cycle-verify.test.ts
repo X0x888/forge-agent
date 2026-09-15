@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { judgeAgainstBaseline, runCheckCommand } from "../src/harness/cycle/verify.js";
+import {
+  isOperatorFileFailure,
+  judgeAgainstBaseline,
+  runCheckCommand,
+} from "../src/harness/cycle/verify.js";
 import { pidAlive, processKillGraceMs } from "../src/util/process-tree.js";
 import {
   extractFailingTests,
@@ -69,6 +73,16 @@ describe("extractFailingTests", () => {
     assert.deepEqual(extractFailingTests("\x1b[31m✖ red one (1ms)\x1b[0m"), ["red one"]);
     assert.deepEqual(extractFailingTests("✔ all good\nℹ pass 10\nℹ fail 0"), []);
   });
+
+  it("Pixel Pets HostCareCheck FAIL ident: is a named failure", () => {
+    const out = [
+      "PASS reducedMotionStopsIdleAndKeepsPoseWiring",
+      "FAIL watchSourcesDoNotAddHealthKitOrMovementFeed: .forge/MEMORY.md must keep the Identity fact (watch-only, no HealthKit mascot)",
+    ].join("\n");
+    assert.deepEqual(extractFailingTests(out), [
+      "watchSourcesDoNotAddHealthKitOrMovementFeed",
+    ]);
+  });
 });
 
 describe("judgeAgainstBaseline", () => {
@@ -117,6 +131,21 @@ describe("judgeAgainstBaseline", () => {
     assert.match(judgeAgainstBaseline(red([]), baseline).note, /no failing tests named/);
     assert.equal(judgeAgainstBaseline({ ...red([]), timedOut: true }, baseline).passed, false);
     assert.equal(judgeAgainstBaseline({ ...red(["hud width"]), command: "npm run test:unit" }, baseline).passed, false);
+  });
+
+  it("operator-file grep failures are not a product-gate red", () => {
+    assert.equal(isOperatorFileFailure("tests/memory.test.ts cites .forge/MEMORY.md"), true);
+    assert.equal(isOperatorFileFailure("AGENTS.md Commands fence"), true);
+    assert.equal(isOperatorFileFailure("renders colour"), false);
+    const onlyOp = judgeAgainstBaseline(red(["grep .forge/MEMORY.md is stale"]), undefined);
+    assert.equal(onlyOp.passed, true);
+    assert.match(onlyOp.note, /operator-file/);
+    const mixed = judgeAgainstBaseline(
+      red(["grep .forge/MEMORY.md is stale", "my new test"]),
+      baseline,
+    );
+    assert.equal(mixed.passed, false);
+    assert.deepEqual(mixed.newFailures, ["my new test"]);
   });
 });
 

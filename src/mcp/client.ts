@@ -332,14 +332,20 @@ export class McpClient {
         this.timeoutMs(),
       )) as { tools?: McpToolDef[] };
       this.tools = Array.isArray(listed?.tools) ? listed.tools : [];
-      // Best-effort discover resources/prompts (ignore unsupported)
-      await this.listResources(true).catch(() => {
-        this.resources = [];
-      });
-      await this.listPrompts(true).catch(() => {
-        this.prompts = [];
-      });
       this.state = "ready";
+      // Playwright advertises tools only. resources/list on that server
+      // never returns, which used to leave the look path `connecting` for
+      // the full timeout. Discover extras only when the server said so.
+      if (this.serverCaps.resources) {
+        await this.listResources(true).catch(() => {
+          this.resources = [];
+        });
+      }
+      if (this.serverCaps.prompts) {
+        await this.listPrompts(true).catch(() => {
+          this.prompts = [];
+        });
+      }
       log.dim(
         `MCP server ready: ${this.name} (${this.tools.length} tools` +
           (this.resources.length ? `, ${this.resources.length} resources` : "") +

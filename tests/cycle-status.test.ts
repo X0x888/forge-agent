@@ -94,6 +94,21 @@ describe("/cycle status", () => {
     assert.match(cycleReportFacts(s).outcome, /3 cycle\(s\) in a row landed nothing/);
   });
 
+  it("names a synth-cap wall even when cycles committed", () => {
+    const s = state();
+    s.enabled = false;
+    s.phase = "released";
+    s.endReason = "no-progress";
+    s.synthStreak = 2;
+    s.noCommitStreak = 0;
+    s.directExecuteStreak = 0;
+    s.cycles[0].commitSha = "abc1234";
+    assert.match(
+      cycleReportFacts(s).outcome,
+      /2 synthesized cycle\(s\).*last commit abc1234/,
+    );
+  });
+
   it("no-commit streak prints against FORGE_ULW_NO_PROGRESS_CAP", () => {
     process.env.FORGE_ULW_NO_PROGRESS_CAP = "5";
     const s = state();

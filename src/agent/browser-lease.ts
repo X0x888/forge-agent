@@ -26,6 +26,7 @@ import {
   removeChromeLookDirs,
 } from "../util/look-cleanup.js";
 import { escalateKillPid, pidAlive } from "../util/process-tree.js";
+import { lookPortForSession } from "../util/look-port.js";
 
 export interface BrowserLease {
   id: string;
@@ -321,7 +322,7 @@ function chromeStillCites(udd: string): boolean {
 }
 
 const VITE_GUI_RE =
-  /\bvite(?:\.js)?\s+(?:preview|dev)\b|\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:preview|dev)\b/i;
+  /\bvite(?:\.js)?\s+(?:preview|dev)\b|\bvite(?:\.js)?\b.*--port|\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:preview|dev)\b|\bnext\s+(?:dev|start)\b/i;
 
 function portFromCmd(cmd: string): string | undefined {
   return cmd.match(/--port[=\s]+(\d+)/i)?.[1];
@@ -618,7 +619,9 @@ export function guiLeaseFromCommand(command: string): { app: string } | undefine
   if (/\bsimctl\s+launch\b/i.test(cmd)) return { app: "simctl" };
   if (
     /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:preview|dev)\b/i.test(cmd) ||
-    /\bvite\s+preview\b/i.test(cmd)
+    /\bvite(?:\.js)?\s+(?:preview|dev)\b/i.test(cmd) ||
+    (/\bvite(?:\.js)?\b/i.test(cmd) && /--port/i.test(cmd)) ||
+    /\bnext\s+(?:dev|start)\b/i.test(cmd)
   ) {
     return { app: "vite-preview" };
   }
@@ -668,6 +671,8 @@ export function registerSpawnedResources(opts: {
     } catch {
       /* */
     }
+    const portRaw = portFromCmd(cmd);
+    const port = portRaw ? Number(portRaw) : undefined;
     registerBrowserLease({
       sessionId: opts.sessionId,
       rootSessionId: opts.rootSessionId,
@@ -675,9 +680,55 @@ export function registerSpawnedResources(opts: {
       workspace: opts.workspace,
       pid: opts.pid,
       pgid: opts.pid,
+      port: Number.isFinite(port) && (port as number) > 0 ? port : undefined,
       cmd: cmd.slice(0, 800),
       kind: "gui",
       bundleId: gui.app,
     });
   }
+}
+
+/** Kill-switch: `FORGE_LOOK_DEV_LEASE=0` restores foreground 30s Vite SIGTERM. */
+export function lookDevLeaseEnabled(): boolean {
+  return !isFalsy(process.env.FORGE_LOOK_DEV_LEASE);
+}
+
+export function isLookDevServerCommand(command: string): boolean {
+  return guiLeaseFromCommand(command)?.app === "vite-preview";
+}
+
+/**
+ * Pin `npm run dev` / `vite preview` onto this session's look port so
+ * concurrent mills do not share :5173. Replaces a model-supplied `--port`.
+ */
+export function pinLookServerCommand(
+  command: string,
+  sessionId: string,
+): { command: string; port: number } {
+  const port = lookPortForSession(sessionId);
+  let next = String(command || "").trim();
+  if (/--port[=\s]+\d+/i.test(next)) {
+    next = next.replace(/--port[=\s]+\d+/gi, `--port ${port}`);
+  } else if (/\b(?:npm|pnpm|yarn|bun)\s+/i.test(next)) {
+    next = /\s--\s/.test(next) ? `${next} --port ${port}` : `${next} -- --port ${port}`;
+  } else {
+    next = `${next} --port ${port}`;
+  }
+  if (!/--strictPort\b/i.test(next)) next = `${next} --strictPort`;
+  return { command: next, port };
+}
+
+/** A live vite-preview GUI lease for this (root) session — reuse, do not respawn. */
+export function liveLookServerLease(sessionId: string): BrowserLease | undefined {
+  const sid = safeSessionId(sessionId);
+  for (const lease of readStore(sid).leases) {
+    if (lease.state === "zombie") continue;
+    const vite =
+      lease.bundleId === "vite-preview" ||
+      VITE_GUI_RE.test(lease.cmd || "") ||
+      /vite-preview/i.test(`${lease.bundleId ?? ""} ${lease.cmd ?? ""}`);
+    if (!vite) continue;
+    if (typeof lease.pid === "number" && lease.pid > 1 && pidAlive(lease.pid)) return lease;
+  }
+  return undefined;
 }

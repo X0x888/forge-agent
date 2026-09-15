@@ -40,18 +40,25 @@ export async function toolSearchMcp(
   try {
     const result = await mcp.search(query || "*", limit);
     if (!result.tools.length) {
+      const st = mcp.playwrightStatus();
+      const pwDown = st === "down" || st === "connecting";
       const errs = result.serverErrors.length
         ? `\nServer errors:\n${result.serverErrors.map((e) => `  - ${e}`).join("\n")}`
         : "";
+      const configured = mcp.serverNames().length > 0;
+      const isError = Boolean(result.serverErrors.length || (configured && pwDown));
       return {
         output:
           (query
             ? `No MCP tools matched "${query}".`
             : "No MCP tools registered.") +
+          (pwDown
+            ? `\nPlaywright MCP is ${st} — wait for /mcp status ready, then search again. Do not write a Chrome/CDP script.`
+            : "") +
           "\nConfigure .forge/mcp.json / ~/.forge/mcp.json (Claude/Cursor shape: { \"mcpServers\": { … } })." +
           "\nUse /mcp status in the REPL for connectivity." +
           errs,
-        isError: false,
+        isError,
       };
     }
     const lines: string[] = [

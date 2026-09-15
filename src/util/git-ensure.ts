@@ -143,6 +143,7 @@ export function defaultGitignore(cwd: string): string {
     ".forge/tmp-*/",
     "*.swiftmodule",
     "*.swiftdoc",
+    "*.pcm",
     "*.o",
     "test-results/",
     "playwright-report/",

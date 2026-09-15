@@ -749,6 +749,21 @@ describe("cycle orchestrator", () => {
     });
   }
 
+  it("post-review red on a look-only ship skips the cycle instead of burning fix_rounds", async () => {
+    const sid = "orch-look-only-red";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "ship the widget" }] });
+    const { rt, calls } = fakeRuntime(cwd, {
+      reviewer: [REVIEW_OK],
+      checkPasses: [true, false],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts(), fixRoundsCap: 2 });
+    assert.equal(r?.committed?.sha, undefined);
+    assert.match(r?.committed?.skipped ?? "", /look-only/);
+    assert.notEqual(r?.endReason, "fix-cap");
+    assert.ok(!calls.some((c) => c.startsWith("commit:")));
+    assert.notEqual(loadCycleState(sid)!.phase, "fix");
+  });
+
   it("fix rounds past the cap release with fix-cap and nothing committed", async () => {
     const sid = "orch-fixcap";
     armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test" });
@@ -1589,6 +1604,30 @@ describe("cycle orchestrator — two turns per role", () => {
     assert.equal(s.directExecuteStreak, 0);
   });
 
+  it("cycle 2 starved Planner synthesizes scout candidates without admitting the scout as the plan", async () => {
+    const sid = "orch2-cycle2-synth-scout";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "ship" }] });
+    const scout = `# Cycle 2 scout
+Identity: a CLI
+Looked: ran --help
+Considered:
+- restow the title door — first session still has stock Start
+- leave it — the match already pops
+`;
+    const { rt, calls } = fakeRuntime(cwd, {
+      twoTurn: true,
+      reviewer: [LOOK(1), REVIEW_OK],
+      planner: [scout, "prose", "still prose"],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r?.planAdmitted, true);
+    assert.ok(calls.filter((c) => c === "role:planner#2").length >= 2, "plan turn retried");
+    const s = loadCycleState(sid)!;
+    assert.equal(s.cycles[1]?.plannerStatus, "synthesized");
+    assert.match(s.items[0]?.title ?? "", /restow the title door/i);
+    assert.doesNotMatch(s.planTitle ?? "", /theme 2/);
+  });
+
   it("cycle 2 scout-as-plan still runs turn 2 so the Planner reads the record", async () => {
     const sid = "orch2-cycle2-record";
     armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "ship" }] });
@@ -1745,7 +1784,7 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     assert.match(out.reason, /not making progress|shipped nothing/);
   });
 
-  it("committed synthesized cycles still cap at FORGE_ULW_SYNTH_CAP", async () => {
+  it("synthesized cycles that commit substance do not burn FORGE_ULW_SYNTH_CAP", async () => {
     process.env.FORGE_ULW_TWO_TURN = "0";
     process.env.FORGE_ULW_SYNTH_CAP = "2";
     const sid = "orch3-synth-cap";
@@ -1753,18 +1792,40 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     armCycle({ sessionId: sid, mandate: null, cwd });
     const { rt } = fakeRuntime(cwd, {
       planner: ["prose", "still prose", "more", "still more", "third", "still third"],
-      reviewer: [REVIEW_OK, REVIEW_OK],
+      reviewer: [REVIEW_OK, REVIEW_OK, REVIEW_OK],
     });
     const first = await ensureCyclePlanned(sid, rt);
     assert.equal(first?.planAdmitted, true);
     assert.match(loadCycleState(sid)!.planTitle ?? "", /Direct execute/);
     const r1 = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
     assert.ok(r1?.committed?.sha, "first synthesized cycle may still commit");
-    assert.equal(r1?.released, false, "two committed synths are allowed");
-    assert.equal(loadCycleState(sid)!.synthStreak, 1);
+    assert.equal(r1?.released, false);
+    assert.equal(loadCycleState(sid)!.synthStreak, 0, "substance synth does not burn the cap");
     assert.equal(loadCycleState(sid)!.cycle, 2);
     const r2 = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
-    assert.ok(r2?.released, "a third synthesized cycle is the cap, even when the first two committed");
+    assert.equal(r2?.released, false, "QQT c40–41 substance synth must not release the run");
+    assert.equal(loadCycleState(sid)!.synthStreak, 0);
+  });
+
+  it("empty synthesized cycles still cap at FORGE_ULW_SYNTH_CAP", async () => {
+    process.env.FORGE_ULW_TWO_TURN = "0";
+    process.env.FORGE_ULW_SYNTH_CAP = "2";
+    const sid = "orch3-synth-empty-cap";
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: null, cwd });
+    const blocked = `# Cycle 1 review\nVerdict: blocked\nLooked: could not run\nMust-fix:\n- look the surface\nWorth: no — nothing landed`;
+    const { rt } = fakeRuntime(cwd, {
+      planner: ["prose", "still prose", "more", "still more", "third", "still third"],
+      reviewer: [blocked, blocked, blocked],
+    });
+    const first = await ensureCyclePlanned(sid, rt);
+    assert.equal(first?.planAdmitted, true);
+    const r1 = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r1?.committed?.sha, undefined);
+    assert.equal(r1?.released, false);
+    assert.equal(loadCycleState(sid)!.synthStreak, 1);
+    const r2 = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r2?.released, "two empty synths trip the cap");
     assert.equal(r2.endReason, "no-progress");
     assert.match(r2.reason ?? "", /synthesized cycle/);
   });
@@ -1874,6 +1935,30 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     assert.equal(r?.committed?.skipped, "review blocked");
     assert.equal(loadCycleState(sid)!.cycles[0].reviewVerdict, "blocked");
     assert.ok(!calls.some((c) => c.startsWith("commit:")));
+  });
+
+  it("a docs-only cycle skips the Reviewer look turn", async () => {
+    const sid = "orch2-docs-look";
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      verifyCommand: "npm test",
+      maxCycles: 1,
+      items: [{ title: "ship the widget", proof: "npm test" }],
+    });
+    fs.writeFileSync(path.join(cwd, "README.md"), "# docs only\n");
+    const { rt, calls, briefs, runOpts } = fakeRuntime(cwd, {
+      twoTurn: true,
+      reviewer: [REVIEW_OK],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r?.committed?.sha, "docs-only still reviews and can commit");
+    assert.equal(calls.filter((c) => c === "role:reviewer#1").length, 1);
+    assert.equal(calls.filter((c) => c === "role:reviewer#2").length, 0, "no look turn");
+    assert.ok(!briefs.some((b) => /turn 1 of 2: the look/.test(b.brief)));
+    assert.equal(runOpts[0]?.documentOnly, true);
+    const lookMd = fs.readFileSync(path.join(cycleArtifactsDir(sid, 1), "look.md"), "utf8");
+    assert.match(lookMd, /skipped — docs-only/);
   });
 
   it("a labelled Verdict after maxTurns is a review, not a parse miss", async () => {

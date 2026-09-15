@@ -41,7 +41,7 @@ One test file: `npx tsx --test tests/foo.test.ts` (an isolate is proof=ran, not 
 - `src/auth/` — multi-account credentials (`auth.json` v2, mode 0600, never logged).
 - `src/commands/slash.ts` — every `/command` (+ `runDoctorCheck`); `help-text.ts`; `project-commands.ts` (`.forge/commands/*.md`).
 - `src/tui/` — REPL, bottom dock, status/turn/commit cards, markdown renderer.
-- `src/mcp/`, `src/lsp/` — MCP (defaults context7 + isolated playwright) and LSP ensure packs. GitHub source is the native `github` tool.
+- `src/mcp/`, `src/lsp/` — MCP (defaults context7 + playwright on a session look profile, or `--isolated`) and LSP ensure packs. GitHub source is the native `github` tool. `look_native` / `look-server.ts` / `look-script-refuse.ts` are the native/Vite look path.
 - `skills/forge-*/` — built-in skill packs; `forge-planner` / `forge-reviewer` are the ULW role briefs, `forge-veteran` the shared doctrine; ULW inlines one category skill from the tree (CLI → forge-shape, Godot → forge-game-assets); `docs/` — HARNESS, ULW, RELIABILITY, PRODUCTION, SAFETY, TOOLS.
 - `tests/*.test.ts` — one file per module; `tests/helpers/cycle-arm.ts` arms ULW with a plan already admitted (`armWithPlan`) and makes a real git repo (`mkGitRepo`); `tests/cycle-*.test.ts` drive the orchestrator with a fake `CycleRuntime`. CLI fail-closed JSON is `scripts/smoke.mjs`.
 

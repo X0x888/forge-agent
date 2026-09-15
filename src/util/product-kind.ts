@@ -108,6 +108,31 @@ function isGame(root: string): boolean {
   if (hasSuffixFile(root, ".uproject")) return true;
   if (exists(root, "Config/DefaultEngine.ini")) return true;
   if (isBrowserExtension(root)) return true;
+  if (hasSuffixFile(root, ".xcodeproj") || hasSuffixDir(root, ".xcodeproj")) return true;
+  if (exists(root, "Package.swift") && (isDir(root, "macos") || isDir(root, "Sources"))) {
+    return true;
+  }
+  if (exists(root, "Cargo.toml") && cargoLooksGame(root)) return true;
+  return false;
+}
+
+function cargoLooksGame(root: string): boolean {
+  try {
+    const toml = fs.readFileSync(path.join(root, "Cargo.toml"), "utf8");
+    return /macroquad|bevy|sdl2|ggez|fyrox|notan|pixels\b/i.test(toml);
+  } catch {
+    return false;
+  }
+}
+
+function hasSuffixDir(root: string, suffix: string): boolean {
+  try {
+    for (const ent of fs.readdirSync(root, { withFileTypes: true })) {
+      if (ent.isDirectory() && ent.name.endsWith(suffix)) return true;
+    }
+  } catch {
+    /* */
+  }
   return false;
 }
 

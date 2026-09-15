@@ -1190,6 +1190,15 @@ describe("path-hints", () => {
     assert.ok(stringSimilarity("ab", "xy") < 0.5);
   });
 
+  it("pathNotFoundHint names Forge sessions for Cursor agent-transcripts", async () => {
+    const hint = await pathNotFoundHint(
+      "/Users/x/.forge/cursor-projects/Users-x-app/agent-transcripts",
+      "/tmp/ws",
+    );
+    assert.match(hint, /Forge sessions live in ~\/\.forge\/sessions/);
+    assert.match(hint, /workspace root is \/tmp\/ws/);
+  });
+
   it("pathNotFoundHint suggests typos and always notes workspace", async () => {
     const ws = path.join(tmpRoot, "ws-ph");
     await fsp.mkdir(ws, { recursive: true });

@@ -110,7 +110,7 @@ describe("format-on-write", () => {
         ok: false,
         detail: "boom",
       }),
-      /format biome skipped/,
+      /Write applied but biome rejected the file: boom/,
     );
   });
 

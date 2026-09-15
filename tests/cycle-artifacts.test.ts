@@ -11,6 +11,8 @@ import {
   lookCouldNotLook,
   lookHasKernelEvidence,
   lookInfraFailed,
+  classifyLookKind,
+  lookKindAllowsSurfaceCommit,
   architectureClassMustCollapse,
   continueWorthHold,
   worthIsNo,
@@ -621,6 +623,65 @@ describe("look infra vs could-not-look", () => {
     assert.equal(
       lookInfraFailed("[Forge: this provider dropped 2 image attachment(s) — Cursor has no multimodal parts.]"),
       true,
+    );
+  });
+
+  it("look kind: AUTO/help are not a surface sit; leased Chrome is", () => {
+    assert.equal(classifyLookKind("LOAD A CRATE. WATCH THE CHIPS."), "unknown");
+    assert.equal(lookKindAllowsSurfaceCommit(classifyLookKind("LOAD A CRATE. WATCH THE CHIPS.")), false);
+    assert.equal(classifyLookKind("cargo run -- --help (exit 0, no window)"), "cli-help");
+    assert.equal(classifyLookKind("CHAIN_BENCH_AUTO=1 wrote chain-bench-idle.png"), "auto-still");
+    assert.equal(
+      classifyLookKind("Playwright MCP was down. Drove leased Chrome against http://127.0.0.1:5176"),
+      "cdp-live",
+    );
+    assert.equal(
+      lookKindAllowsSurfaceCommit(
+        classifyLookKind("Playwright MCP was down. Drove leased Chrome against http://127.0.0.1:5176"),
+      ),
+      true,
+    );
+    assert.equal(classifyLookKind("look_native: wrote /tmp/x.png. Read that PNG"), "hid-window");
+    assert.equal(
+      classifyLookKind("look_native sim: wrote /tmp/x.png (simctl io booted screenshot)"),
+      "sim-hid",
+    );
+    assert.equal(
+      classifyLookKind("look_native movie: Godot --write-movie /tmp/look --quit-after 4"),
+      "headless-smoke",
+    );
+    assert.equal(
+      classifyLookKind("tried look_native; TCC -10004 privilege violation"),
+      "failed",
+      "naming the tool after a TCC deny is not a HID sit",
+    );
+    assert.equal(lookCouldNotLook("could not run; call_mcp failed"), true);
+    assert.equal(classifyLookKind("could not run; call_mcp failed"), "failed");
+  });
+
+  it("MEMORY.md is not a must-collapse architecture class; a prior Collapse title retires the class", () => {
+    const mem = recurringArchitectureClass([
+      { commitSha: "a", architecture: ["`.forge/MEMORY.md` restamp"] },
+      { commitSha: "b", architecture: ["`.forge/MEMORY.md` restamp"] },
+      { commitSha: "c", architecture: ["`.forge/MEMORY.md` restamp"] },
+    ]);
+    assert.ok(mem);
+    assert.equal(architectureClassMustCollapse([
+      { commitSha: "a", architecture: ["`.forge/MEMORY.md` restamp"], title: "t" },
+      { commitSha: "b", architecture: ["`.forge/MEMORY.md` restamp"], title: "t" },
+      { commitSha: "c", architecture: ["`.forge/MEMORY.md` restamp"], title: "t" },
+    ], mem!), false);
+    const cls = "debug_drop_collect";
+    assert.equal(
+      architectureClassMustCollapse(
+        [
+          { commitSha: "a", architecture: ["`debug_drop_collect` leftover"], title: "loot" },
+          { commitSha: "b", architecture: ["`debug_drop_collect` leftover"], title: "loot" },
+          { commitSha: "c", architecture: ["`debug_drop_collect` leftover"], title: "Collapse `debug_drop_collect`" },
+        ],
+        cls,
+      ),
+      false,
     );
   });
 

@@ -11,8 +11,9 @@
  *
  * Env: FORGE_MCP=0 disables entirely. FORGE_MCP_CONFIG=path loads extra file last.
  *      FORGE_MCP_DEFAULTS=0 disables only the built-in context7/playwright pair.
- *      Playwright is launched --isolated with output under ~/.forge/tmp
- *      (FORGE_PLAYWRIGHT_ISOLATED=0 off). GitHub source is the native github tool.
+ *      Playwright is launched --isolated, or with the session look
+ *      --user-data-dir when McpManager has a sessionId (FORGE_PLAYWRIGHT_ISOLATED=0 off).
+ *      GitHub source is the native github tool.
  */
 import fs from "node:fs";
 import path from "node:path";

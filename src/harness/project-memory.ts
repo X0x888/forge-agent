@@ -235,9 +235,10 @@ function saveStore(store: ProjectMemoryStore): void {
     );
   }
   writeJsonFile(projectMemoryJsonPath(store.root), store, 0o600);
-  // Best-effort human mirror
+  // Best-effort human mirror — not while ULW is armed: restamping a tracked
+  // `.forge/MEMORY.md` dirties the cycle (SCRAPFALL mill). JSON stays.
   try {
-    writeMarkdownMirror(store);
+    if (!workspaceHasArmedUlw(store.root)) writeMarkdownMirror(store);
   } catch {
     /* */
   }
@@ -496,6 +497,51 @@ export function stableProjectMemoryMarkdown(text: string): string {
     .replace(/^> key=.*$/gm, "")
     .replace(/\s+$/g, "")
     .trim();
+}
+
+const SESSION_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+function sameWorkspace(a: string, b: string): boolean {
+  const A = path.resolve(a);
+  const B = path.resolve(b);
+  if (A === B) return true;
+  return B.startsWith(`${A}${path.sep}`) || A.startsWith(`${B}${path.sep}`);
+}
+
+/**
+ * True when some session whose cwd is this workspace has an armed ULW
+ * sidecar. The JSON store still writes; the tracked MEMORY.md mirror does not.
+ */
+export function workspaceHasArmedUlw(root: string): boolean {
+  const target = path.resolve(root);
+  const sessionsRoot = path.join(forgeHome(), "sessions");
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(sessionsRoot);
+  } catch {
+    return false;
+  }
+  let n = 0;
+  for (const name of names) {
+    if (!SESSION_SLUG_RE.test(name)) continue;
+    if (++n > 200) break;
+    try {
+      const meta = readJsonFile<{ cwd?: string }>(
+        path.join(sessionsRoot, name, "meta.json"),
+        {},
+      );
+      const cwd = typeof meta.cwd === "string" ? meta.cwd.trim() : "";
+      if (!cwd || !sameWorkspace(cwd, target)) continue;
+      const ulw = readJsonFile<{ enabled?: boolean; legacy?: boolean; phase?: string }>(
+        path.join(sessionsRoot, name, "ulw.json"),
+        {},
+      );
+      if (ulw.enabled && !ulw.legacy && ulw.phase !== "released") return true;
+    } catch {
+      /* skip */
+    }
+  }
+  return false;
 }
 
 function writeMarkdownMirror(store: ProjectMemoryStore): void {

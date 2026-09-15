@@ -35,6 +35,10 @@ import {
   wrongPackageManagerTip,
 } from "../../util/project-intel.js";
 import {
+  isLookDevServerCommand,
+  liveLookServerLease,
+  lookDevLeaseEnabled,
+  pinLookServerCommand,
   registerSpawnedResources,
   rootSessionIdFromMeta,
 } from "../browser-lease.js";
@@ -292,7 +296,7 @@ export async function toolBash(
       isError: true,
     };
   }
-  const command = String(args.command || "").trim();
+  let command = String(args.command || "").trim();
   if (!command) {
     let example = "npm test";
     let longEx = "npm run build";
@@ -335,10 +339,36 @@ export async function toolBash(
   if (ulwCommit && isGitCommitCommand(command)) {
     return { output: ulwCommit, isError: true };
   }
+  const sessionId = ctx.sessionId || ctx.session?.meta.id || "anon";
+  const rootSessionId = ctx.session?.meta
+    ? rootSessionIdFromMeta(ctx.session.meta)
+    : sessionId;
+  let lookServerNote = "";
+  let forceLookBg = false;
+  if (lookDevLeaseEnabled() && isLookDevServerCommand(command)) {
+    const pinned = pinLookServerCommand(command, rootSessionId);
+    command = pinned.command;
+    const live = liveLookServerLease(rootSessionId);
+    if (live?.pid) {
+      return {
+        output:
+          `Look server already leased at http://127.0.0.1:${live.port ?? pinned.port} ` +
+          `(pid ${live.pid}). Reuse this origin; do not spawn another. ` +
+          `call_mcp playwright / screenshot that URL.`,
+      };
+    }
+    forceLookBg = true;
+    lookServerNote =
+      `Look server leased on http://127.0.0.1:${pinned.port} (--strictPort). ` +
+      `Dev servers are backgrounded; a short timeout_ms is ignored so the mill is not SIGTERM'd at 30s.\n`;
+  }
+  const lookServer = lookDevLeaseEnabled() && isLookDevServerCommand(command);
+  const wantBg =
+    isTruthy(args.background) || isTruthy(args.run_in_background) || forceLookBg;
   const timeoutRes = resolveTimeoutMs(
-    args.timeout_ms,
-    defaultBashTimeoutMs(),
-    BASH_FOREGROUND_TIMEOUT_CAP_MS,
+    lookServer ? undefined : args.timeout_ms,
+    wantBg || lookServer ? defaultBashBackgroundTimeoutMs() : defaultBashTimeoutMs(),
+    wantBg || lookServer ? BASH_BACKGROUND_TIMEOUT_CAP_MS : BASH_FOREGROUND_TIMEOUT_CAP_MS,
   );
   if (!timeoutRes.ok) {
     return {
@@ -360,9 +390,9 @@ export async function toolBash(
 
   maybeLeaseSpawnedBrowser(command, ctx);
 
-  if (isTruthy(args.background) || isTruthy(args.run_in_background)) {
+  if (wantBg) {
     const bgTimeoutRes = resolveTimeoutMs(
-      args.timeout_ms,
+      lookServer ? undefined : args.timeout_ms,
       defaultBashBackgroundTimeoutMs(),
       BASH_BACKGROUND_TIMEOUT_CAP_MS,
     );
@@ -431,6 +461,7 @@ export async function toolBash(
     return {
       output:
         autoCpNote +
+        lookServerNote +
         `Background task started.\n` +
         `task_id: ${t.id}\n` +
         `pid: ${t.pid ?? "n/a"}\n` +

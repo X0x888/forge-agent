@@ -5,8 +5,9 @@ import { suggestNames } from "../util/suggest.js";
 import { boundToolOutput } from "../agent/tools/truncate.js";
 import { cleanupAgentBrowserScratch } from "../util/look-cleanup.js";
 import { loadMcpConfig, toolAllowedByFilters, type LoadedMcpConfig } from "./config.js";
-import { McpClient } from "./client.js";
-import { isPlaywrightMcp } from "./defaults.js";
+import { McpClient, mcpInitTimeoutMs } from "./client.js";
+import { bindPlaywrightSessionProfile, isPlaywrightMcp } from "./defaults.js";
+import { ensureSessionLookProfile } from "../agent/browser-lease.js";
 import { playwrightLookApplies } from "../util/product-kind.js";
 import {
   isMcpToolReadOnly,
@@ -17,6 +18,7 @@ import {
   type McpRegisteredPrompt,
   type McpRegisteredResource,
   type McpRegisteredTool,
+  type McpServerConfig,
   type McpServerStatus,
 } from "./types.js";
 
@@ -71,16 +73,30 @@ export class McpManager {
     if (!this.config.enabled) return;
     for (const [name, cfg] of Object.entries(this.config.servers)) {
       if (cfg.disabled || this.disabled.has(name)) continue;
+      let bound = cfg;
+      if (this.sessionId && isPlaywrightMcp(cfg, name)) {
+        const udd = ensureSessionLookProfile(this.sessionId, {
+          workspace: this.workspace,
+          rootSessionId: this.sessionId,
+        });
+        bound = bindPlaywrightSessionProfile(cfg, udd);
+        this.config.servers[name] = bound;
+      }
       this.clients.set(
         name,
         new McpClient({
           name,
-          config: cfg,
+          config: bound,
           workspace: this.workspace,
           signal: this.signal,
         }),
       );
     }
+  }
+
+  /** Started server config (tests / doctor). */
+  serverConfig(name: string): McpServerConfig | undefined {
+    return this.config.servers[name];
   }
 
   async dispose(): Promise<void> {
@@ -117,6 +133,13 @@ export class McpManager {
     }
     if (waitMs <= 0) return;
     await raceTimeout(this.prewarmPromise, waitMs);
+  }
+
+  private playwrightInitWaitMs(): number {
+    for (const [name, cfg] of Object.entries(this.config.servers)) {
+      if (isPlaywrightMcp(cfg, name)) return mcpInitTimeoutMs(cfg.timeoutMs);
+    }
+    return mcpInitTimeoutMs(120_000);
   }
 
   /** ready | connecting | down — undefined when MCP is off or no playwright server. */
@@ -255,6 +278,13 @@ export class McpManager {
     partial: boolean;
     serverErrors: string[];
   }> {
+    const qProbe = (query || "").trim().toLowerCase();
+    if (
+      /playwright|browser_|screenshot|navigate/.test(qProbe) &&
+      this.playwrightStatus() === "connecting"
+    ) {
+      await this.prewarm(this.playwrightInitWaitMs());
+    }
     await this.ensureRegistry();
     const q = (query || "").trim().toLowerCase();
     const serverErrors = this.status()
@@ -631,7 +661,7 @@ export function getActiveMcpManager(): McpManager | null {
 export type PlaywrightLookStatus = "ready" | "connecting" | "down";
 
 /** Cap on the first ULW plan admission wait; connect continues in the background. */
-export const MCP_PREWARM_ADMIT_WAIT_MS = 3_000;
+export const MCP_PREWARM_ADMIT_WAIT_MS = 15_000;
 
 export function playwrightLookStatus(
   manager?: McpManager | null,

@@ -416,6 +416,25 @@ describe("smart account switching", () => {
     );
   });
 
+  it("waitAndRetryQuotaSwitch force hops after cooldown when auto-switch is off", async () => {
+    const chestnut = upsertApiKey("xai", "sk-chestnut", "chestnut-force");
+    const sning = upsertApiKey("xai", "sk-sning", "sning-force", { forceNew: true });
+    setAutoSwitchSettings({ autoSwitch: false });
+    setActiveAccount(chestnut.accountId);
+    setAccountCooldown(sning.accountId, nowEpoch() + 180);
+    const first = switchOnQuotaFailure("xai", { force: true });
+    assert.equal(first.switched, false);
+    assert.ok(first.waitSec && first.waitSec > 0);
+    const retry = await waitAndRetryQuotaSwitch("xai", first, {
+      force: true,
+      sleep: async () => {
+        setAccountCooldown(sning.accountId, nowEpoch() - 1);
+      },
+    });
+    assert.equal(retry.switched, true);
+    assert.equal(retry.toId, sning.accountId);
+  });
+
   it("waitAndRetryQuotaSwitch does not sleep when max is 0, and abort rejects without switching", async () => {
     const chestnut = upsertApiKey("xai", "sk-chestnut", "chestnut");
     const sning = upsertApiKey("xai", "sk-sning", "sning", { forceNew: true });
@@ -567,6 +586,21 @@ describe("smart account switching", () => {
     assert.equal(acc?.lastPlan?.remaining, 0);
     assert.equal(isPlanFresh(acc?.lastPlan), true);
     assert.doesNotThrow(() => recordQuotaFailurePlan("xai:missing-no-throw"));
+  });
+
+  it("armed ULW force still switches a same-provider alt when auto-switch is off", () => {
+    delete process.env.CURSOR_API_KEY;
+    delete process.env.CURSOR_ACCESS_TOKEN;
+    const c1 = upsertApiKey("cursor", "sk-c1", "c1");
+    const c2 = upsertApiKey("cursor", "sk-c2", "c2", { forceNew: true });
+    setActiveAccount(c2.accountId);
+    setAutoSwitchSettings({ autoSwitch: false, switchThresholdPercent: 90 });
+    const blocked = switchOnQuotaFailure("cursor");
+    assert.equal(blocked.switched, false);
+    assert.match(blocked.reason || "", /auto-switch disabled/);
+    const r = switchOnQuotaFailure("cursor", { force: true });
+    assert.equal(r.switched, true);
+    assert.equal(r.toId, c1.accountId);
   });
 
   it("switchOnQuotaFailure still asks to add another when there is no alt", () => {

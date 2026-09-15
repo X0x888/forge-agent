@@ -38,6 +38,7 @@ describe("git-ensure", () => {
     assert.match(gi, /\.forge\/chrome-look\*/);
     assert.match(gi, /\.forge\/tmp-\*\//);
     assert.match(gi, /\*\.swiftmodule/);
+    assert.match(gi, /\*\.pcm/);
     assert.match(gi, /\*\.o/);
     assert.match(gi, /test-results\//);
   });

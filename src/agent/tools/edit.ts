@@ -34,6 +34,7 @@ import {
 import { fileReadGuardEnabled } from "./file-read-state.js";
 import { verifyHintSuffix } from "../../util/project-intel.js";
 import { isTruthy } from "../../util/bool.js";
+import { lookScriptWriteRefuse } from "./look-script-refuse.js";
 
 /** So a 1.3KB tool result is not mistaken for a truncated file. */
 export function lineCountNote(text: string): string {
@@ -73,6 +74,13 @@ export async function toolEdit(
     filePath = await assertWritablePath(ctx.workspace, logical);
   } catch (err) {
     return { output: (err as Error).message, isError: true };
+  }
+  const lookRefuse = lookScriptWriteRefuse(
+    displayRelPath(ctx.workspace, filePath),
+    typeof args.new_string === "string" ? args.new_string : undefined,
+  );
+  if (lookRefuse) {
+    return { output: lookRefuse, isError: true };
   }
 
   // Schema requires strings. Objects used to become "[object Object]" in the file.

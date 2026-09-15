@@ -10,6 +10,10 @@ import {
   formatLeftUnstagedAdmit,
   gitHasAuthorIdentity,
   isForgeScratchRelPath,
+  isLookCompileRelPath,
+  isMemoryMirrorRelPath,
+  cycleHasSubstanceDiff,
+  cycleDiffIsDocsOnly,
   isLookArtefactRelPath,
   isSensitiveRelPath,
   isChangelogRelPath,
@@ -315,6 +319,40 @@ describe("ULW cycle commit", () => {
     ]) {
       assert.equal(isForgeScratchRelPath(p), false, p);
     }
+  });
+
+  it("look compile junk and MEMORY.md are not substance", () => {
+    assert.equal(isLookCompileRelPath("Foo.pcm"), true);
+    assert.equal(isLookCompileRelPath("looks/c27.mjs"), true);
+    assert.equal(isLookCompileRelPath("src/app.rs"), false);
+    assert.equal(isMemoryMirrorRelPath(".forge/MEMORY.md"), true);
+    assert.equal(isMemoryMirrorRelPath("src/app.rs"), false);
+    withRepo((root) => {
+      fs.mkdirSync(path.join(root, "looks"), { recursive: true });
+      fs.writeFileSync(path.join(root, "looks", "x.mjs"), "1\n");
+      assert.equal(cycleHasSubstanceDiff(root, null), false);
+      fs.mkdirSync(path.join(root, ".forge"), { recursive: true });
+      fs.writeFileSync(path.join(root, ".forge", "MEMORY.md"), "# mem\n");
+      assert.equal(cycleHasSubstanceDiff(root, null), false);
+      fs.writeFileSync(path.join(root, "src.rs"), "fn main() {}\n");
+      assert.equal(cycleHasSubstanceDiff(root, null), true);
+      const head = git(["rev-parse", "HEAD"], root);
+      assert.equal(cycleHasSubstanceDiff(root, head), true, "untracked product vs fromHead is substance");
+    });
+  });
+
+  it("docs-only is a nonempty non-product diff, not an empty tree", () => {
+    withRepo((root) => {
+      const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+      assert.equal(cycleDiffIsDocsOnly(root, head), false, "empty is not docs-only");
+      fs.writeFileSync(path.join(root, "README.md"), "# docs\n");
+      assert.equal(cycleDiffIsDocsOnly(root, head), true);
+      assert.equal(cycleHasSubstanceDiff(root, head), false);
+      fs.mkdirSync(path.join(root, "src"), { recursive: true });
+      fs.writeFileSync(path.join(root, "src", "main.rs"), "fn main() {}\n");
+      assert.equal(cycleDiffIsDocsOnly(root, head), false);
+      assert.equal(cycleHasSubstanceDiff(root, head), true);
+    });
   });
 
   it("leaves unreferenced looks and .forge scratch unstaged; a referenced sprite commits", () => {

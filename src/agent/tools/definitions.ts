@@ -452,6 +452,28 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     type: "function",
     function: {
+      name: "look_native",
+      description:
+        "Native look: screenshot, HID click, simctl io, Godot --write-movie, or classify TCC/LS115. Web: call_mcp playwright. Do not retry osascript after limited.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", description: "screenshot|classify|click|sim|movie" },
+          window: { type: "string", description: "CG window id" },
+          dest: { type: "string", description: "PNG/movie basename in session looks/" },
+          text: { type: "string", description: "stderr to classify" },
+          x: { type: "number", description: "click/tap x" },
+          y: { type: "number", description: "click/tap y" },
+          device: { type: "string", description: "simctl device (default booted)" },
+          path: { type: "string", description: "Godot --path (default workspace)" },
+          frames: { type: "number", description: "Godot --quit-after (default 4)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "search_mcp",
       description:
         "Search configured MCP (Model Context Protocol) server tools by keyword. " +

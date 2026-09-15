@@ -222,13 +222,28 @@ export function cycleReportFacts(s: CycleState | null | undefined): {
           : st.endReason === "fix-cap"
             ? `Blocked — verification or review findings remain in cycle ${st.cycle}`
             : st.endReason === "no-progress"
-              ? `Stopped — ${Math.max(st.noCommitStreak, st.directExecuteStreak)} cycle(s) in a row landed nothing (no-progress wall); re-arm with /ulw or give a mandate`
+              ? noProgressOutcome(st)
               : st.endReason === "blocked"
                 ? `Blocked — the Planner needs the user`
                 : st.endReason
                 ? `ULW ended (${st.endReason})`
                 : "";
   return { active: cycleActive(s), outcome, shipped, notDone, needsYou, verified };
+}
+
+function noProgressOutcome(st: CycleState): string {
+  const lastSha = [...(st.cycles ?? [])].reverse().find((c) => c.commitSha)?.commitSha;
+  const synth = st.synthStreak ?? 0;
+  const landed = Math.max(st.noCommitStreak ?? 0, st.directExecuteStreak ?? 0);
+  if (synth > 0 && landed === 0) {
+    return (
+      `Stopped — ${synth} synthesized cycle(s) (Planner did not produce a plan)` +
+      (lastSha ? `; last commit ${lastSha}` : "") +
+      `. Re-arm with /ulw or /replan.`
+    );
+  }
+  const n = Math.max(landed, synth);
+  return `Stopped — ${n} cycle(s) in a row landed nothing (no-progress wall); re-arm with /ulw or give a mandate`;
 }
 
 function oneLine(text: string, max: number): string {
