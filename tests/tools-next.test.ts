@@ -502,6 +502,7 @@ describe("TOOL_DEFINITIONS agent guidance", () => {
     assert.match(byName.web_search || "", /titles, URLs|Brave|DuckDuckGo/i);
     assert.match(byName.github || "", /GitHub/i);
     assert.match(byName.github || "", /contents|readme|tree/i);
+    assert.match(byName.github || "", /sort/);
     assert.match(byName.kill_task || "", /Omit task_id|list active/i);
     assert.match(byName.get_task_output || "", /Omit task_id|list active/i);
     assert.match(byName.todo_write || "", /merge|status|id/i);

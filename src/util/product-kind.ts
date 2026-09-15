@@ -55,11 +55,17 @@ export function categorySkillFor(workspace: string): string | undefined {
   return categorySkillForKind(detectProductKind(workspace));
 }
 
-/** Skills inlined into Planner / Reviewer. Kind comes from the tree. */
+/** Skills inlined into Planner / Reviewer / peer scout. Kind comes from the tree. */
 export function ulwRoleInlineSkills(
-  role: "planner" | "reviewer",
+  role: "planner" | "reviewer" | "peer-scout",
   workspace: string,
 ): string[] {
+  if (role === "peer-scout") {
+    const skills = ["forge-peer-scout", "forge-veteran"];
+    const cat = categorySkillFor(workspace);
+    if (cat) skills.push(cat);
+    return skills;
+  }
   const skills = [
     role === "planner" ? "forge-planner" : "forge-reviewer",
     "forge-veteran",

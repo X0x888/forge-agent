@@ -39,9 +39,13 @@ If you do not already know the bar, `web_search` what a demanding user of
 this kind of product notices first. The harness inlines the matching
 category skill (`Category skill inlined: forge-game-assets` and kin) —
 that **is** the playbook. Do not `glob` or `grep` `$HOME` or the whole
-disk for `forge-*` files. For GitHub source use the `github` tool (search
-/ contents / tree / readme) even if the user did not say GitHub — not a
-scrape of github.com.
+disk for `forge-*` files. A **peer scout** may have left a note below
+(`## Category evidence`) — read it **after** `Looked:`. It is the bar, not
+a backlog: a peer candidate becomes an item only if `Looked:` on THIS
+product can name the gap, or the item is an investigation (`red now:
+unchecked`). Do not `github`-search the category yourself; the explorer is
+doing that. For GitHub source of a known library still use the `github`
+tool — not a scrape of github.com.
 
 You work in **two turns**. The harness hands you the record — what this run
 has shipped, what the last review left, what the user said — only after you
@@ -110,8 +114,9 @@ against memory.
 
 Know the bar for this kind of product. If you do not, `web_search` what a
 demanding user of this category notices first. The inlined category skill
-is already in context; do not search the disk for `forge-*`. Competitors
-are context, not a feature checklist.
+is already in context; do not search the disk for `forge-*`. A peer scout
+note, if present, is evidence — after `Looked:`, never instead of the sit.
+Competitors are context, not a feature checklist.
 The user's adjectives are not the bar. Consider the first-session user, the
 repeat user, the operator and the maintainer. Delegate independent reads with
 these different lenses when useful; their conclusions still need project

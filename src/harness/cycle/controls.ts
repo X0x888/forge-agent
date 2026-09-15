@@ -6,6 +6,7 @@
  */
 import { gitHeadSha } from "../../util/git-context.js";
 import { clearSoftTodoGateOnWindDown } from "../todo-gate.js";
+import { stopPeerScout } from "./peer-scout.js";
 import {
   cycleActive,
   currentCycleAlreadyClosed,
@@ -70,6 +71,7 @@ export function disarmCycle(sessionId: string): CycleState | null {
   s.endReason = "disarmed";
   writeCycleState(s);
   clearSoftTodoGateOnWindDown(sessionId);
+  void stopPeerScout(sessionId);
   return s;
 }
 
@@ -205,9 +207,10 @@ export function cycleKeepPaths(sessionId: string | undefined): string[] | undefi
   return out.size ? [...out] : undefined;
 }
 
-export function parseCycleArg(raw: string): 0 | 1 | "status" | null {
+export function parseCycleArg(raw: string): 0 | 1 | "status" | "peers" | null {
   const t = (raw || "").trim().toLowerCase();
   if (!t || t === "status" || t === "show") return "status";
+  if (t === "peers" || t === "peer" || t === "bar") return "peers";
   if (t === "0" || t === "off" || t === "last" || t === "finish" || t === "stop") return 0;
   if (t === "1" || t === "on" || t === "continue" || t === "go") return 1;
   return null;

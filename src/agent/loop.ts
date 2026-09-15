@@ -1787,12 +1787,23 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           workspace,
           runRole: async (role, brief, roleOpts) => {
             const roleModel =
-              role === "planner" ? config.ulw?.plannerModel : config.ulw?.reviewerModel;
+              role === "planner"
+                ? config.ulw?.plannerModel
+                : role === "peer-scout"
+                  ? config.ulw?.peerScoutModel ?? config.ulw?.plannerModel
+                  : config.ulw?.reviewerModel;
             const roleEffort =
-              role === "planner" ? config.ulw?.plannerEffort : config.ulw?.reviewerEffort;
+              role === "planner"
+                ? config.ulw?.plannerEffort
+                : role === "peer-scout"
+                  ? config.ulw?.peerScoutEffort ?? config.ulw?.plannerEffort
+                  : config.ulw?.reviewerEffort;
             const turn = roleOpts.resumeSessionId ? "turn 2" : roleOpts.keepSession ? "turn 1" : "fresh context";
-            events.onPhase?.("tool", `cycle ${roleOpts.cycle} ${role}`);
-            events.onStatus?.(`ULW cycle ${roleOpts.cycle}: ${role} (${turn})`);
+            const quiet = Boolean(roleOpts.quiet) || role === "peer-scout";
+            if (!quiet) {
+              events.onPhase?.("tool", `cycle ${roleOpts.cycle} ${role}`);
+              events.onStatus?.(`ULW cycle ${roleOpts.cycle}: ${role} (${turn})`);
+            }
             const res = await runSubagentTracked(
               {
                 prompt: brief,
@@ -1816,8 +1827,15 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 hooks,
                 permissions,
                 workspace,
-                signal,
-                events,
+                signal: role === "peer-scout" ? roleOpts.abort : signal,
+                events: quiet
+                  ? {
+                      onStatus: () => {},
+                      onPhase: () => {},
+                      onToolStart: () => {},
+                      onToolEnd: () => {},
+                    }
+                  : events,
                 depth: subagentDepth,
                 maxDepth: maxSubagentDepth,
                 mcp,

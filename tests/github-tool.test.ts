@@ -5,6 +5,7 @@ import {
   rewriteGithubBlobUrl,
   githubEnabled,
   githubReposFromUrls,
+  githubSearchRequestPath,
   queryLooksLikeGithubLookup,
   toolGithub,
 } from "../src/agent/tools/github.js";
@@ -60,6 +61,15 @@ describe("github tool", () => {
       rewriteGithubBlobUrl("https://example.com/x"),
       "https://example.com/x",
     );
+  });
+
+  it("repository search can sort by stars and fails closed on junk sort", () => {
+    const stars = githubSearchRequestPath("tui rust", 5, { code: false, sort: "stars" });
+    assert.ok("path" in stars);
+    assert.match(stars.path, /\/search\/repositories\?/);
+    assert.match(stars.path, /sort=stars/);
+    const bad = githubSearchRequestPath("tui rust", 5, { code: false, sort: "hot" });
+    assert.ok("error" in bad);
   });
 
   it("FORGE_GITHUB=0 disables", async () => {

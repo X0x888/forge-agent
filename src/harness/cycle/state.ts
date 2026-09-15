@@ -12,6 +12,7 @@
  * the retired wave engine loads as `legacy: true`, disabled — the user
  * re-arms with /ulw.
  */
+import fs from "node:fs";
 import path from "node:path";
 import { envPositiveInt } from "../../util/env.js";
 import { forgeHome, readJsonFile, writeJsonFile, nowIso, ensureDir } from "../../util/fs.js";
@@ -143,6 +144,84 @@ export interface CycleRecord {
   plannerStatus?: "planned" | "scout-admitted" | "synthesized";
 }
 
+/**
+ * Background peer scout of this Identity's job. Sibling of Planner/Reviewer:
+ * writes `peers.md`, never the executor transcript. Stages are facts the
+ * next Planner weighs, not items.
+ */
+export type PeerScoutStatus = "idle" | "running" | "sleeping" | "error" | "off";
+export type PeerScoutStage = 0 | 1 | 2 | 3;
+
+export interface PeerScoutState {
+  status: PeerScoutStatus;
+  stage: PeerScoutStage;
+  /** Identity: paragraph this run of the scout was aimed at. */
+  identityUsed?: string;
+  /** Kept child session across stages; dropped on sleep / abort. */
+  sessionId?: string;
+  path?: string;
+  /** owner/repo, at most three. */
+  peers?: string[];
+  error?: string;
+  tokens?: number;
+  updatedAt?: string;
+}
+
+export function identityKey(text?: string): string {
+  return String(text || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+    .slice(0, 240);
+}
+
+export function identitiesMatch(a?: string, b?: string): boolean {
+  const ka = identityKey(a);
+  const kb = identityKey(b);
+  return Boolean(ka && kb && ka === kb);
+}
+
+export function peerScoutStamp(p?: PeerScoutState): number {
+  const t = Date.parse(p?.updatedAt ?? "");
+  return Number.isFinite(t) ? t : 0;
+}
+
+export function peerScoutArtifactPath(sessionId: string): string {
+  return path.join(forgeHome(), "sessions", sessionId, "peers.md");
+}
+
+export function normalizePeerScout(raw: unknown): PeerScoutState | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Record<string, unknown>;
+  const status = String(o.status || "idle");
+  if (!["idle", "running", "sleeping", "error", "off"].includes(status)) return undefined;
+  const stageN = Number(o.stage);
+  const stage = (
+    Number.isFinite(stageN) ? Math.max(0, Math.min(3, Math.floor(stageN))) : 0
+  ) as PeerScoutStage;
+  const peers = Array.isArray(o.peers)
+    ? o.peers.map((p) => String(p || "").trim()).filter(Boolean).slice(0, 5)
+    : [];
+  const tokens = Number(o.tokens);
+  return {
+    status: status as PeerScoutStatus,
+    stage,
+    ...(typeof o.identityUsed === "string" && o.identityUsed.trim()
+      ? { identityUsed: o.identityUsed.trim().slice(0, 400) }
+      : {}),
+    ...(typeof o.sessionId === "string" && o.sessionId.trim()
+      ? { sessionId: o.sessionId.trim() }
+      : {}),
+    ...(typeof o.path === "string" && o.path.trim() ? { path: o.path.trim() } : {}),
+    ...(peers.length ? { peers } : {}),
+    ...(typeof o.error === "string" && o.error.trim()
+      ? { error: o.error.trim().slice(0, 240) }
+      : {}),
+    ...(Number.isFinite(tokens) && tokens > 0 ? { tokens: Math.floor(tokens) } : {}),
+    ...(typeof o.updatedAt === "string" && o.updatedAt ? { updatedAt: o.updatedAt } : {}),
+  };
+}
+
 export interface CycleReviewNotes {
   verdict: ReviewVerdict;
   /** What the Reviewer ran or opened as the product's user before judging worth. */
@@ -242,6 +321,11 @@ export interface CycleState {
   reportEpoch: number;
   startedAt: string;
   updatedAt: string;
+  /**
+   * Background peer scout of this Identity's job. Fail-open; the mill does
+   * not wait on it. `FORGE_ULW_PEERS=0` off.
+   */
+  peerScout?: PeerScoutState;
   /** Schema-1 wave-engine sidecar found on disk; disabled, re-arm with /ulw. */
   legacy?: boolean;
 }
@@ -351,6 +435,7 @@ function normalizeState(raw: Partial<CycleState>, sessionId: string): CycleState
     ledger: Array.isArray(raw.ledger) ? raw.ledger : [],
     cycles: Array.isArray(raw.cycles) ? raw.cycles : [],
     maxCycles: normalizeMaxCycles(raw.maxCycles),
+    peerScout: normalizePeerScout(raw.peerScout),
   };
   if (typeof s.enabled !== "boolean") s.enabled = false;
   if (typeof s.cycle !== "number") s.cycle = 0;
@@ -387,6 +472,11 @@ export function adoptLiveControls(s: CycleState): void {
   s.cycleZeroRequested = disk.cycleZeroRequested;
   s.humanPlan = disk.humanPlan;
   s.maxCycles = disk.maxCycles;
+  // The peer scout is a sibling writer. A newer disk stage must not be
+  // clobbered by a long-lived orchestrator copy that never touched it.
+  if (peerScoutStamp(disk.peerScout) > peerScoutStamp(s.peerScout)) {
+    s.peerScout = disk.peerScout;
+  }
   if (!cycleActive(disk) && cycleActive(s)) {
     s.enabled = disk.enabled;
     s.phase = disk.phase;
@@ -436,7 +526,30 @@ export function currentCycleAlreadyClosed(s: CycleState): boolean {
 export function copyCycleState(fromSessionId: string, toSessionId: string): boolean {
   const s = loadCycleState(fromSessionId);
   if (!s || s.legacy) return false;
-  writeCycleState({ ...s, sessionId: toSessionId });
+  let peer = s.peerScout;
+  if (peer) {
+    const { sessionId: _child, ...rest } = peer;
+    peer = {
+      ...rest,
+      status: rest.status === "running" ? "idle" : rest.status,
+    };
+  }
+  writeCycleState({ ...s, sessionId: toSessionId, ...(peer ? { peerScout: peer } : {}) });
+  try {
+    const src = peerScoutArtifactPath(fromSessionId);
+    if (fs.existsSync(src)) {
+      const dst = peerScoutArtifactPath(toSessionId);
+      ensureDir(path.dirname(dst));
+      fs.copyFileSync(src, dst);
+      try {
+        fs.chmodSync(dst, 0o600);
+      } catch {
+        /* windows */
+      }
+    }
+  } catch {
+    /* a forked run can re-scout */
+  }
   return true;
 }
 

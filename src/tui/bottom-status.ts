@@ -35,7 +35,7 @@ import {
   type SessionActivity,
 } from "../statusline/activity.js";
 import { listTasks } from "../agent/tools/background-tasks.js";
-import { loadActiveCycle, formatUlwBadge } from "../harness/cycle/index.js";
+import { loadActiveCycle, formatUlwBadge, formatPeerScoutDock } from "../harness/cycle/index.js";
 import { loadGoal } from "../harness/goal.js";
 import { normalizePermissionMode } from "../util/mode-aliases.js";
 import { formatHudTodos } from "../agent/todos.js";
@@ -50,7 +50,7 @@ export interface BottomStatusContext {
   aborting?: boolean;
 }
 
-export type DockChipId = "model" | "auth" | "ulw" | "stop" | "resume";
+export type DockChipId = "model" | "auth" | "ulw" | "peers" | "stop" | "resume";
 
 export interface DockHit {
   id: DockChipId;
@@ -354,6 +354,16 @@ export function layoutBottomStatusLine(
     });
   } else if (session.meta.ultrawork) {
     bits.push({ text: paint("ULW", "magenta"), prio: 10, id: "ulw" });
+  }
+  if (ulw) {
+    const peers = formatPeerScoutDock(ulw);
+    if (peers) {
+      bits.push({
+        text: paint(peers.text, peers.style === "magenta" ? "magenta" : peers.style),
+        prio: 6,
+        id: "peers",
+      });
+    }
   }
   const g = loadGoal(session.meta.id);
   if (g?.objective && !g.paused && g.status === "active") {

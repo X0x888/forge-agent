@@ -56,6 +56,7 @@ Harness
   /goal pause|resume|clear|done
   /ulw [task]         Ultrawork: plan-cycle driver (Planner → you → Reviewer → verify → commit)
   /cycle 1|0          Keep cycling, or finish this cycle then stop
+  /cycle peers        Peer scout note (GitHub category bar; next Planner weighs it)
   /max-cycles N|off   Stop after N committed cycles
   /done               Wind down + lastErr/verify Next
   /plan               Session-scoped read-only design
@@ -125,7 +126,7 @@ Forge slash commands
   /memory [list|add …]  Session decisions. /memory project [prune] for cross-session.
   /attach <image>       Attach image path for vision ([[image:path]] in next message)
   /paste                Attach clipboard image (pngpaste / osascript / wl-paste / xclip)
-  /cycle 1|0|status     Keep cycling (1) or finish this cycle then stop (0)  [live]
+  /cycle 1|0|status|peers  Keep cycling (1), finish then stop (0), or show the peer scout  [live]
   /replan               Close the open cycle now (verify, review, verify, commit) and re-plan  [live]
   /max-cycles N|off     Stop after N committed cycles; default until fulfilled  [live]
   /ulw-off              Disarm ULW + cycle driver  [live]

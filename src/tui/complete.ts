@@ -96,6 +96,11 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     { value: "1", description: "Keep cycling — re-plan after each committed cycle" },
     { value: "0", description: "Finish this cycle (verify, review, verify, commit), then stop" },
     { value: "status", description: "Show cycle, phase, plan items, mandate" },
+    {
+      value: "peers",
+      description: "Show the peer scout note (category bar from GitHub)",
+      aliases: ["peer", "bar"],
+    },
   ],
   "max-cycles": [
     { value: "1", description: "Stop after 1 reviewed, committed cycle" },

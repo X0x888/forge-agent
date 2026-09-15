@@ -82,6 +82,16 @@ function fakeRuntime(cwd: string, o: FakeOpts = {}) {
       calls.push(turn ? `role:${role}#${turn}` : `role:${role}`);
       runOpts.push({ role, documentOnly: opts.documentOnly, maxTurns: opts.maxTurns });
       briefs.push({ role, turn, brief });
+      if (role === "peer-scout") {
+        return {
+          ok: true,
+          text: "",
+          status: "completed",
+          promptTokens: 0,
+          completionTokens: 0,
+          editCount: 0,
+        };
+      }
       const text = role === "planner" ? planner.shift() : reviewer.shift();
       return {
         ok: Boolean(text),

@@ -90,7 +90,7 @@ export type SubagentIsolation = "none" | "worktree";
  * research tools, may spawn explore children); the Reviewer writes the
  * review (look may drive; review turn is documentOnly, no spawn).
  */
-export type SubagentRole = "planner" | "reviewer";
+export type SubagentRole = "planner" | "reviewer" | "peer-scout";
 
 export interface SubagentRequest {
   prompt: string;
@@ -437,13 +437,24 @@ export function resolveRoleShape(role: SubagentRole): {
       denyEdits: true,
     };
   }
+  if (role === "peer-scout") {
+    // Category research: github + this tree. Plan mode denies mutating bash.
+    // No spawn, no Playwright — the executor owns the look path.
+    return {
+      subagentType: "explore",
+      capabilityMode: "read-only",
+      isolation: "none",
+      allowSpawn: false,
+      denyEdits: true,
+    };
+  }
   return { subagentType: "general-purpose", capabilityMode: "full", isolation: "none", allowSpawn: false, denyEdits: false };
 }
 
 export function defaultRoleMaxTurns(role: SubagentRole): number {
-  return role === "planner"
-    ? envPositiveInt("FORGE_ULW_PLANNER_MAX_TURNS", 60)
-    : envPositiveInt("FORGE_ULW_REVIEWER_MAX_TURNS", 80);
+  if (role === "planner") return envPositiveInt("FORGE_ULW_PLANNER_MAX_TURNS", 60);
+  if (role === "peer-scout") return envPositiveInt("FORGE_ULW_PEER_SCOUT_STAGE_TURNS", 0) || 8;
+  return envPositiveInt("FORGE_ULW_REVIEWER_MAX_TURNS", 80);
 }
 
 /** Skill bodies by name from builtin / user / project packs, for a role brief. */
@@ -926,6 +937,7 @@ export async function runSubagent(
     // Dynamic import avoids circular dependency (loop → tools → subagent → loop).
     const { runAgentLoop } = await import("./loop.js");
     const autostart = childManagerAutostart(isolation);
+    const skipManagers = role === "peer-scout" || isolation === "worktree";
     const childEvents = wrapChildLoopEvents({
       onStatus: (msg) => {
         const spend = liveSpend();
@@ -936,6 +948,8 @@ export async function runSubagent(
       onPhase: ctx.events?.onPhase,
     });
     // Worktree isolation: do not share parent MCP/LSP (different cwd roots).
+    // Peer scout is github + this tree; sharing Playwright with EXECUTE
+    // contends for the look browser.
     result = await runAgentLoop({
       config: childConfig,
       provider: ctx.provider,
@@ -950,10 +964,10 @@ export async function runSubagent(
       subagentDepth: depth + 1,
       maxSubagentDepth: maxDepth,
       toolDefinitions: tools,
-      mcp: isolation === "worktree" ? undefined : ctx.mcp,
-      lsp: isolation === "worktree" ? undefined : ctx.lsp,
-      mcpAutostart: autostart,
-      lspAutostart: autostart,
+      mcp: skipManagers ? undefined : ctx.mcp,
+      lsp: skipManagers ? undefined : ctx.lsp,
+      mcpAutostart: skipManagers ? false : autostart,
+      lspAutostart: skipManagers ? false : autostart,
       disableHarnessAutoArm: true,
       citeDeltaStop: subagentType === "explore",
       documentOnly: req.documentOnly,

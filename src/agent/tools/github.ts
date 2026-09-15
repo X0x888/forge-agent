@@ -22,6 +22,39 @@ export function githubEnabled(): boolean {
   return !isFalsy(process.env.FORGE_GITHUB ?? "1");
 }
 
+const SEARCH_SORTS = new Set(["stars", "forks", "updated"]);
+
+/**
+ * GitHub search URL path. `sort` is repository discovery only (stars as a
+ * junk filter, not a quality score). Invalid sort fails closed.
+ */
+export function githubSearchRequestPath(
+  query: string,
+  perPage: number,
+  opts: { code: boolean; sort?: string },
+): { path: string } | { error: string } {
+  const n = Math.min(10, Math.max(1, Math.floor(perPage)));
+  const endpoint = opts.code ? "/search/code" : "/search/repositories";
+  let q = `${endpoint}?q=${encodeURIComponent(query)}&per_page=${n}`;
+  const sortRaw = (opts.sort || "").trim();
+  if (!sortRaw) return { path: q };
+  const sort = sortRaw.toLowerCase();
+  if (opts.code) {
+    return {
+      error:
+        "github error: sort applies to repository search, not code.\n" +
+        'Example: { "action": "search", "query": "cli argument parsing language:rust", "sort": "stars" }',
+    };
+  }
+  if (!SEARCH_SORTS.has(sort)) {
+    return {
+      error: `github error: sort must be stars | forks | updated (got ${sortRaw}).`,
+    };
+  }
+  q += `&sort=${sort}&order=desc`;
+  return { path: q };
+}
+
 export interface ParsedGithubRepo {
   owner: string;
   repo: string;
@@ -347,9 +380,25 @@ async function runSearch(
       isError: true,
     };
   }
-  const endpoint = code ? "/search/code" : "/search/repositories";
-  const q = `${endpoint}?q=${encodeURIComponent(query)}&per_page=${n}`;
-  const { status, json, remaining } = await githubGet(q, token, signal);
+  if (args.sort != null && typeof args.sort !== "string") {
+    return {
+      output: stringFieldError(
+        "github",
+        "sort",
+        args.sort,
+        "Use stars | forks | updated.",
+      ),
+      isError: true,
+    };
+  }
+  const built = githubSearchRequestPath(query, n, {
+    code,
+    sort: args.sort != null ? String(args.sort) : undefined,
+  });
+  if ("error" in built) {
+    return { output: built.error, isError: true };
+  }
+  const { status, json, remaining } = await githubGet(built.path, token, signal);
   if (status === 401 || status === 403 || status === 429) {
     return {
       output: redact(

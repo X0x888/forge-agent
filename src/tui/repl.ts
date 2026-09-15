@@ -1212,6 +1212,10 @@ export async function runRepl(opts: {
       void handleLine("/cycle");
       return;
     }
+    if (id === "peers") {
+      void handleLine("/cycle peers");
+      return;
+    }
     if (id === "auth") {
       void handleLine("/accounts");
       return;

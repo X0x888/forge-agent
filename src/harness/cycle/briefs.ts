@@ -33,6 +33,7 @@ import {
   reviewArtifactContract,
   scoutArtifactContract,
 } from "./artifacts.js";
+import { peerScoutBriefLines } from "./peer-scout.js";
 import type { CycleRecord, CycleState, ReviewVerdict } from "./state.js";
 
 /** Role brief only — never message[0]. Shown when the look path cannot use MCP. */
@@ -111,6 +112,7 @@ export interface RunSpend {
   committed: number;
   plannerTokens: number;
   reviewerTokens: number;
+  peerScoutTokens: number;
   /** Priced only when the caller can price it; the brief shows tokens otherwise. */
   usd?: number;
 }
@@ -130,7 +132,13 @@ export function runSpend(s: CycleState): RunSpend {
     reviewerTokens += c.reviewerTokens ?? 0;
     if (c.commitSha) committed++;
   }
-  return { cycles: s.cycles.length, committed, plannerTokens, reviewerTokens };
+  return {
+    cycles: s.cycles.length,
+    committed,
+    plannerTokens,
+    reviewerTokens,
+    peerScoutTokens: s.peerScout?.tokens ?? 0,
+  };
 }
 
 /**
@@ -189,7 +197,7 @@ function spendLines(spend: RunSpend): string[] {
   const usd = spend.usd != null ? ` · about $${spend.usd.toFixed(2)}` : "";
   return [
     `## Spend so far`,
-    `${spend.committed} committed cycle${spend.committed === 1 ? "" : "s"} of ${spend.cycles} planned · Planner ${fmtTokens(spend.plannerTokens)} tokens · Reviewer ${fmtTokens(spend.reviewerTokens)} tokens${usd}. A cycle costs roughly what the last one did; a boss decides whether to spend as much as what on.`,
+    `${spend.committed} committed cycle${spend.committed === 1 ? "" : "s"} of ${spend.cycles} planned · Planner ${fmtTokens(spend.plannerTokens)} tokens · Reviewer ${fmtTokens(spend.reviewerTokens)} tokens${spend.peerScoutTokens ? ` · Peer scout ${fmtTokens(spend.peerScoutTokens)} tokens` : ""}${usd}. A cycle costs roughly what the last one did; a boss decides whether to spend as much as what on.`,
   ];
 }
 
@@ -259,7 +267,7 @@ function previousShapeLines(s: CycleState): string[] {
  */
 export const MANDATE_QUALITY_BAR = [
   `The mandate is attention — what they care about — not a spec, not a checklist, and not a quality ceiling. Vague, hype or laundry-list wording does not license vague, hype or laundry-list work. A specific request is still that request, done like a veteran — not a product rewrite they did not ask for.`,
-  `Direction: is your sentence after using the product and knowing the category's bar. Do not copy their adjectives into Direction: or Items:. If you do not already know what a demanding user of this kind of product notices first, web_search the market bar. The inlined category skill (named above when the tree matches) is the playbook — do not glob or grep $HOME or the disk for forge-* files. For GitHub source use the github tool, not a scrape of github.com. The bar is that user, not the prompt.`,
+  `Direction: is your sentence after using the product and knowing the category's bar. Do not copy their adjectives into Direction: or Items:. If you do not already know what a demanding user of this kind of product notices first, web_search the market bar. The inlined category skill (named above when the tree matches) is the playbook — do not glob or grep $HOME or the disk for forge-* files. For GitHub source use the github tool, not a scrape of github.com. A peer scout note below, if present, is category evidence — read it AFTER Looked:. Do not github-search the category yourself. The bar is that user, not the prompt.`,
 ];
 
 function mandateLines(s: CycleState): string[] {
@@ -277,7 +285,7 @@ const SCOUT_PROCEDURE = [
   `1. Identity: what is this product, who uses it, for what job. README, docs, --help, manifests, tests as spec. One paragraph.`,
   `2. Use it. Exercise a representative job end to end before proposing changes: build and run the CLI, navigate the app through completion and back out (call_mcp → playwright), run a library's consumer example, or exercise a service, pipeline or harness through its public boundary. Include relevant failure, recovery and repeated-use conditions; read setup or safety instructions first when needed. Use local fixtures for actions with external effects. Do not edit. Write observations and limits under Looked:. If a surface cannot run here, name what remains unverified; source inspection is evidence about implementation, not proof the flow works.`,
   `3. Promises: the product's own checklist. Claims in README, --help, tests and the identity are evidence of intended behavior, not an exhaustive definition of excellence. Mark each kept | broken | absent | unknown with where you saw it. Unknown means unverified: investigate before proposing repair, rather than calling it kept or missing. Preserve the product's purpose; removing a promise does not fulfill it. Re-inspect the current state rather than copying the previous list.`,
-  `4. Category: know the bar for this kind of product. If you do not, web_search what a demanding user of this category notices first. The inlined category skill is already in context — do not search the disk for forge-* skills. Competitors are context, not a feature checklist. The user's adjectives are not the bar. Consider the first-session user, the repeat user, the operator and the maintainer. Delegate independent reads with different lenses when useful. Infer reasonable choices from this project's purpose and constraints; do not require a prompt to find its next improvement.`,
+  `4. Category: know the bar for this kind of product. If you do not, web_search what a demanding user of this category notices first. The inlined category skill is already in context — do not search the disk for forge-* skills. A peer scout note below, if present, is evidence of the bar — read it AFTER Looked:, do not let it replace the sit, do not github-search the category yourself. A peer candidate becomes an item only if Looked: on THIS product can name the gap, or the item is an investigation (red now: unchecked). Not for us: and leave it are first-class. Competitors are context, not a feature checklist. The user's adjectives are not the bar. Consider the first-session user, the repeat user, the operator and the maintainer. Delegate independent reads with different lenses when useful. Infer reasonable choices from this project's purpose and constraints; do not require a prompt to find its next improvement.`,
   `5. Tree: inspect the core job and its dependencies. Consider correctness, usability and accessibility, reliability and recovery, security and privacy, performance and resource cost, compatibility, operability, documentation and maintainability where they matter to this product. These are discovery lenses, not quotas or scores. Follow evidence to the most consequential gaps.`,
   `6. Considered: compare the strongest evidenced candidates with their benefits, risks and cost. Missing capability, broken promise, rough edge and architectural debt are possible sources, not required bins; do not invent a candidate for an empty bin. Always include leave it — <why leaving this area unchanged may be better>. An investigation that resolves a consequential unknown is legitimate work; state the question and the observation that would change the decision.`,
 ];
@@ -328,6 +336,7 @@ export function buildPlannerScoutBrief(input: PlannerScoutInput): string {
     ``,
     `## Procedure`,
     ...SCOUT_PROCEDURE,
+    ...peerScoutBriefLines(s),
     ``,
     `## Output`,
     `Your final message this turn is the scout and nothing else, in exactly this shape:`,
@@ -509,6 +518,7 @@ export function buildPlannerBrief(input: PlannerPlanInput): string {
     ``,
     `## Procedure`,
     ...SCOUT_PROCEDURE,
+    ...peerScoutBriefLines(s),
     ``,
     `## The record — read only after steps 1–6`,
   );

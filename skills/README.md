@@ -22,6 +22,7 @@ Ship-with-install playbooks loaded by `src/agent/project-skills.ts` as
 | `forge-surface` | Distinctive, non-AI-slop UI direction |
 | `forge-polish` | Visual craft QA / UI polish pass |
 | `forge-veteran` | Shared ULW doctrine: veteran craft, product-sense bar (mandate is attention, not a quality ceiling) |
+| `forge-peer-scout` | ULW background peer scout: 1–3 maintained GitHub peers of this job, staged note for the next Planner |
 | `forge-imagine` | image_gen / image_edit / video |
 | `forge-game-assets` | Engine-ready game art defaults |
 | `forge-game-animation` | Video-first animation frames |

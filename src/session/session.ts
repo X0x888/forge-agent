@@ -85,6 +85,7 @@ import {
   formatUlwBadge,
   loadActiveCycle,
   resetCycleOnClear,
+  stopPeerScout,
   mandateFromUserText,
 } from "../harness/cycle/index.js";
 import { listActiveProjectMemory } from "../harness/project-memory.js";
@@ -3936,6 +3937,7 @@ export function clearConversation(session: SessionData): void {
   // from the old timeline makes editCount=0 look like permanent no-progress,
   // and the next typed sentence is steering on leftover chrome.
   try {
+    void stopPeerScout(session.meta.id);
     resetCycleOnClear(session.meta.id);
   } catch {
     /* best-effort */

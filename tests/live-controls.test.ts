@@ -28,6 +28,7 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/cycle 0"), "control");
     assert.equal(classifyLiveSlash("/cycle 1"), "control");
     assert.equal(classifyLiveSlash("/cycle status"), "readonly");
+    assert.equal(classifyLiveSlash("/cycle peers"), "readonly");
     assert.equal(classifyLiveSlash("/cycle"), "readonly");
     assert.equal(classifyLiveSlash("/max-cycles 3"), "control");
     assert.equal(classifyLiveSlash("/max-cycles off"), "control");

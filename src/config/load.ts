@@ -145,6 +145,8 @@ function normalizeConfigShape(raw: Record<string, unknown>): Partial<ForgeConfig
       planner_effort: "plannerEffort",
       reviewer_model: "reviewerModel",
       reviewer_effort: "reviewerEffort",
+      peer_scout_model: "peerScoutModel",
+      peer_scout_effort: "peerScoutEffort",
       max_cycles: "maxCycles",
       fix_rounds: "fixRounds",
       stuck_threshold: "stuckThreshold",
@@ -728,6 +730,8 @@ auto_arm = true
 # planner_effort = "xhigh"
 # reviewer_model = "grok-4.6"
 # reviewer_effort = "xhigh"
+# peer_scout_model = "grok-4.6"   # unset = planner, else the session model
+# peer_scout_effort = "xhigh"
 # max_cycles = 0        # 0 / unset = until the Planner says fulfilled, or /cycle 0
 # fix_rounds = 3        # executor rounds when the verify command is red (new failures vs the baseline)
 # stuck_threshold = 4   # no-progress Stops in EXECUTE before the cycle closes early

@@ -67,6 +67,17 @@ describe("/cycle status", () => {
     assert.match(facts.verified[0] ?? "", /green vs baseline \(12 pre-existing still red\)/);
   });
 
+  it("shows a sleeping peer scout on the status card", () => {
+    const s = state();
+    s.peerScout = {
+      status: "sleeping",
+      stage: 2,
+      peers: ["helix/helix"],
+      updatedAt: "t",
+    };
+    assert.match(formatUlwStatus(s), /Peer scout: stage 2 · helix\/helix — sleeping/);
+  });
+
   it("omits the promises line when none were recorded", () => {
     const s = state();
     delete s.promises;

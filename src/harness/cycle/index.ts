@@ -15,6 +15,7 @@ export * from "./roles.js";
 export * from "./controls.js";
 export * from "./status.js";
 export * from "./verify.js";
+export * from "./peer-scout.js";
 
 import type { CycleState } from "./state.js";
 import { displayUlwMandate } from "./status.js";
@@ -31,6 +32,7 @@ export function ulwKickoffMessage(s: CycleState): string {
     `Mandate: ${displayUlwMandate(s)}`,
     s.maxCycles != null ? `Budget: ${s.maxCycles} cycle(s).` : `Budget: unlimited cycles ${ULW_UNLIMITED_LIFECYCLE}`,
     `A fresh-context Planner is writing cycle 1's plan now (identity, category research, whole-tree survey, gap analysis). You will receive the plan as the next harness message and execute it as the plan's items; the harness then runs the verify command, a fresh Reviewer writes the review, the check runs again and the cycle commits.`,
+    `A peer scout researches 1–3 maintained GitHub peers of this job in the background; the next Planner weighs the note after Looked:. The executor never sees it. /cycle peers · FORGE_ULW_PEERS=0 off.`,
     ULW_LIVE_CONTROLS_HINT,
   ].join("\n");
 }

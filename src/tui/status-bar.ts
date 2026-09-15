@@ -25,6 +25,7 @@ import { loadGoal } from "../harness/goal.js";
 import {
   loadActiveCycle,
   formatUlwBadge,
+  formatPeerScoutDock,
   displayUlwMandate,
 } from "../harness/cycle/index.js";
 import { listActiveProjectMemory } from "../harness/project-memory.js";
@@ -112,6 +113,12 @@ export function buildPromptFlags(
       flags.push(
         ulw.cycleZeroRequested ? chalk.yellow(badge) : chalk.magenta(badge),
       );
+      const peers = formatPeerScoutDock(ulw);
+      if (peers) {
+        flags.push(
+          peers.style === "yellow" ? chalk.yellow(peers.text) : chalk.magenta(peers.text),
+        );
+      }
     } else if (session.meta.ultrawork) {
       flags.push(chalk.magenta("ULW"));
     }
@@ -1167,6 +1174,10 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
         `ulw      ${formatUlwBadge(ulw)}  blocks=${ulw.blocks}  ${displayUlwMandate(ulw).slice(0, 50)}`,
       ),
     );
+    const peers = formatPeerScoutDock(ulw);
+    if (peers) {
+      lines.push(chalk.dim(`peers    ${peers.text}  /cycle peers`));
+    }
   }
   if (g?.objective) {
     lines.push(

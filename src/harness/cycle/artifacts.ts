@@ -117,6 +117,77 @@ export interface ParsedPlan {
   verdictNote?: string;
 }
 
+/** Background peer scout of this Identity's job. Presence is optional; the mill does not gate on it. */
+export interface ParsedPeerScout {
+  stage: 0 | 1 | 2 | 3;
+  identityUsed?: string;
+  /** owner/repo, at most three. */
+  peers: string[];
+  sat: string[];
+  noticed: string[];
+  notForUs: string[];
+  candidates: string[];
+}
+
+const OWNER_REPO_RE = /\b([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\b/;
+
+function ownerRepoOf(line: string): string | undefined {
+  const m = String(line || "").match(OWNER_REPO_RE);
+  if (!m) return undefined;
+  const id = m[1];
+  if (id === "." || id.includes("..")) return undefined;
+  return id;
+}
+
+/** Labelled peer-scout document. Null when Stage: is missing or not 0–3. */
+export function parsePeerScoutArtifact(text: string): ParsedPeerScout | null {
+  const sections = splitSections(text);
+  const stageRaw = firstLine(sections.get("stage"));
+  const sm = String(stageRaw || "").match(/\b([0-3])\b/);
+  if (!sm) return null;
+  const stage = Number(sm[1]) as ParsedPeerScout["stage"];
+  const peerLines = bullets(sections.get("peers"));
+  const peers: string[] = [];
+  const seen = new Set<string>();
+  for (const line of peerLines) {
+    const id = ownerRepoOf(line);
+    if (!id) continue;
+    const key = id.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    peers.push(id);
+    if (peers.length >= 3) break;
+  }
+  if (stage >= 1 && !peerLines.length) return null;
+  return {
+    stage,
+    identityUsed: paragraph(sections.get("identity-used")) ?? paragraph(sections.get("identity")),
+    peers,
+    sat: bullets(sections.get("sat")),
+    noticed: bullets(sections.get("noticed")),
+    notForUs: bullets(sections.get("not-for-us")),
+    candidates: bullets(sections.get("candidates")),
+  };
+}
+
+export function peerScoutArtifactContract(): string {
+  return [
+    `# Peer scout — <job>`,
+    `Stage: 1`,
+    `Identity used: <the Identity: paragraph this is for, or the tree hypothesis>`,
+    `Peers:`,
+    `- owner/repo ★N · pushed YYYY-MM-DD — why this job, not a tutorial or awesome-list`,
+    `Sat:`,
+    `- (stage 2) matching surface of each: --help, first-run, error/recovery, the verb — via github readme/contents, not a scrape of github.com`,
+    `Noticed:`,
+    `- what a demanding user of those products notices first`,
+    `Not for us:`,
+    `- their scale / user / marketplace that is not this job`,
+    `Candidates:`,
+    `- <gap in THIS product> — serves: <job> — red now: unchecked — <why we have not sat it here> — leave it if <why this tree may already be right>`,
+  ].join("\n");
+}
+
 /** The Planner's turn-1 document: what it saw before it was handed the record. */
 export interface ParsedScout {
   identity?: string;
@@ -126,7 +197,7 @@ export interface ParsedScout {
 }
 
 const SECTION_RE =
-  /^\s*(?:#{1,6}\s*)?\*{0,2}(Verdict|Identity|Direction|Looked|Considered|Worth the cycle|One item|Promises|Verify|Items|Out of scope|Guidelines|Operator|Title|Fulfillment|Revisions|Must-fix|Architecture|Worth|Notes|Summary)\*{0,2}\s*[:.]\s*(.*)$/i;
+  /^\s*(?:#{1,6}\s*)?\*{0,2}(Verdict|Identity used|Identity|Direction|Looked|Considered|Worth the cycle|One item|Promises|Verify|Items|Out of scope|Guidelines|Operator|Title|Fulfillment|Revisions|Must-fix|Architecture|Worth|Notes|Summary|Stage|Peers|Sat|Noticed|Not for us|Candidates)\*{0,2}\s*[:.]\s*(.*)$/i;
 
 const LEAVE_IT_RE = /^\*{0,2}leave\s+it\b/i;
 

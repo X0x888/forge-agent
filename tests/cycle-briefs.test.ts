@@ -618,12 +618,19 @@ describe("plan admission", () => {
 
 describe("runSpend", () => {
   it("sums role tokens over every cycle and counts committed cycles", () => {
-    assert.deepEqual(runSpend(runState()), { cycles: 2, committed: 1, plannerTokens: 20_000, reviewerTokens: 30_000 });
+    assert.deepEqual(runSpend(runState()), {
+      cycles: 2,
+      committed: 1,
+      plannerTokens: 20_000,
+      reviewerTokens: 30_000,
+      peerScoutTokens: 0,
+    });
     assert.deepEqual(runSpend(newCycleState({ sessionId: "x", mandate: null })), {
       cycles: 0,
       committed: 0,
       plannerTokens: 0,
       reviewerTokens: 0,
+      peerScoutTokens: 0,
     });
   });
 });

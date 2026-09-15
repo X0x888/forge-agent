@@ -3,6 +3,7 @@
  * counts for the admit fingerprint, report facts.
  */
 import { worthIsNo } from "./artifacts.js";
+import { formatPeerScoutStatus } from "./peer-scout.js";
 import {
   cycleActive,
   cycleHasMandate,
@@ -119,6 +120,8 @@ export function formatUlwStatus(s: CycleState | null | undefined): string {
     `  Mandate: ${displayUlwMandate(s).slice(0, 200)}`,
   ];
   if (s.identity) lines.push(`  Identity: ${s.identity.slice(0, 200)}`);
+  const peers = formatPeerScoutStatus(s);
+  if (peers) lines.push(`  ${peers}`);
   const tally = promiseTally(s);
   if (tally) lines.push(`  Promises: ${tally}`);
   if (s.planTitle) lines.push(`  Plan: ${s.planTitle}`);
@@ -215,8 +218,9 @@ export function cycleReportFacts(s: CycleState | null | undefined): {
   const needsYou: string[] = [];
   for (const o of s.lastReview?.operator ?? []) needsYou.push(o);
   const st: CycleState = s;
+  const peerBit = formatPeerScoutStatus(st);
   const outcome = cycleActive(st)
-    ? `ULW cycle ${st.cycle} in ${st.phase}`
+    ? `ULW cycle ${st.cycle} in ${st.phase}${peerBit ? ` · ${peerBit}` : ""}`
     : st.endReason === "fulfilled"
       ? `Done — the Planner judged the mandate fulfilled after ${st.cycles.filter((c) => c.commitSha).length} committed cycle(s)`
       : st.endReason === "cycle-zero"

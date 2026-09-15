@@ -399,6 +399,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       description:
         "Read GitHub: search repositories/code, repo metadata, file contents, README, tree. " +
         "Use this when researching a library or repo even if the user did not say GitHub — returns source, not HTML chrome. " +
+        "Repository search may sort=stars (junk filter for peers of a job); omit sort for a known library. " +
         "Public repos work without a token; a local `gh auth login` or GITHUB_TOKEN is picked up automatically.",
       parameters: {
         type: "object",
@@ -417,6 +418,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: {
             type: "string",
             description: "search type: repositories (default) or code",
+          },
+          sort: {
+            type: "string",
+            description:
+              "Repository search only: stars | forks | updated (order=desc). Omit for best match. Use stars when discovering peers of a job, not when looking up a known library.",
           },
           num_results: { type: "number", description: "search hit cap (default 5, max 10)" },
         },

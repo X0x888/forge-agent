@@ -113,6 +113,7 @@ import {
   type CycleReviewNotes,
   type CycleState,
 } from "./state.js";
+import { ensurePeerScout, stopPeerScout } from "./peer-scout.js";
 import { judgeAgainstBaseline, type CheckRun, type GateVerdict } from "./verify.js";
 import {
   isFullSuiteCommand,
@@ -124,7 +125,7 @@ import {
   isNeverExitingCheckCommand,
 } from "../declared-checks.js";
 
-export type CycleRole = "planner" | "reviewer";
+export type CycleRole = "planner" | "reviewer" | "peer-scout";
 
 export interface RoleRunResult {
   ok: boolean;
@@ -148,6 +149,13 @@ export interface RoleRunOptions {
   maxTurns?: number;
   /** Every turn is report-only: emit the document, do not explore (the plan turn). */
   documentOnly?: boolean;
+  /**
+   * Do not steal the executor's status line (the peer scout runs in parallel
+   * with EXECUTE). Planner/Reviewer stay loud — they own the turn.
+   */
+  quiet?: boolean;
+  /** Peer scout lives for the ULW run, not the executor's turn abort. */
+  abort?: AbortSignal;
 }
 
 export interface CycleRuntime {
@@ -258,6 +266,7 @@ function reapRunResources(s: CycleState): void {
     /* */
   }
   safe(() => reapSessionBrowsers(s.sessionId, { workspace }), { killed: 0, removed: [] });
+  void stopPeerScout(s.sessionId);
 }
 
 function closedCycleHow(s: CycleState): string {
@@ -678,6 +687,7 @@ export function synthesizeWorkPlan(
  */
 export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<CycleStopOutcome> {
   void prewarmLookPath(0, { sessionId: s.sessionId, workspace: rt.workspace });
+  ensurePeerScout(s, rt);
   const git = ensureGitRepo(rt.workspace, { reason: "ulw" });
   if (git.inited) {
     rt.log?.(`ULW initialized git repository in ${git.root ?? rt.workspace} (local only; FORGE_AUTO_GIT=0 off)`);
@@ -716,6 +726,9 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
     s.promises = promises;
     safe(() => rt.rememberPromises?.(promises), undefined);
   }
+  // Identity may have just locked — re-aim the peer scout if the
+  // README hypothesis was the wrong job. Fail-open; never await.
+  ensurePeerScout(s, rt);
 
   if ("error" in out) {
     // The Planner burned its budget without a parseable plan. Keep the failed
@@ -1644,6 +1657,7 @@ export async function evaluateCycleAtStop(
   const rt = opts.runtime;
   const cap = fixRoundsCap(opts.fixRoundsCap);
   if (rt) syncItemsFromTodos(s, rt.todos());
+  if (rt && s.phase !== "plan" && s.phase !== "released") ensurePeerScout(s, rt);
   const action: CycleAction = decideAtStop(s, opts.facts);
   const stamped = s.phase === "execute" && action.kind !== "plan" && action.kind !== "yield";
   if (stamped) rememberExecutorLines(s, opts.facts.lastAssistantMessage);

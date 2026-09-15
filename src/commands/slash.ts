@@ -290,6 +290,7 @@ import {
   parseMaxCyclesArg,
   formatUlwStatus,
   formatUlwBadge,
+  formatPeerScoutCard,
   ulwKickoffMessage,
   ULW_LIVE_CONTROLS_HINT,
 } from "../harness/cycle/index.js";
@@ -621,7 +622,7 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
     // /cycle status (or bare menu) is read-only; flag flips are control
     if (cmd === "/cycle") {
       const a = arg.toLowerCase();
-      if (!a || a === "status" || a === "3" /* menu status */) return "readonly";
+      if (!a || a === "status" || a === "show" || a === "peers" || a === "peer" || a === "bar" || a === "3" /* menu status */) return "readonly";
     }
     // /max-cycles status (or bare) is read-only; set/clear is control
     if (
@@ -937,7 +938,7 @@ export function completeSlash(
       "/plan": ["on", "off", "status", "show"],
       "/build": ["on", "off", "status", "execute"],
       "/execute": ["on", "off", "status"],
-      "/cycle": ["0", "1", "on", "off", "status"],
+      "/cycle": ["0", "1", "on", "off", "status", "peers"],
       "/max-cycles": ["off", "status", "1", "2", "3", "5"],
       "/max_cycles": ["off", "status", "1", "2", "3", "5"],
       "/max-waves": ["off", "status", "1", "2", "3", "5"],
@@ -2447,17 +2448,23 @@ export async function handleSlash(
       const parsed =
         fromMenu === "status"
           ? "status"
-          : fromMenu === "1" || fromMenu === "0"
-            ? (Number(fromMenu) as 0 | 1)
-            : parseCycleArg(arg);
+          : fromMenu === "peers"
+            ? "peers"
+            : fromMenu === "1" || fromMenu === "0"
+              ? (Number(fromMenu) as 0 | 1)
+              : parseCycleArg(arg);
       if (parsed === "status") {
         return { handled: true, output: formatUlwStatus(loadCycleState(sid)) };
+      }
+      if (parsed === "peers") {
+        return { handled: true, output: formatPeerScoutCard(loadCycleState(sid)) };
       }
       if (parsed === null) {
         const tip = suggestName(arg.trim().toLowerCase(), [
           "0",
           "1",
           "status",
+          "peers",
           "off",
           "on",
           "finish",

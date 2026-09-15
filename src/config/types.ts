@@ -95,6 +95,9 @@ export interface UlwConfig {
   plannerEffort?: string;
   reviewerModel?: string;
   reviewerEffort?: string;
+  /** Unset = planner model, else the session model. */
+  peerScoutModel?: string;
+  peerScoutEffort?: string;
   /** Stop after this many committed cycles (null = until fulfilled or /cycle 0). */
   maxCycles?: number | null;
   /** Executor fix rounds when the verify command is red after review (default 3). */
