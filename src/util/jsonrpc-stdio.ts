@@ -56,6 +56,8 @@ export interface JsonRpcStdioOptions {
   ) => Promise<unknown> | unknown;
   /** Abort whole transport (kills child). */
   signal?: AbortSignal;
+  /** Child died or the transport failed closed. Once per client. */
+  onExit?: (err: Error) => void;
 }
 
 interface Pending {
@@ -78,6 +80,7 @@ export class JsonRpcStdioClient {
   private readonly label: string;
   private readonly opts: JsonRpcStdioOptions;
   private stderrTail = "";
+  private exitNotified = false;
 
   constructor(opts: JsonRpcStdioOptions) {
     this.opts = opts;
@@ -371,6 +374,14 @@ export class JsonRpcStdioClient {
       p.reject(err);
     }
     this.pending.clear();
+    if (!this.exitNotified) {
+      this.exitNotified = true;
+      try {
+        this.opts.onExit?.(err);
+      } catch {
+        /* observer — never throw out of the child exit path */
+      }
+    }
   }
 }
 

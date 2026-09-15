@@ -546,6 +546,25 @@ process.stdin.on('data', (chunk) => {
     assert.equal(result.hello, "world");
     await client.dispose();
   });
+
+  it("onExit fires when the child exits 0", async () => {
+    const seen: string[] = [];
+    const client = new JsonRpcStdioClient({
+      command: process.execPath,
+      args: ["-e", "setTimeout(() => process.exit(0), 30)"],
+      label: "test-rpc-exit",
+      onExit: (err) => seen.push(err.message),
+    });
+    client.start();
+    const t0 = Date.now();
+    while (client.alive && Date.now() - t0 < 2000) {
+      await new Promise((r) => setTimeout(r, 15));
+    }
+    assert.equal(client.alive, false);
+    assert.equal(seen.length, 1);
+    assert.match(seen[0]!, /exited \(code=0/);
+    await client.dispose();
+  });
 });
 
 describe("LSP config", () => {

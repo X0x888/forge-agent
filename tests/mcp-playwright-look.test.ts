@@ -130,6 +130,101 @@ describe("search_mcp empty vs playwright-down", () => {
   });
 });
 
+const FAKE_MCP_CJS = `
+const fs = require("fs");
+const marker = process.env.FAKE_MCP_MARKER;
+let buf = Buffer.alloc(0);
+function reply(id, result) {
+  const body = Buffer.from(JSON.stringify({ jsonrpc: "2.0", id, result }));
+  process.stdout.write("Content-Length: " + body.length + "\\r\\n\\r\\n");
+  process.stdout.write(body);
+  process.stdout.write("\\n");
+}
+process.stdin.on("data", (chunk) => {
+  buf = Buffer.concat([buf, chunk]);
+  for (;;) {
+    while (buf.length && (buf[0] === 0x0a || buf[0] === 0x0d)) buf = buf.subarray(1);
+    const s = buf.toString("utf8");
+    const m = s.match(/Content-Length:\\s*(\\d+)\\r?\\n\\r?\\n/i);
+    if (!m) break;
+    const headerLen = m[0].length;
+    const len = Number(m[1]);
+    if (buf.length < headerLen + len) break;
+    let msg;
+    try { msg = JSON.parse(buf.subarray(headerLen, headerLen + len).toString("utf8")); }
+    catch { break; }
+    buf = buf.subarray(headerLen + len);
+    if (msg.id == null) continue;
+    if (msg.method === "initialize") {
+      reply(msg.id, { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "fake" } });
+    } else if (msg.method === "tools/list") {
+      reply(msg.id, { tools: [{ name: "browser_take_screenshot", description: "shot", inputSchema: { type: "object" } }] });
+      if (marker && !fs.existsSync(marker)) {
+        fs.writeFileSync(marker, "1");
+        setTimeout(() => process.exit(0), 100);
+      }
+    } else if (msg.method === "tools/call") {
+      reply(msg.id, { content: [{ type: "text", text: "ok-shot" }] });
+    } else {
+      reply(msg.id, {});
+    }
+  }
+});
+process.stdin.resume();
+`;
+
+describe("dead Playwright child drops the look path", () => {
+  it("tools/list then exit 0 is down, not connecting, and drops the registry", async () => {
+    const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-pw-exit-"));
+    const marker = path.join(ws, "stay");
+    const script = path.join(ws, "fake-mcp.cjs");
+    fs.writeFileSync(path.join(ws, "vite.config.ts"), "export default {}\n");
+    fs.writeFileSync(script, FAKE_MCP_CJS);
+    const manager = new McpManager({
+      workspace: ws,
+      config: {
+        enabled: true,
+        sources: [],
+        servers: {
+          playwright: {
+            name: "playwright",
+            command: process.execPath,
+            args: [script],
+            env: { FAKE_MCP_MARKER: marker },
+            timeoutMs: 5_000,
+          },
+        },
+      },
+    });
+    manager.start();
+    try {
+      await manager.connectAll();
+      assert.equal(manager.playwrightStatus(), "ready");
+      assert.ok(
+        manager.listRegisteredTools().some((t) => t.tool.name === "browser_take_screenshot"),
+        "listed screenshot before the child died",
+      );
+      const t0 = Date.now();
+      while (manager.playwrightStatus() !== "down" && Date.now() - t0 < 2000) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      assert.equal(manager.playwrightStatus(), "down", "idle after death is down, not connecting");
+      assert.equal(
+        manager.listRegisteredTools().filter((t) => t.serverName === "playwright").length,
+        0,
+        "search_mcp must not still list screenshot after exit 0",
+      );
+      const call = await manager.call("playwright__browser_take_screenshot", {});
+      assert.equal(call.isError, false, call.content);
+      assert.match(call.content, /ok-shot/);
+      assert.equal(manager.playwrightStatus(), "ready");
+    } finally {
+      await manager.dispose();
+      fs.rmSync(ws, { recursive: true, force: true });
+    }
+  });
+});
+
 const live = process.env.FORGE_PLAYWRIGHT_LIVE === "1";
 
 describe("live Playwright MCP look", { skip: !live }, () => {

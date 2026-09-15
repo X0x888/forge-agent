@@ -31,6 +31,8 @@ export interface McpClientOptions {
   signal?: AbortSignal;
   /** Fresh Playwright args after a dead stdio child (rotated UDD). */
   onStdioDead?: () => McpServerConfig | undefined;
+  /** Registry must drop this server's tools the moment stdio dies. */
+  onToolsDropped?: () => void;
 }
 
 export class McpClient {
@@ -54,6 +56,7 @@ export class McpClient {
   /** One retry when Playwright rejects isolated + user-data-dir. */
   private isolatedRetry = false;
   private readonly onStdioDead?: () => McpServerConfig | undefined;
+  private readonly onToolsDropped?: () => void;
 
   constructor(opts: McpClientOptions) {
     this.name = opts.name;
@@ -62,6 +65,7 @@ export class McpClient {
     this.signal = opts.signal;
     this.transport = opts.config.url ? "http" : "stdio";
     this.onStdioDead = opts.onStdioDead;
+    this.onToolsDropped = opts.onToolsDropped;
   }
 
   getStatus(): {
@@ -134,6 +138,7 @@ export class McpClient {
     this.lastError = msg;
     this.tools = [];
     this.state = "idle";
+    this.onToolsDropped?.();
   }
 
   async listTools(force = false): Promise<McpToolDef[]> {
@@ -356,6 +361,7 @@ export class McpClient {
           : this.workspace,
         label: `mcp:${this.name}`,
         signal: this.signal,
+        onExit: (err) => this.markStdioDead(err),
         onNotification: (method) => {
           if (method === "notifications/tools/list_changed") {
             // Refresh lazily on next listTools(force)

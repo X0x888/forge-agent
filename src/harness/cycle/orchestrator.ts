@@ -28,7 +28,6 @@ import {
   restoreWorkingTreeTo,
   type AutoCommitResult,
 } from "../../util/git-auto-commit.js";
-import { ensureLookChrome } from "../../util/look-chrome.js";
 import { appendRoleRunLine } from "../../session/subagent-usage.js";
 import {
   architectureHoldMessage,
@@ -1769,15 +1768,8 @@ async function prewarmLookPath(
         () => {},
       ),
     );
-    jobs.push(
-      ensureLookChrome({
-        workspace: ctx.workspace,
-        sessionId: ctx.sessionId,
-      }).then(
-        () => {},
-        () => {},
-      ),
-    );
+    // Do not spawn a second harness Chromium here. Last night four mills
+    // already died from concurrent Chrome; look_native shots on demand.
   }
   if (!jobs.length) return;
   await Promise.all(jobs);

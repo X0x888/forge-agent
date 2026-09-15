@@ -97,6 +97,7 @@ export class McpManager {
           config: bound,
           workspace: this.workspace,
           signal: this.signal,
+          onToolsDropped: () => this.rebuildRegistry(),
           onStdioDead:
             sessionId && isPlaywrightMcp(bound, name)
               ? () => {
@@ -172,9 +173,13 @@ export class McpManager {
     for (const [name, client] of this.clients) {
       const cfg = this.config.servers[name];
       if (!cfg || !isPlaywrightMcp(cfg, name)) continue;
-      const st = client.getStatus().state;
-      if (st === "ready") return "ready";
-      if (st === "connecting" || st === "idle") return "connecting";
+      const st = client.getStatus();
+      if (st.state === "ready") return "ready";
+      if (st.state === "connecting") return "connecting";
+      // Never-connected idle is still coming up. Idle after a dead child
+      // carries lastError — last night that read as connecting and the
+      // scout waited on MCP instead of look_native.
+      if (st.state === "idle" && !st.error) return "connecting";
       return "down";
     }
     for (const [name, cfg] of Object.entries(this.config.servers)) {
@@ -242,7 +247,7 @@ export class McpManager {
       const st = c.getStatus().state;
       return st === "idle" || st === "connecting";
     });
-    if (pending.length === 0 && this.registry.length) return;
+    if (pending.length === 0 && this.registry.length && !this.registryStale()) return;
     // Connect idle/connecting servers — parallel, fail-open. Do not return
     // early on a partial registry (playwright ready, context7 still idle).
     await Promise.all(
@@ -363,6 +368,22 @@ export class McpManager {
     await this.ensureRegistry();
     const resolved = this.resolveTool(qualifiedOrTool);
     if (!resolved) {
+      const parsed = parseQualifiedMcpTool(qualifiedOrTool);
+      const byName = parsed && this.clients.get(parsed.server);
+      if (parsed && byName) {
+        const result = await byName.callTool(parsed.tool, args);
+        const managed = await boundToolOutput(result.content, {
+          maxChars: 80_000,
+        });
+        this.rebuildRegistry();
+        return {
+          content: managed.text,
+          isError: result.isError,
+          structured: result.structured,
+          qualifiedName: qualifyMcpTool(parsed.server, parsed.tool),
+          readOnly: mcpToolNameLooksReadOnly(parsed.tool),
+        };
+      }
       const names = this.registry.map((t) => t.qualifiedName);
       const tips = suggestNames(qualifiedOrTool, names, {
         minLength: 2,
@@ -633,6 +654,15 @@ export class McpManager {
     );
     if (bare.length === 1) return bare[0];
     return null;
+  }
+
+  /** Last night: tools/list then child exit 0, search_mcp still listed screenshot. */
+  private registryStale(): boolean {
+    for (const t of this.registry) {
+      const client = this.clients.get(t.serverName);
+      if (!client || client.getStatus().state !== "ready") return true;
+    }
+    return false;
   }
 
   private rebuildRegistry(): void {

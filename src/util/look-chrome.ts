@@ -3,6 +3,8 @@
  *
  * Never Chrome.app. The model still cannot write looks/*.mjs — this module
  * sits the look URL itself so never-sit-down is a product sit, not Ghostty.
+ * Plan admission does not spawn the live CDP browser (four mills already
+ * died from concurrent Chrome); look_native shots on demand.
  * FORGE_LOOK_CHROME=0 off. Tests do not spawn unless FORGE_LOOK_CHROME_TEST=1.
  */
 import { spawn, spawnSync } from "node:child_process";
