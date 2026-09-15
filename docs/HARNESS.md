@@ -7,7 +7,9 @@ This document explains the control plane that drives the agent — and what we p
 Agent CLIs fail in two opposite ways:
 
 1. **Stopping short** — model declares “done” while tests fail, todos remain, or the user’s goal is half-shipped.
-2. **Running forever** — no escape when the model is stuck looping without progress.
+2. **Looping empty** — no escape when the model is stuck repeating work that does not progress.
+
+Duration is not the second failure. An overnight `/ulw` that keeps working is the product. The trap is the *same empty class* with nothing landing, not the clock or the token bill. A mill that ran long and delivered little is a work-quality problem (plan, look, worth, verify) — improve those so the hours pay; do not add a tighter cap or an early stop as the fix. `/budget`, `/cycle 0`, and `max_cycles` are operator valves.
 
 Grok Build exposes lifecycle hooks, but **`Stop` is non-blocking**. That means any external harness that depends on “block stop until green” cannot work. Claude Code’s exit-code-2 Stop hooks and Codex’s `/goal` both need a **runtime that can refuse to end the turn**.
 

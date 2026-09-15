@@ -11,7 +11,8 @@ ULW should supply the judgment a good prompt would otherwise supply: understand
 the project, identify consequential gaps, choose a worthwhile intervention,
 implement it, challenge it, and retain what the evidence supports. An unlimited
 run extends the opportunity to do this. Duration, edits, commits, and a green
-suite do not establish the quality of the chosen work.
+suite do not establish the quality of the chosen work. The correction for a
+long mill that chose poorly is better chosen work, not a shorter mill.
 
 Excellence is relative to a product's purpose, audience, constraints, and
 alternatives. The harness can enforce necessary conditions for improvement; it

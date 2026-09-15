@@ -17,7 +17,7 @@ Requirements: **Node.js 20+**.
 See [AGENTS.md](./AGENTS.md). Non-negotiables:
 
 1. `blockingStopHooks` defaults **true** (`forge doctor` treats OFF as an issue / exit 1)
-2. `/goal` stuck-wall must be able to release
+2. The mill keeps working — that is the design. A long, expensive, poor run is a work defect (plan / look / worth / verify), not a reason to add a cap or stop earlier. Drivers still must be able to release (`/goal` stuck-wall, `/cycle 0`, no-progress wall without a mandate)
 3. Sensitive JSON under `~/.forge` mode `0600` (`auth.json`, `permissions.json`, `preferences.json`)
 
 ## Tests
@@ -39,4 +39,5 @@ When changing providers, loop, tools, or auth, update [docs/RELIABILITY.md](./do
 
 - Keep diffs focused
 - Do not weaken Stop blocking defaults
+- Do not sit the mill down to "fix" a poor overnight — improve the work, not the cap
 - Never log tokens / API keys
